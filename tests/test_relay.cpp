@@ -400,12 +400,16 @@ TEST(Relay, DestinationRetrySucceeds) {
     const auto port = free_port();
     auto cfg = server_config(port);
     cfg.destination->dial_retries = 3;
-    cfg.destination->dial_backoff = 200ms;  // essais à t=0, 200 ms, 600 ms
+    cfg.destination->dial_backoff = 200ms;
+    // Délai court : sous Windows, une connexion vers un port fermé n'est pas
+    // refusée immédiatement mais reste en attente jusqu'au délai.
+    cfg.destination->dial_timeout = 100ms;
     RunningService server(std::move(cfg));
 
+    // Essais : t=0 (échec avant 100 ms), ~200-300 ms (échec avant ~400 ms), puis ≥ 600 ms.
     TestClient app(server.port());
     app.write("hello");  // mis en tampon pendant les essais
-    std::this_thread::sleep_for(350ms);
+    std::this_thread::sleep_for(500ms);
     EchoServer echo(port);  // la destination devient disponible avant le 3e essai
 
     EXPECT_EQ(app.read_exactly(5, 3s), "hello");
