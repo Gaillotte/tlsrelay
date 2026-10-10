@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "GCC Release", cxx: g++, build_type: Release, sanitizers: "" }
+          - { name: "Clang Release", cxx: clang++, build_type: Release, sanitizers: "" }
+          - { name: "Clang ASan+UBSan", cxx: clang++, build_type: Debug, sanitizers: "address,undefined" }
+          - { name: "Clang TSan", cxx: clang++, build_type: Debug, sanitizers: "thread" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
+            libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev libclang-rt-18-dev
+
+      - name: Configuration
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DTLSRELAY_WARNINGS_AS_ERRORS=ON
+          -DTLSRELAY_SANITIZERS=${{ matrix.sanitizers }}
+
+      - name: Compilation
+        run: cmake --build build
+
+      - name: Tests
+        working-directory: build
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --output-on-failure -j 2
+
+  windows:
+    name: Windows MSVC Release
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\vcpkg-cache
+          key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-x64-windows-
+
+      - name: Préparation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configuration
+        run: cmake --preset windows-msvc -DTLSRELAY_WARNINGS_AS_ERRORS=ON
+
+      - name: Compilation
+        run: cmake --build --preset windows-release
+
+      - name: Tests
+        run: ctest --preset windows-release -j 2
+
+      - name: Version d'OpenSSL embarquée
+        shell: pwsh
+        run: .\build\windows-msvc\src\app\Release\tlsrelay.exe version

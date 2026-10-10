@@ -1,0 +1,20 @@
+#pragma once
+
+#include <atomic>
+#include <cstdint>
+
+namespace tlsrelay::relay {
+
+// Compteurs cumulés depuis le démarrage. Base des métriques (phase 6).
+struct Stats {
+    std::atomic<std::uint64_t> channels_opened{0};
+    std::atomic<std::uint64_t> channels_closed{0};
+    std::atomic<std::uint64_t> channels_rejected{0};     // limite max_channels atteinte
+    std::atomic<std::uint64_t> channels_idle_closed{0};  // fermés par idle_timeout
+    std::atomic<std::uint64_t> dial_attempt_failures{0}; // essais de connexion sortante échoués
+    std::atomic<std::uint64_t> dial_failures{0};         // canaux abandonnés après tous les essais
+    std::atomic<std::uint64_t> bytes_upstream{0};        // application -> destination
+    std::atomic<std::uint64_t> bytes_downstream{0};      // destination -> application
+};
+
+}  // namespace tlsrelay::relay
