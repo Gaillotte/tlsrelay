@@ -54,13 +54,15 @@ done
 for _ in $(seq 50); do "$bin" status -c client.yaml >/dev/null 2>&1 && "$bin" status -c server.yaml >/dev/null 2>&1 && break; sleep 0.1; done
 
 metric() { "$bin" metrics -c "$1.yaml" | awk -v m="$2" '$1 ~ "^"m"[{ ]" {print $2}'; }
+# Événements des relais (hors configuration), pour le diagnostic d'un échec.
+events() { for role in client server; do echo "-- événements $role"; grep -v '\[config\]' $role.log | tail -n 40; done; }
 
 echo "== $channels canaux simultanés"
 # Mémoire relevée pendant le maintien des canaux ouverts.
 ( sleep 4; metric server tlsrelay_process_resident_memory_bytes > peak_server
   metric client tlsrelay_process_resident_memory_bytes > peak_client ) &
 sampler=$!
-"$kit" load --target "127.0.0.1:$cli" --channels "$channels" --bytes 64KiB --hold 6s --json | tee load.json
+"$kit" load --target "127.0.0.1:$cli" --channels "$channels" --bytes 64KiB --hold 6s --json | tee load.json || { events; exit 1; }
 wait "$sampler"
 # Débit cadencé à RATE Mbit/s (défaut 500, cinq fois l'objectif) : un flux saturé
 # sur la boucle locale peut se figer (limite connue, README « Performances ») ;
@@ -78,7 +80,7 @@ if kill -0 "$tp" 2>/dev/null; then
   echo "-- mémoire TCP du noyau"; cat /proc/net/sockstat; echo "tcp_mem=$(cat /proc/sys/net/ipv4/tcp_mem) tcp_rmem=$(cat /proc/sys/net/ipv4/tcp_rmem) tcp_wmem=$(cat /proc/sys/net/ipv4/tcp_wmem)"
   nstat -az 2>/dev/null | grep -iE "pressure|prune|drop|zerowindow|rcvq|collapse|ofo|probe" || true
   echo "-- sockets (Recv-Q / Send-Q)"; ss -tnpmi state established "( sport = :$dest or dport = :$dest or sport = :$srv or dport = :$srv or sport = :$cli or dport = :$cli )" || true
-  for role in client server; do echo "-- journal $role"; tail -n 30 $role.log; done
+  events
   kill "$tp" 2>/dev/null || true
 fi
 wait "$tp" || true

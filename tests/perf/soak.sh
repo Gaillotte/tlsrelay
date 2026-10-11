@@ -100,9 +100,16 @@ if ! wait "$stream"; then
 fi
 [ -n "$csv_out" ] && cp samples.csv "$csv_out"
 
-python3 - "$rounds" "$failed_rounds" "$minutes" <<'PY'
+# Descripteurs en fin d'essai, après renegotiation_grace : les canaux coupés en
+# dernier attendent jusque-là une reprise avant d'être fermés.
+sleep 25
+fd_final_server=$(metric server tlsrelay_process_open_descriptors)
+fd_final_client=$(metric client tlsrelay_process_open_descriptors)
+
+python3 - "$rounds" "$failed_rounds" "$minutes" "$fd_final_server" "$fd_final_client" <<'PY'
 import csv, json, statistics, sys
 rounds, failed, minutes = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+fd_final = {"serveur": int(sys.argv[4]), "client": int(sys.argv[5])}
 rows = list(csv.DictReader(open("samples.csv")))
 stream = json.load(open("stream.json"))
 n = len(rows)
@@ -127,8 +134,8 @@ for side in ("serveur", "client"):
         checks[label] = l <= e * 1.25 + 8192
     else:
         print(f"INFO  {label} (indicatif sous 30 min)")
-    fe, fl = med(f"fd_{side}", early), med(f"fd_{side}", late)
-    checks[f"descripteurs {side} stables ({fe:.0f} → {fl:.0f})"] = fl <= fe + 20
+    fe, fl = med(f"fd_{side}", early), fd_final[side]
+    checks[f"descripteurs {side} stables ({fe:.0f} → {fl:.0f} en fin d'essai)"] = fl <= fe + 20
     gens = max(int(r[f"generations_{side}"]) for r in late)
     checks[f"générations {side} libérées (≤ 2 vivantes en fin : {gens})"] = gens <= 2
 print(f"{n} relevés, {rounds} vagues")
