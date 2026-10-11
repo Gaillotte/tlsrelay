@@ -32,6 +32,7 @@ constexpr std::size_t kFlushBytes = 256ULL * 1024;       // DATA écrites avant 
 constexpr auto kGoodbyeTimeout = 1s;                   // envoi de la dernière trame
 constexpr auto kRetryFirst = 250ms;                    // renégociation : premier délai entre essais
 constexpr auto kRetryMax = 5s;
+constexpr int kOpenAttempts = 3;                       // réouvertures du tunnel avant OPEN_OK
 
 std::string describe_peer(const tcp::socket& s) {
     std::error_code ec;
@@ -206,6 +207,38 @@ asio::awaitable<void> Channel::run_client() {
     spawn(keepalive());
 }
 
+// Client : nouvelle connexion de transport et nouvelle session après la perte
+// de la précédente avant OPEN_OK. Les données de l'application attendent dans
+// la file d'émission (rien n'a été envoyé avant OPEN_OK).
+asio::awaitable<void> Channel::reopen() {
+    retry_timer_.expires_after(std::chrono::milliseconds(100) * open_attempts_);
+    co_await retry_timer_.async_wait(use_tuple);
+    if (closing_) co_return;
+    std::string failure;
+    CloseReason failure_reason = CloseReason::dial_failed;
+    auto transport = co_await connect_transport(failure, failure_reason);
+    if (closing_) co_return;
+    if (!transport) {
+        if (open_attempts_ < kOpenAttempts) {
+            ++open_attempts_;
+            spawn(reopen());
+            co_return;
+        }
+        logging::activity().info("canal={} tunnel vers {} impossible : {}", id_, settings_.dial.target.to_string(),
+                                 failure);
+        stop(failure_reason);
+        co_return;
+    }
+    if (RAND_bytes(session_.data(), static_cast<int>(session_.size())) != 1) {
+        stop(CloseReason::internal_error);
+        co_return;
+    }
+    transport_index_ = 0;  // nouvelle session : jeton de la connexion n=1
+    control_.clear();
+    if (!install_transport(std::move(transport))) co_return;
+    send_control(tunnel::encode_open({tunnel::kVersion, session_, settings_.port}));
+}
+
 asio::awaitable<void> Channel::run_server() {
     opened_at_ = last_activity_ = Clock::now();
     logging::activity().debug("canal={} ouvert port={} pair=« {} » ({}) session={} destination={}", id_,
@@ -344,6 +377,16 @@ void Channel::transport_failed(const std::shared_ptr<Transport>& transport, std:
     if (closing_ || transport != transport_ || transport->broken) return;
     transport->broken = true;
     transport->stream->close();
+    // Client, avant OPEN_OK : aucune donnée de l'application n'a encore été
+    // envoyée ; le tunnel est rouvert (nouvelle session) au lieu d'échouer.
+    if (side_ == Side::client && !opened_ && open_attempts_ < kOpenAttempts) {
+        ++open_attempts_;
+        logging::activity().info("canal={} connexion de transport perdue avant l'ouverture du tunnel ({}) : "
+                                 "nouvel essai {}/{}",
+                                 id_, what, open_attempts_, kOpenAttempts);
+        spawn(reopen());
+        return;
+    }
     if (!resumable() || !opened_) {
         logging::activity().debug("canal={} connexion de transport perdue : {}", id_, what);
         stop(CloseReason::io_error);

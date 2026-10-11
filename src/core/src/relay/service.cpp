@@ -30,6 +30,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <psapi.h>
 #else
 #include <unistd.h>
 #endif
@@ -905,6 +906,37 @@ void Service::on_channel_closed(Port& port, Channel& channel) {
 
 namespace {
 
+// Ressources du processus : mémoire résidente (octets) et descripteurs
+// ouverts (handles sous Windows). -1 si indisponible.
+struct ProcessResources {
+    long long resident_bytes = -1;
+    long long descriptors = -1;
+};
+
+ProcessResources process_resources() {
+    ProcessResources r;
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof counters)) {
+        r.resident_bytes = static_cast<long long>(counters.WorkingSetSize);
+    }
+    DWORD handles = 0;
+    if (GetProcessHandleCount(GetCurrentProcess(), &handles)) r.descriptors = handles;
+#else
+    std::ifstream statm("/proc/self/statm");
+    long long size = 0, resident = 0;
+    if (statm >> size >> resident) r.resident_bytes = resident * ::sysconf(_SC_PAGESIZE);
+    std::error_code ec;
+    long long count = 0;
+    for (auto it = std::filesystem::directory_iterator("/proc/self/fd", ec);
+         !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+        ++count;
+    }
+    if (!ec) r.descriptors = count;
+#endif
+    return r;
+}
+
 std::string iso_time(std::chrono::system_clock::time_point tp) {
     const auto t = std::chrono::system_clock::to_time_t(tp);
     std::tm tm{};
@@ -985,6 +1017,15 @@ std::string Service::status_text() const {
         if (config_.mode == Mode::server) out << ", " << port.handshakes.load() << " connexion(s) en attente";
         out << '\n';
     }
+    const auto resources = process_resources();
+    if (resources.resident_bytes >= 0) {
+        out << "ressources : " << resources.resident_bytes / (1024LL * 1024) << " Mio résidents, " << resources.descriptors
+#ifdef _WIN32
+            << " handles\n";
+#else
+            << " descripteurs\n";
+#endif
+    }
     out << "canaux : " << stats_.channels_opened.load() << " ouverts, " << stats_.channels_closed.load()
         << " fermés, " << stats_.channels_rejected.load() << " refusés ; renégociations : "
         << stats_.renegotiations.load() << '\n';
@@ -1007,6 +1048,13 @@ std::string Service::metrics_text() const {
     metric("uptime_seconds", "gauge", "Durée depuis le démarrage.", inst,
            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - started_).count());
 
+    const auto resources = process_resources();
+    if (resources.resident_bytes >= 0) {
+        metric("process_resident_memory_bytes", "gauge", "Mémoire résidente du processus.", inst,
+               resources.resident_bytes);
+        metric("process_open_descriptors", "gauge", "Descripteurs ouverts (handles sous Windows).", inst,
+               resources.descriptors);
+    }
     out << "# HELP tlsrelay_channels_active Canaux ouverts, par port.\n# TYPE tlsrelay_channels_active gauge\n";
     for (const auto& port : ports_) {
         out << "tlsrelay_channels_active{" << inst << ",port=\"" << to_string(port.kind) << "\"} "

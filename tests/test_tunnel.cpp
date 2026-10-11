@@ -423,3 +423,26 @@ TEST_F(TunnelTest, KeepaliveToleratesApplicationNotReading) {
     EXPECT_EQ(client.stats().renegotiations.load(), 0u);  // aucune fausse détection
     EXPECT_EQ(server.stats().resume_failures.load(), 0u);
 }
+
+TEST_F(TunnelTest, TransportLossBeforeOpenOkReopensTunnel) {
+    // Le serveur cherche encore à joindre la destination quand le lien est coupé.
+    ReservedPort reserved;
+    auto server_cfg = server_config(reserved.port(), PortKind::tls);
+    server_cfg.destination->dial_timeout = 100ms;
+    server_cfg.destination->dial_retries = 3;
+    server_cfg.destination->dial_backoff = 400ms;
+    RunningService server(std::move(server_cfg));
+    CutProxy proxy(server.port(PortKind::tls));
+    RunningService client(client_config(proxy.port(), PortKind::tls));
+
+    TestClient app(client.port(PortKind::tls));
+    app.write("en attente");  // gardé par le client jusqu'à OPEN_OK
+    std::this_thread::sleep_for(250ms);
+    proxy.cut();
+    EchoServer echo(reserved);  // la destination devient joignable
+
+    EXPECT_EQ(app.read_exactly(10, 5s), "en attente");
+    EXPECT_EQ(proxy.connections(), 2);
+    EXPECT_EQ(client.stats().channels_opened.load(), 1u);
+    EXPECT_EQ(echo.accepted(), 1);  // une seule connexion à la destination aboutie
+}

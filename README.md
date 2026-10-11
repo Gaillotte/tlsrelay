@@ -37,7 +37,8 @@ Principales caractéristiques :
 | 6 | Cycle de vie : services systemd et Windows (boot, start, stop, restart, kill), instances nommées, canal d'administration, métriques Prometheus, journalisation à chaud | Terminée |
 | 7 | PKI en ligne de commande : `pki gen-csr`, `pki install`, mini-AC (`ca init`, `ca sign`, `ca list`) | Terminée |
 | 8 | Durcissement : PING périodique (lien muet), fuzzing libFuzzer (6 cibles, nuit de 1 h), clang-tidy et cppcheck sans alerte, scan TLS (sslyze), OpenSSL 3.5 sous Linux | Terminée |
-| 9 | Kit de test (charge, performances) | À venir |
+| 9 | Outillage de test `tlsrelay-testkit` (charge, débit, latence, perturbations réseau, PKI de test), objectifs de performance mesurés, endurance | Terminée |
+| 10 | Campagne de sécurité et kit de recette | À venir |
 
 Les trois ports sont disponibles. Le client et le serveur dialoguent avec le protocole de tunnel (SPEC §4) : sur les ports `tls` et `mtls`, le client renégocie la session à l'échéance de `session_lifetime` (nouvelle connexion, handshake complet avec la génération PKI courante) sans que l'application ne voie de coupure, et reprend la session si la connexion tombe. Le serveur n'accepte que des tlsrelay clients : une application ne peut pas s'y connecter directement.
 
@@ -154,6 +155,28 @@ Les nouvelles connexions utilisent v2. Les canaux déjà ouverts restent sur v1 
 ### Renégociation
 
 Sur les ports `tls` et `mtls`, chaque canal change de connexion TLS à l'échéance de `limits.session_lifetime` (± `session_jitter`). Les données continuent de passer pendant la renégociation et l'application ne voit aucune coupure. Le même mécanisme reprend la session si la connexion tombe, dans la limite de `limits.renegotiation_grace` (30 s par défaut). Avec `logging.level: debug`, chaque renégociation est journalisée.
+
+### Outillage de test : tlsrelay-testkit
+
+```sh
+tlsrelay-testkit pki --out /tmp/pki                         # PKI de test (relancé : nouvelle génération)
+tlsrelay-testkit echo --listen 127.0.0.1:8080               # destination d'écho
+tlsrelay-testkit load --target 127.0.0.1:7003 --channels 5000 --bytes 1MiB --hold 10s   # empreinte SHA-256 par canal
+tlsrelay-testkit throughput --target 127.0.0.1:7003 --duration 10s
+tlsrelay-testkit latency --target 127.0.0.1:7003            # comparer avec --target 127.0.0.1:8080 (direct)
+tlsrelay-testkit proxy --listen 127.0.0.1:9100 --target 127.0.0.1:9003 --delay 20ms --cut-every 60s
+```
+
+`--json` donne un résultat exploitable par un script. `tests/perf/perf.sh <build> [canaux]` vérifie les objectifs de performance ; `tests/perf/soak.sh <build> <minutes>` mène l'endurance (72 h : 4320 minutes, sur une machine dédiée).
+
+Mesures (Linux, poste de développement, chaîne mTLS complète client → serveur) :
+
+| Indicateur | Objectif | Mesuré |
+|---|---|---|
+| Canaux simultanés | 5 000 | 5 000, tous intègres |
+| Débit par canal | 100 Mbit/s | ≈ 800 Mbit/s |
+| Latence ajoutée (aller-retour) | < 1 ms | ≈ 0,35 ms |
+| Mémoire | — | ≈ 50 Kio par canal ouvert et par relais (≈ 250 Mio pour 5 000 canaux) |
 
 ### Service et administration
 

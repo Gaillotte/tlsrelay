@@ -22,6 +22,7 @@ include(Dependencies)
 
 add_subdirectory(src/core)
 add_subdirectory(src/app)
+add_subdirectory(src/testkit)
 
 if(TLSRELAY_FUZZ)
     add_subdirectory(fuzz)

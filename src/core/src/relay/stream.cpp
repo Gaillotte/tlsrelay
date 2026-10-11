@@ -138,14 +138,14 @@ bool Stream::export_keying_material(std::string_view label, const std::uint8_t* 
 }
 
 asio::awaitable<std::error_code> Stream::shutdown_send() {
-    std::error_code ec;
     if (ssl_) {
         ERR_clear_error();
         // Premier appel : envoie close_notify sans attendre celui du pair.
         SSL_shutdown(ssl_.get());
         ERR_clear_error();
-        ec = co_await flush();
     }
+    // Les octets en attente (dernière trame, close_notify) partent avant la fin du sens d'émission.
+    const auto ec = co_await flush();
     std::error_code ignored;
     socket_.shutdown(tcp::socket::shutdown_send, ignored);
     co_return ec;

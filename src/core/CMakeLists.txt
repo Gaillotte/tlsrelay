@@ -44,5 +44,5 @@ target_link_libraries(tlsrelay_core
         yaml-cpp::yaml-cpp)
 
 if(WIN32)
-    target_link_libraries(tlsrelay_core PUBLIC ws2_32 mswsock advapi32)
+    target_link_libraries(tlsrelay_core PUBLIC ws2_32 mswsock advapi32 psapi)
 endif()

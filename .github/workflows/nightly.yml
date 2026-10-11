@@ -1,0 +1,53 @@
+name: Mesures de nuit
+
+# PLAN §5.5 : chaque nuit, objectifs de performance complets (5 000 canaux) et
+# endurance de 30 min ; rapports publiés en artefacts. Un job hébergé par
+# GitHub est limité à 6 h : l'endurance de 72 h avant livraison se lance sur
+# une machine dédiée (tests/perf/soak.sh <build> 4320).
+on:
+  schedule:
+    - cron: "43 2 * * *"
+  workflow_dispatch:
+    inputs:
+      soak_minutes:
+        description: Durée de l'endurance en minutes (330 au plus sur un exécuteur GitHub)
+        default: "30"
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    name: Performances (5 000 canaux) et endurance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
+            libyaml-cpp-dev libspdlog-dev libcli11-dev
+
+      - name: Compilation
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_BUILD_TESTS=OFF
+          cmake --build build
+
+      - name: Objectifs de performance (5 000 canaux)
+        run: |
+          ulimit -n 65536
+          bash tests/perf/perf.sh build 5000 perf.json
+
+      - name: Endurance
+        run: bash tests/perf/soak.sh build "${{ github.event.inputs.soak_minutes || '30' }}" soak.csv
+
+      - name: Rapports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesures-de-nuit
+          path: |
+            perf.json
+            soak.csv

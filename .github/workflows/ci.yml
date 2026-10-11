@@ -61,6 +61,39 @@ jobs:
           /tmp/sslyze/bin/pip install -q sslyze
           PATH="/tmp/sslyze/bin:$PATH" bash tests/lifecycle/tls-scan.sh build/src/app/tlsrelay
 
+  perf:
+    name: Performances (1 000 canaux) et endurance (4 min)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
+            libyaml-cpp-dev libspdlog-dev libcli11-dev
+
+      - name: Compilation
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_BUILD_TESTS=OFF
+          cmake --build build
+
+      - name: Objectifs de performance
+        run: bash tests/perf/perf.sh build 1000 perf.json
+
+      - name: Endurance (rotations, renégociations, coupures)
+        run: bash tests/perf/soak.sh build 4 soak.csv
+
+      - name: Rapports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performances
+          path: |
+            perf.json
+            soak.csv
+
   openssl35:
     name: Linux OpenSSL 3.5 LTS
     runs-on: ubuntu-24.04

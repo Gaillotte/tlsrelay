@@ -176,6 +176,7 @@ private:
     asio::awaitable<void> lifetime();
     asio::awaitable<void> keepalive();
     asio::awaitable<void> migrate();
+    asio::awaitable<void> reopen();
     asio::awaitable<void> goodbye(std::shared_ptr<Transport> transport, std::string frame);
     asio::awaitable<void> retire(std::shared_ptr<Transport> transport);
 
@@ -221,6 +222,7 @@ private:
     std::shared_ptr<Stream> pending_stream_;  // client : connexion en cours d'ouverture
     bool migrating_ = false;
     bool opened_ = false;  // OPEN_OK envoyé (serveur) ou reçu (client)
+    int open_attempts_ = 0;  // client : réouvertures du tunnel avant OPEN_OK
 
     // Émission : trames de contrôle, puis DATA non acquittées (renvoyées après une reprise).
     std::deque<std::string> control_;
