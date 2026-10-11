@@ -71,7 +71,9 @@ if kill -0 "$tp" 2>/dev/null; then
   echo "débit : canal bloqué au-delà de 40 s, état des relais :"
   for role in client server; do echo "-- $role"; "$bin" channels -c $role.yaml || true; done
   for _ in 1 2 3; do sleep 5; for role in client server; do "$bin" channels -c $role.yaml | tail -n +2 || true; done; done
-  echo "-- sockets (Recv-Q / Send-Q)"; ss -tnpi state established "( sport = :$dest or dport = :$dest or sport = :$srv or dport = :$srv or sport = :$cli or dport = :$cli )" || true
+  echo "-- mémoire TCP du noyau"; cat /proc/net/sockstat; echo "tcp_mem=$(cat /proc/sys/net/ipv4/tcp_mem) tcp_rmem=$(cat /proc/sys/net/ipv4/tcp_rmem) tcp_wmem=$(cat /proc/sys/net/ipv4/tcp_wmem)"
+  nstat -az 2>/dev/null | grep -iE "pressure|prune|drop|zerowindow|rcvq|collapse|ofo|probe" || true
+  echo "-- sockets (Recv-Q / Send-Q)"; ss -tnpmi state established "( sport = :$dest or dport = :$dest or sport = :$srv or dport = :$srv or sport = :$cli or dport = :$cli )" || true
   for role in client server; do echo "-- journal $role"; tail -n 30 $role.log; done
   kill "$tp" 2>/dev/null || true
 fi
