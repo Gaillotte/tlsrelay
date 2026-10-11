@@ -12,6 +12,7 @@ add_executable(tlsrelay_tests
     test_frame.cpp
     test_tunnel.cpp
     test_admin.cpp
+    test_ca.cpp
     support/test_pki.cpp)
 
 target_link_libraries(tlsrelay_tests PRIVATE
@@ -36,4 +37,9 @@ if(NOT WIN32)
     add_test(NAME Lifecycle.Console
              COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle/console.sh" $<TARGET_FILE:tlsrelay>)
     set_tests_properties(Lifecycle.Console PROPERTIES TIMEOUT 120)
+endif()
+if(NOT WIN32)
+    add_test(NAME Lifecycle.Pki
+             COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle/pki.sh" $<TARGET_FILE:tlsrelay>)
+    set_tests_properties(Lifecycle.Pki PROPERTIES TIMEOUT 180)
 endif()

@@ -95,3 +95,7 @@ jobs:
       - name: Cycle de vie du service Windows (service réel)
         shell: pwsh
         run: .\tests\lifecycle\windows-service.ps1 -BuildDir build\windows-msvc\src\app\Release
+
+      - name: PKI en ligne de commande (mini-AC)
+        shell: pwsh
+        run: .\tests\lifecycle\windows-pki.ps1 -BuildDir build\windows-msvc\src\app\Release

@@ -1,4 +1,4 @@
-add_executable(tlsrelay main.cpp)
+add_executable(tlsrelay main.cpp passphrase.cpp)
 if(WIN32)
     target_sources(tlsrelay PRIVATE platform_windows.cpp)
     target_link_libraries(tlsrelay PRIVATE advapi32 shell32 ole32)

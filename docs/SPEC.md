@@ -295,14 +295,26 @@ Un échec conserve la génération courante et produit une erreur dans la catég
 
 | Commande | Effet |
 |---|---|
-| `tlsrelay pki gen-csr --role server\|client --subject DN [--san ...]` | Génère une clé P-256 dans le prochain `vN` et écrit `request.csr` |
-| `tlsrelay pki install --cert cert.pem --chain chain.pem --roots roots.pem --issuer issuer.pem` | Complète le répertoire `vN` |
+| `tlsrelay pki gen-csr -c <config> --subject DN [--san ...]` | Crée la génération suivante `vN` : clé P-256 (`key.pem`, lisible par le seul propriétaire) et `request.csr`. Les SAN y sont indicatifs. N'active rien |
+| `tlsrelay pki install -c <config> [--generation vN] [--from kit] [--cert] [--chain] [--roots] [--issuer]` | Complète la demande en attente (ou `vN`) ; fichiers de confiance absents repris de la génération courante ; contrôles de la section 7.3, garde-fou compris. N'active rien. Instance sans identité (client TLS) : crée une génération de confiance seule |
 | `tlsrelay check-pki -c <config> [vN]` | Applique la validation de la section 7.3, garde-fou compris, sans bascule (par défaut : génération courante) |
 | `tlsrelay pki activate -c <config> <vN> [--force]` | Contrôle comme `check-pki`, puis met à jour `current` (renommage atomique) |
-| `tlsrelay ca init --dir <ca_dir>` | Crée la racine et les deux AC intermédiaires (clés chiffrées, phrase de passe demandée) |
-| `tlsrelay ca sign --role server\|client --csr request.csr` | Signe une demande avec l'AC correspondante ; applique la politique de l'AC (usages, durée) en ignorant les extensions demandées ; refuse une clé non P-256 ou un sujet déjà attribué |
+| `tlsrelay ca init --dir <ac> [--org O]` | Crée la racine et les deux AC intermédiaires (section 7.1) ; refuse un répertoire non vide |
+| `tlsrelay ca sign --dir <ac> --role server\|client --csr <fichier> [--san ...] [--days 365] [--renew] --out <kit>` | Signe une demande et écrit le kit `cert.pem`, `chain.pem`, `trust-roots.pem`, `trust-issuer.pem` pour `pki install --from` |
+| `tlsrelay ca list --dir <ac>` | Inventaire : série, rôle, état (`valide`, `remplacé`), fin de validité, sujet |
 
-Clés des AC : PKCS#8 chiffré AES-256-CBC, dérivation scrypt.
+**Politique de `ca sign`**
+
+- La signature de la demande est vérifiée (preuve de possession de la clé) ; la clé doit être ECDSA P-256 ; le sujet doit contenir un CN.
+- Les extensions demandées sont ignorées (et listées) : le certificat reçoit `CA:false`, `digitalSignature`, l'usage du rôle (`serverAuth` ou `clientAuth`), SKI, AKI, et les SAN donnés par l'opérateur (`--san`, obligatoire pour un serveur).
+- Un sujet déjà attribué à un certificat en cours de validité est refusé, sauf `--renew` (même rôle) : l'ancien certificat est alors marqué `remplacé`.
+- Fin de validité : `--days` (365 par défaut), jamais au-delà de celle de l'AC qui signe. Numéro de série aléatoire de 128 bits ; signature SHA-384.
+
+**Répertoire de l'AC** : `root.*`, `servers.*`, `clients.*` (`.key.pem` et `.cert.pem`), `index.tsv` (inventaire), `issued/<série>.pem`. Clés des AC : PKCS#8 chiffré AES-256-CBC, dérivation scrypt (N = 2¹⁴, r = 8, p = 1) ; phrase de passe de 12 caractères au moins, saisie sans écho, ou lue dans `--passphrase-file` ou `TLSRELAY_CA_PASSPHRASE`. Droits : `0600` sous Linux ; ACL protégée (SYSTEM, Administrateurs, compte de l'opérateur) sous Windows.
+
+**Clé d'une instance sous Windows** : `key.pem` hérite des droits du répertoire `pki_root`, qui doit être réservé aux Administrateurs et au compte du service (par exemple `icacls <pki_root> /inheritance:r /grant:r "Administrateurs:(OI)(CI)F" "NT SERVICE\tlsrelay-N:(OI)(CI)R"`).
+
+La révocation (CRL), l'inventaire graphique et l'assistant de changement de racine relèvent de l'éditeur `tlsrelay-admin` (livraison 1.1).
 
 ## 8. Configuration
 

@@ -35,7 +35,8 @@ Principales caractéristiques :
 | 4 | Rotation à chaud des certificats et des AC jusqu'à la racine (générations, drain, garde-fou, `check-pki`, `pki activate`, `SIGHUP`) | Terminée |
 | 5 | Protocole de tunnel `tlsrelay/1` (trames, acquittements, contre-pression, demi-fermeture), renégociation transparente à l'échéance de `session_lifetime`, reprise de session après coupure | Terminée |
 | 6 | Cycle de vie : services systemd et Windows (boot, start, stop, restart, kill), instances nommées, canal d'administration, métriques Prometheus, journalisation à chaud | Terminée |
-| 7 | Commandes PKI et mini-AC | À venir |
+| 7 | PKI en ligne de commande : `pki gen-csr`, `pki install`, mini-AC (`ca init`, `ca sign`, `ca list`) | Terminée |
+| 8 | Durcissement (fuzzing, PING périodique, OpenSSL 3.5 sous Linux) | À venir |
 
 Les trois ports sont disponibles. Le client et le serveur dialoguent avec le protocole de tunnel (SPEC §4) : sur les ports `tls` et `mtls`, le client renégocie la session à l'échéance de `session_lifetime` (nouvelle connexion, handshake complet avec la génération PKI courante) sans que l'application ne voie de coupure, et reprend la session si la connexion tombe. Le serveur n'accepte que des tlsrelay clients : une application ne peut pas s'y connecter directement.
 
@@ -101,16 +102,40 @@ peers:
   - { name: poste-local, ip: 127.0.0.1, ports: [mtls], subject: "CN=client.test,O=tlsrelay-test" }
 ```
 
-Les clés produites par ce script ne sont pas chiffrées : il est réservé aux essais.
+Les clés produites par ce script ne sont pas chiffrées : il est réservé aux essais. Pour une PKI réelle, utiliser la mini-AC (ci-dessous).
+
+### PKI de production : mini-AC et demandes de signature
+
+La clé de chaque instance est générée sur sa machine et ne la quitte jamais ; seule la demande de signature (CSR) circule. L'AC (racine, AC Serveurs, AC Clients, clés chiffrées par phrase de passe) reste sur un poste d'administration.
+
+```sh
+# Poste d'administration, une seule fois
+tlsrelay ca init --dir /ac --org MonEntreprise
+
+# Machine du serveur tlsrelay
+tlsrelay pki gen-csr -c serveur.yaml --subject "CN=relais.exemple,O=MonEntreprise" --san relais.exemple
+#   → transmettre <pki_root>/v1/request.csr au poste d'administration
+
+# Poste d'administration : signature selon la politique de l'AC
+tlsrelay ca sign --dir /ac --role server --csr request.csr --san relais.exemple --out kit-relais
+#   → retransmettre le répertoire kit-relais
+
+# Machine du serveur
+tlsrelay pki install  -c serveur.yaml --from kit-relais   # complète v1 et la contrôle
+tlsrelay pki activate -c serveur.yaml v1
+```
+
+Même parcours pour un client mTLS avec `--role client` (sans `--san`). La politique de l'AC impose une clé ECDSA P-256 et ses propres extensions (celles de la demande sont ignorées), refuse un sujet déjà attribué (sauf `--renew`) et tient l'inventaire (`tlsrelay ca list --dir /ac`). La phrase de passe est demandée au clavier, ou lue dans `--passphrase-file` ou la variable `TLSRELAY_CA_PASSPHRASE`.
 
 ### Rotation des certificats
 
-Une génération PKI est un répertoire `vN` du `pki_root` ; le fichier `current` désigne la génération en service. Pour renouveler un certificat ou une AC :
+Une génération PKI est un répertoire `vN` du `pki_root` ; le fichier `current` désigne la génération en service. Pour renouveler un certificat (nouvelle clé) :
 
 ```sh
-cp -r /chemin/pki/v1 /chemin/pki/v2      # puis remplacer les fichiers à renouveler dans v2
-tlsrelay check-pki   -c serveur.yaml v2  # contrôles et garde-fou, sans bascule
-tlsrelay pki activate -c serveur.yaml v2 # bascule : prise en compte en 2 s par le service en cours
+tlsrelay pki gen-csr -c serveur.yaml --subject "CN=relais.exemple,O=MonEntreprise"   # crée v2
+tlsrelay ca sign --dir /ac --role server --csr request.csr --san relais.exemple --renew --out kit-v2
+tlsrelay pki install  -c serveur.yaml --from kit-v2   # fichiers de confiance repris de v1 ; garde-fou vérifié
+tlsrelay pki activate -c serveur.yaml v2              # prise en compte en 2 s par le service en cours
 ```
 
 Les nouvelles connexions utilisent v2. Les canaux déjà ouverts restent sur v1 jusqu'à leur prochaine renégociation (au plus `limits.session_lifetime`, 1 h par défaut), qui les fait passer sur v2 sans coupure ; v1 est libérée quand plus aucune connexion ne l'utilise. Pour changer de racine, suivre les 3 étapes de [SPEC §7.5](docs/SPEC.md).

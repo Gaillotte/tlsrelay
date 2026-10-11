@@ -3,6 +3,11 @@
 //   tlsrelay check-config -c <config>
 //   tlsrelay check-pki -c <config> [génération]
 //   tlsrelay pki activate -c <config> <génération> [--force]
+//   tlsrelay pki gen-csr -c <config> --subject DN [--san ...]
+//   tlsrelay pki install -c <config> [--generation vN] [--from kit] [--cert --chain --roots --issuer]
+//   tlsrelay ca init --dir <ac> [--org nom]
+//   tlsrelay ca sign --dir <ac> --role server|client --csr <fichier> [--san ...] [--days N] [--renew] --out <kit>
+//   tlsrelay ca list --dir <ac>
 //   tlsrelay status|channels|metrics|kill|log-reopen [cible]
 //   tlsrelay stop [cible] [--timeout durée]
 //   tlsrelay reload [cible] [--kill-old]
@@ -13,13 +18,16 @@
 //   tlsrelay version
 // cible : --instance N (défaut : default), -c <config> ou --admin <point d'accès>.
 
+#include "passphrase.hpp"
 #include "platform.hpp"
 
 #include "tlsrelay/admin/admin.hpp"
 #include "tlsrelay/config.hpp"
 #include "tlsrelay/logging.hpp"
 #include "tlsrelay/openssl_info.hpp"
+#include "tlsrelay/pki/authority.hpp"
 #include "tlsrelay/pki/generation.hpp"
+#include "tlsrelay/pki/request.hpp"
 #include "tlsrelay/relay/service.hpp"
 #include "tlsrelay/version.hpp"
 
@@ -32,6 +40,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -115,6 +124,141 @@ int cmd_pki_activate(const std::string& config_path, const std::string& name, bo
     }
     std::cout << "génération « " << name << " » activée dans " << root
               << " (prise en compte par le service en cours d'exécution à la prochaine surveillance, ou avec SIGHUP)\n";
+    return kExitOk;
+}
+
+void print_check(const tlsrelay::pki::LoadResult& result) {
+    for (const auto& e : result.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
+    for (const auto& w : result.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+}
+
+const char* role_text(tlsrelay::pki::Role role) { return role == tlsrelay::pki::Role::server ? "server" : "client"; }
+
+int cmd_gen_csr(const std::string& config_path, const std::string& subject, const std::vector<std::string>& san_items) {
+    const auto ctx = pki_context(config_path);
+    if (!ctx) return kExitConfig;
+    const auto& [config, req] = *ctx;
+    if (!req.identity) {
+        std::cerr << "erreur : cette instance ne présente pas de certificat (client sans port mtls) : "
+                     "seuls les fichiers de confiance sont nécessaires (tlsrelay pki install --roots --issuer)\n";
+        return kExitConfig;
+    }
+    std::string error;
+    const auto sans = tlsrelay::pki::parse_sans(san_items, error);
+    if (!sans) {
+        std::cerr << "erreur : " << error << '\n';
+        return kExitConfig;
+    }
+    try {
+        const auto result = tlsrelay::pki::generate_csr(config.credentials->pki_root, subject, *sans);
+        std::cout << "génération " << result.generation << " : clé ECDSA P-256 créée (elle ne quitte pas cette machine)\n"
+                  << "demande de signature : " << result.csr.string() << " (sujet " << result.subject << ")\n"
+                  << "étapes suivantes :\n"
+                  << "  1. sur le poste de l'AC : tlsrelay ca sign --dir <ac> --role " << role_text(req.role)
+                  << " --csr " << result.csr.string() << (sans->empty() ? std::string() : " --san " + sans->to_openssl())
+                  << " --out <kit>\n"
+                  << "  2. ici : tlsrelay pki install -c " << config_path << " --from <kit>\n"
+                  << "  3. ici : tlsrelay pki activate -c " << config_path << " " << result.generation << '\n';
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    return kExitOk;
+}
+
+int cmd_pki_install(const std::string& config_path, const std::string& generation,
+                    const tlsrelay::pki::InstallFiles& files) {
+    const auto ctx = pki_context(config_path);
+    if (!ctx) return kExitConfig;
+    const auto& [config, req] = *ctx;
+    try {
+        const auto result = tlsrelay::pki::install(config.credentials->pki_root,
+                                                   generation.empty() ? std::nullopt : std::optional(generation),
+                                                   files, req);
+        print_check(result.check);
+        if (!result.check.generation) {
+            std::cerr << "génération « " << result.generation << " » installée mais refusée par les contrôles\n";
+            return kExitConfig;
+        }
+        std::cout << "génération « " << result.generation << " » prête ; activation : tlsrelay pki activate -c "
+                  << config_path << " " << result.generation << '\n';
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    return kExitOk;
+}
+
+int cmd_ca_init(const std::string& dir, const std::string& organization, const std::string& passphrase_file) {
+    const auto passphrase = tlsrelay::app::read_passphrase(passphrase_file, true);
+    if (!passphrase) return kExitRuntime;
+    try {
+        tlsrelay::pki::AuthorityOptions options;
+        if (!organization.empty()) options.organization = organization;
+        tlsrelay::pki::init_authority(dir, *passphrase, options);
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    std::cout << "AC créée dans " << dir << " : racine (P-384), AC Serveurs et AC Clients ; clés chiffrées\n"
+              << "conserver ce répertoire et la phrase de passe sur le poste d'administration\n";
+    return kExitOk;
+}
+
+int cmd_ca_sign(const std::string& dir, const std::string& role, const std::string& csr_path,
+                const std::vector<std::string>& san_items, int days, bool renew, const std::string& out,
+                const std::string& passphrase_file) {
+    std::string error;
+    const auto sans = tlsrelay::pki::parse_sans(san_items, error);
+    if (!sans) {
+        std::cerr << "erreur : " << error << '\n';
+        return kExitConfig;
+    }
+    std::ifstream in(csr_path, std::ios::binary);
+    if (!in) {
+        std::cerr << "erreur : lecture impossible : " << csr_path << '\n';
+        return kExitRuntime;
+    }
+    tlsrelay::pki::SignRequest request;
+    request.role = role == "server" ? tlsrelay::pki::Role::server : tlsrelay::pki::Role::client;
+    request.csr_pem.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    request.sans = *sans;
+    request.days = days;
+    request.renew = renew;
+    const auto passphrase = tlsrelay::app::read_passphrase(passphrase_file, false);
+    if (!passphrase) return kExitRuntime;
+    try {
+        const auto issued = tlsrelay::pki::sign_request(dir, *passphrase, request);
+        tlsrelay::pki::write_bundle(out, issued);
+        std::cout << "certificat " << role << " émis : série " << issued.serial << ", sujet " << issued.subject
+                  << ", valable jusqu'au " << issued.not_after << '\n';
+        if (!issued.ignored_extensions.empty()) {
+            std::string list;
+            for (const auto& e : issued.ignored_extensions) list += (list.empty() ? "" : ", ") + e;
+            std::cout << "extensions demandées ignorées (politique de l'AC) : " << list << '\n';
+        }
+        std::cout << "kit à transmettre à l'instance : " << out
+                  << " (cert.pem, chain.pem, trust-roots.pem, trust-issuer.pem) ; puis tlsrelay pki install -c <config> "
+                     "--from <kit>\n";
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    return kExitOk;
+}
+
+int cmd_ca_list(const std::string& dir) {
+    try {
+        const auto entries = tlsrelay::pki::list_issued(dir);
+        std::cout << entries.size() << " certificat(s) émis\n";
+        for (const auto& e : entries) {
+            std::cout << e.serial << "  " << e.role << "  " << e.status << "  jusqu'au " << e.not_after << "  "
+                      << e.subject << '\n';
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
     return kExitOk;
 }
 
@@ -378,6 +522,44 @@ int main(int argc, char** argv) {
     activate->add_option("-c,--config", config_path, "Fichier de configuration")->required();
     activate->add_option("generation", generation, "Nom de la génération à activer (ex. v2)")->required();
     activate->add_flag("--force", force, "Active même si les contrôles échouent (urgence uniquement)");
+    std::string subject;
+    std::vector<std::string> sans;
+    auto* gen_csr = pki->add_subcommand("gen-csr", "Nouvelle génération : clé P-256 et demande de signature (CSR)");
+    gen_csr->add_option("-c,--config", config_path, "Fichier de configuration")->required();
+    gen_csr->add_option("--subject", subject, "Sujet, par exemple \"CN=relay.exemple,O=MonEntreprise\"")->required();
+    gen_csr->add_option("--san", sans, "Noms DNS ou adresses IP (indicatif : l'AC fixe ceux du certificat)");
+    tlsrelay::pki::InstallFiles install_files;
+    std::string from, cert, chain, roots, issuer;
+    auto* pki_install = pki->add_subcommand("install", "Complète une génération avec le certificat signé (sans l'activer)");
+    pki_install->add_option("-c,--config", config_path, "Fichier de configuration")->required();
+    pki_install->add_option("--generation", generation, "Génération à compléter (défaut : la demande en attente)");
+    pki_install->add_option("--from", from, "Kit produit par « ca sign »");
+    pki_install->add_option("--cert", cert, "Certificat signé");
+    pki_install->add_option("--chain", chain, "AC intermédiaire qui l'a signé");
+    pki_install->add_option("--roots", roots, "Racines de confiance (défaut : celles de la génération courante)");
+    pki_install->add_option("--issuer", issuer, "AC attendue chez les pairs (défaut : celle de la génération courante)");
+
+    // Mini-AC (poste d'administration).
+    std::string ca_dir, organization, passphrase_file, role, csr_path, out;
+    int days = 365;
+    bool renew = false;
+    auto* ca = app.add_subcommand("ca", "Mini-AC : racine, AC Serveurs et AC Clients");
+    ca->require_subcommand(1);
+    auto* ca_init = ca->add_subcommand("init", "Crée l'AC (clés chiffrées, phrase de passe demandée)");
+    ca_init->add_option("--dir", ca_dir, "Répertoire de l'AC (vide ou absent)")->required();
+    ca_init->add_option("--org", organization, "Organisation (O) des certificats d'AC (défaut : tlsrelay)");
+    ca_init->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
+    auto* ca_sign = ca->add_subcommand("sign", "Signe une demande selon la politique de l'AC");
+    ca_sign->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
+    ca_sign->add_option("--role", role, "server ou client")->required()->check(CLI::IsMember({"server", "client"}));
+    ca_sign->add_option("--csr", csr_path, "Demande de signature (request.csr)")->required();
+    ca_sign->add_option("--san", sans, "Noms DNS ou adresses IP du certificat (obligatoire pour un serveur)");
+    ca_sign->add_option("--days", days, "Durée de validité en jours (défaut : 365)")->check(CLI::Range(1, 3650));
+    ca_sign->add_flag("--renew", renew, "Renouvellement : le certificat en cours pour ce sujet est remplacé");
+    ca_sign->add_option("--out", out, "Répertoire du kit à transmettre à l'instance")->required();
+    ca_sign->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
+    auto* ca_list = ca->add_subcommand("list", "Inventaire des certificats émis");
+    ca_list->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
 
     auto* version = app.add_subcommand("version", "Affiche la version de tlsrelay et d'OpenSSL");
 
@@ -443,6 +625,17 @@ int main(int argc, char** argv) {
 
     if (*check_pki) return cmd_check_pki(config_path, generation);
     if (*activate) return cmd_pki_activate(config_path, generation, force);
+    if (*gen_csr) return cmd_gen_csr(config_path, subject, sans);
+    if (*pki_install) {
+        auto opt = [](const std::string& v) -> std::optional<std::filesystem::path> {
+            return v.empty() ? std::nullopt : std::optional<std::filesystem::path>(v);
+        };
+        install_files = {opt(from), opt(cert), opt(chain), opt(roots), opt(issuer)};
+        return cmd_pki_install(config_path, generation, install_files);
+    }
+    if (*ca_init) return cmd_ca_init(ca_dir, organization, passphrase_file);
+    if (*ca_sign) return cmd_ca_sign(ca_dir, role, csr_path, sans, days, renew, out, passphrase_file);
+    if (*ca_list) return cmd_ca_list(ca_dir);
 
     if (*version) {
         std::cout << "tlsrelay " << tlsrelay::kVersion << '\n'

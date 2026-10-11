@@ -274,6 +274,8 @@ LoadResult check_candidate(const fs::path& pki_root, const std::string& name, co
 
     const auto current = load_current_generation(pki_root, req);
     if (!current.generation) {
+        std::error_code ec;
+        if (!fs::exists(pki_root / "current", ec)) return result;  // première activation : rien à préserver
         result.warnings.push_back({(pki_root / "current").string(),
                                    "génération courante illisible : garde-fou des racines non vérifié"});
     } else if (auto problem = rotation_guard(*current.generation, *result.generation, req)) {
