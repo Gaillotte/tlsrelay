@@ -188,28 +188,27 @@ asio::awaitable<void> Channel::run_client() {
     spawn(uplink());
     spawn(watchdog());
 
-    std::string failure;
-    CloseReason failure_reason = CloseReason::dial_failed;
-    auto transport = co_await connect_transport(failure, failure_reason);
-    if (closing_) co_return;
-    if (!transport && failure_reason != CloseReason::io_error) {
+    std::shared_ptr<Transport> transport;
+    for (;;) {
+        std::string failure;
+        CloseReason failure_reason = CloseReason::dial_failed;
+        transport = co_await connect_transport(failure, failure_reason);
+        if (closing_) co_return;
+        if (transport) break;
+        // Connexion perdue pendant le handshake : même règle qu'une perte avant
+        // OPEN_OK (la file d'émission attend) ; un refus n'est pas retenté.
+        if (failure_reason == CloseReason::io_error && open_attempts_ < kOpenAttempts) {
+            ++open_attempts_;
+            logging::activity().info("canal={} tunnel vers {} impossible ({}) : nouvel essai {}/{}", id_,
+                                     settings_.dial.target.to_string(), failure, open_attempts_, kOpenAttempts);
+            retry_timer_.expires_after(std::chrono::milliseconds(100) * open_attempts_);
+            co_await retry_timer_.async_wait(use_tuple);
+            if (closing_) co_return;
+            continue;
+        }
         logging::activity().info("canal={} tunnel vers {} impossible : {}", id_, settings_.dial.target.to_string(),
                                  failure);
         stop(failure_reason);
-        co_return;
-    }
-    if (!transport) {
-        // Connexion perdue pendant le handshake : même règle qu'une perte avant
-        // OPEN_OK, la file d'émission attend.
-        ++open_attempts_;
-        logging::activity().info("canal={} tunnel vers {} impossible ({}) : nouvel essai {}/{}", id_,
-                                 settings_.dial.target.to_string(), failure, open_attempts_, kOpenAttempts);
-        spawn(reopen());
-        spawn(sender());
-        spawn(downlink());
-        spawn(ack_loop());
-        spawn(lifetime());
-        spawn(keepalive());
         co_return;
     }
     if (!install_transport(transport)) co_return;
@@ -295,12 +294,14 @@ asio::awaitable<std::shared_ptr<Transport>> Channel::connect_transport(std::stri
             co_return nullptr;
         }
     }
-    auto socket = co_await asio::co_spawn(executor_, dial(settings_.dial, id_, stats_),
+    std::error_code dial_error;
+    auto socket = co_await asio::co_spawn(executor_, dial(settings_.dial, id_, stats_, &dial_error),
                                           asio::bind_cancellation_slot(dial_cancel_.slot(), asio::use_awaitable));
     if (closing_) co_return nullptr;
     if (!socket) {
         failure = "connexion TCP impossible";
-        reason = CloseReason::dial_failed;
+        // Connexion acceptée puis coupée aussitôt : une coupure, pas un refus.
+        reason = dial_error == asio::error::connection_reset ? CloseReason::io_error : CloseReason::dial_failed;
         co_return nullptr;
     }
     std::error_code ignored;
@@ -653,6 +654,25 @@ asio::awaitable<void> Channel::migrate() {
             t->stream->close();
             if (!ec && r.frame && r.frame->type == FrameType::resume_fail) {
                 const auto code = static_cast<CloseCode>(tunnel::read_code(*r.frame));
+                if (code == CloseCode::normal && local_shutdown_) {
+                    // Le serveur a tout reçu et livré, et ce côté a acquitté tout ce
+                    // qu'il a envoyé : seule la fin de l'échange (ACK final,
+                    // SHUTDOWN_WR) s'est perdue avec la connexion.
+                    logging::activity().debug("canal={} session déjà terminée par le serveur", id_);
+                    unacked_.clear();
+                    unacked_bytes_ = 0;
+                    // Tout ce que le serveur a envoyé a été reçu : fin du sens descendant
+                    // après la livraison en cours, s'il y en a une.
+                    while (delivering_ && !closing_) {
+                        retry_timer_.expires_after(std::chrono::milliseconds(10));
+                        co_await retry_timer_.async_wait(use_tuple);
+                    }
+                    if (closing_) break;
+                    if (!peer_final_) peer_final_ = last_rx_;
+                    co_await deliver_peer_shutdown();
+                    if (!closing_) stop(CloseReason::normal);
+                    break;
+                }
                 ++stats_.resume_failures;
                 logging::activity().info("canal={} reprise de session refusée par le serveur : {}", id_,
                                          tunnel::to_string(code));

@@ -169,6 +169,14 @@ private:
     std::unordered_map<std::uint64_t, std::weak_ptr<Channel>> channels_;
     std::unordered_map<std::string, std::weak_ptr<Channel>> sessions_;      // serveur : par session_id (hex)
     std::unordered_map<std::uint64_t, std::weak_ptr<Stream>> handshakes_;   // serveur : connexions en attente
+    // Serveur : sessions terminées normalement, gardées pendant renegotiation_grace
+    // pour répondre à une reprise dont la connexion a perdu l'acquittement final.
+    struct FinishedSession {
+        tunnel::Token token;
+        std::chrono::steady_clock::time_point expiry;
+    };
+    std::unordered_map<std::string, FinishedSession> finished_;
+    std::list<std::pair<std::chrono::steady_clock::time_point, std::string>> finished_order_;
     std::atomic<std::uint64_t> next_id_{1};
     std::atomic<bool> stopping_{false};
     std::atomic<bool> aborting_{false};

@@ -250,6 +250,8 @@ int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milli
     asio::io_context io;
     std::atomic<std::uint64_t> total{0};
     std::atomic<int> intact{0};
+    std::mutex errors_mutex;
+    std::vector<std::string> errors;
     const auto start = Clock::now();
     const auto deadline = start + duration;
     for (int i = 0; i < channels; ++i) {
@@ -258,7 +260,11 @@ int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milli
             [&, i, target]() -> asio::awaitable<void> {
                 tcp::socket s(co_await asio::this_coro::executor);
                 auto [cec] = co_await s.async_connect(target, use_tuple);
-                if (cec) co_return;
+                if (cec) {
+                    std::lock_guard lock(errors_mutex);
+                    errors.push_back("canal " + std::to_string(i) + " : connexion impossible : " + cec.message());
+                    co_return;
+                }
                 std::error_code ignored;
                 s.set_option(tcp::no_delay(true), ignored);
                 std::string sent_digest, received_digest, error;
@@ -266,7 +272,15 @@ int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milli
                                                            deadline, sent_digest) &&
                                               receive_all(s, received_digest, error));
                 total += std::get<1>(result);
-                if (std::get<0>(result) == std::get<1>(result) && sent_digest == received_digest) ++intact;
+                if (std::get<0>(result) == std::get<1>(result) && sent_digest == received_digest) {
+                    ++intact;
+                    co_return;
+                }
+                const double at = std::chrono::duration<double>(Clock::now() - start).count();
+                std::lock_guard lock(errors_mutex);
+                errors.push_back("canal " + std::to_string(i) + " : " + std::to_string(std::get<0>(result)) +
+                                 " octets émis, " + std::to_string(std::get<1>(result)) + " reçus, arrêt à " +
+                                 std::to_string(static_cast<int>(at)) + " s" + (error.empty() ? "" : " : " + error));
             },
             asio::detached);
     }
@@ -276,12 +290,15 @@ int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milli
     if (json) {
         std::cout << "{\"channels\":" << channels << ",\"intact\":" << intact << ",\"bytes\":" << total
                   << ",\"seconds\":" << seconds << ",\"mbit_per_s\":" << mbits
-                  << ",\"mbit_per_s_per_channel\":" << mbits / channels << "}" << '\n' << std::flush;
+                  << ",\"mbit_per_s_per_channel\":" << mbits / channels << ",\"errors\":[";
+        for (std::size_t k = 0; k < errors.size(); ++k) std::cout << (k ? "," : "") << '"' << json_escape(errors[k]) << '"';
+        std::cout << "]}" << '\n' << std::flush;
     } else {
         std::printf("débit : %.1f Mbit/s sur %d canal(aux), soit %.1f Mbit/s par canal (%.1f Mio en %.2f s, %d/%d "
                     "intègres)\n",
                     mbits, channels, mbits / channels, static_cast<double>(total.load()) / (1 << 20), seconds,
                     intact.load(), channels);
+        for (const auto& e : errors) std::printf("  %s\n", e.c_str());
     }
     return intact == channels ? 0 : 1;
 }

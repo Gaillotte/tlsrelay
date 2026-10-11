@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <system_error>
 
 namespace tlsrelay::relay {
 
@@ -22,7 +23,9 @@ struct DialOptions {
 };
 
 // Ouvre une connexion TCP sortante, avec essais successifs (SPEC §5.4).
-// Retourne std::nullopt si tous les essais échouent ou si l'opération est annulée.
-asio::awaitable<std::optional<asio::ip::tcp::socket>> dial(DialOptions options, std::uint64_t channel_id, Stats& stats);
+// Retourne std::nullopt si tous les essais échouent ou si l'opération est annulée ;
+// last_error, s'il est fourni, reçoit l'erreur du dernier essai.
+asio::awaitable<std::optional<asio::ip::tcp::socket>> dial(DialOptions options, std::uint64_t channel_id, Stats& stats,
+                                                           std::error_code* last_error = nullptr);
 
 }  // namespace tlsrelay::relay

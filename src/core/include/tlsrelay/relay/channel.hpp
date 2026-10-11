@@ -140,6 +140,9 @@ public:
     std::uint64_t id() const { return id_; }
     const asio::any_io_executor& executor() const { return executor_; }
     const tunnel::SessionId& session() const { return session_; }
+    // Après la fermeture : raison et jeton de reprise de la dernière connexion.
+    CloseReason close_reason() const { return reason_.value_or(CloseReason::normal); }
+    const std::optional<tunnel::Token>& resume_token() const { return token_; }
 
 private:
     using Clock = std::chrono::steady_clock;

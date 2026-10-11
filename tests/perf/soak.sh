@@ -21,9 +21,10 @@ port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); 
 log() { echo "[$(date -u +%H:%M:%S)] $*"; }
 
 # Rythmes : réduits pour un essai court, réalistes pour 72 h.
-lifetime=$(( minutes >= 120 ? 600 : 60 ))       # session_lifetime (s)
-rotate_every=$(( minutes >= 120 ? 1800 : 180 ))  # rotation PKI (s)
-cut_every=$(( minutes >= 120 ? 900 : 120 ))      # coupure réseau (s)
+# Variables d'environnement LIFETIME, ROTATE_EVERY et CUT_EVERY pour les forcer.
+lifetime=${LIFETIME:-$(( minutes >= 120 ? 600 : 60 ))}            # session_lifetime (s)
+rotate_every=${ROTATE_EVERY:-$(( minutes >= 120 ? 1800 : 180 ))}  # rotation PKI (s)
+cut_every=${CUT_EVERY:-$(( minutes >= 120 ? 900 : 30 ))}         # coupure réseau (s)
 
 "$kit" pki --out pki >/dev/null
 dest=$(port); srv=$(port); prx=$(port); cli=$(port)
@@ -35,7 +36,7 @@ limits="limits: { session_lifetime: ${lifetime}s, renegotiation_grace: 20s, idle
 cat > server.yaml <<YAML
 mode: server
 instance: soak-server
-logging: { output: $work/server.log }
+logging: { output: $work/server.log, level: ${LOG_LEVEL:-info} }
 admin: { endpoint: $work/server.sock }
 credentials: { pki_root: $work/pki/serveur }
 whitelist: { file: $work/wl.yaml }
@@ -47,7 +48,7 @@ YAML
 cat > client.yaml <<YAML
 mode: client
 instance: soak-client
-logging: { output: $work/client.log }
+logging: { output: $work/client.log, level: ${LOG_LEVEL:-info} }
 admin: { endpoint: $work/client.sock }
 credentials: { pki_root: $work/pki/client }
 $limits
@@ -86,7 +87,7 @@ while [ "$(date +%s)" -lt "$end" ]; do
     "$(metric client tlsrelay_renegotiations_total)" "$(grep -c coupure proxy.log || true)" >> samples.csv
   sleep 5
 done
-wait "$stream" || true
+wait "$stream" || cat stream.json
 [ -n "$csv_out" ] && cp samples.csv "$csv_out"
 
 python3 - "$rounds" "$failed_rounds" "$minutes" <<'PY'

@@ -230,10 +230,11 @@ TEST_F(MtlsTest, ReloadWithNextRenegotiationKeepsActiveChannel) {
     ASSERT_TRUE(works(app, "avant"));
 
     write_whitelist("peers: []\n");
-    // Attend que la nouvelle liste soit en vigueur : une nouvelle connexion est refusée.
+    // Attend que la nouvelle liste soit en vigueur : une nouvelle connexion est refusée
+    // (refus de l'adresse avant le handshake : le client le retente comme une coupure).
     EXPECT_TRUE(eventually([&] {
         TestClient probe(client.port(PortKind::mtls));
-        return probe.wait_closed(500ms);
+        return probe.wait_closed(3s);
     }));
     EXPECT_TRUE(works(app, "toujours ouvert"));
     EXPECT_EQ(server.stats().peers_revoked.load(), 0u);

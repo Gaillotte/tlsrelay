@@ -51,18 +51,20 @@ asio::awaitable<std::error_code> Stream::handshake() {
         const int err = ret == 1 ? SSL_ERROR_NONE : SSL_get_error(ssl_.get(), ret);
         // Envoie ce qu'OpenSSL a produit, y compris une alerte en cas d'échec.
         const auto flush_ec = co_await flush();
+        // Connexion perdue (et non handshake refusé) : la reprise reste possible.
+        const auto interrupted = [this](std::error_code ec) {
+            handshake_interrupted_ = true;
+            failure_reason_ = ec == asio::error::eof ? "connexion fermée par le pair pendant le handshake"
+                                                      : "erreur réseau pendant le handshake : " + ec.message();
+            return ec;
+        };
         if (err == SSL_ERROR_NONE) {
-            if (flush_ec) co_return flush_ec;
+            if (flush_ec) co_return interrupted(flush_ec);
             break;
         }
         if (err == SSL_ERROR_WANT_READ) {
-            if (flush_ec) co_return flush_ec;
-            if (auto ec = co_await fill()) {
-                handshake_interrupted_ = true;
-                failure_reason_ = ec == asio::error::eof ? "connexion fermée par le pair pendant le handshake"
-                                                          : "erreur réseau pendant le handshake : " + ec.message();
-                co_return ec;
-            }
+            if (flush_ec) co_return interrupted(flush_ec);
+            if (auto ec = co_await fill()) co_return interrupted(ec);
             continue;
         }
         const long verify = SSL_get_verify_result(ssl_.get());

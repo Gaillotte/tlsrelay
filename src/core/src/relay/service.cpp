@@ -16,6 +16,8 @@
 #include <asio/this_coro.hpp>
 #include <asio/use_awaitable.hpp>
 
+#include <openssl/crypto.h>
+
 #include <algorithm>
 #include <csignal>
 #include <ctime>
@@ -534,12 +536,20 @@ asio::awaitable<void> Service::accept_loop(Port& port) {
         if (config_.mode == Mode::server) {
             std::error_code rec;
             const auto remote = socket.remote_endpoint(rec);
+            if (rec) {
+                // Connexion déjà fermée par le pair (RST) avant d'être traitée.
+                logging::activity().debug("port={} connexion fermée avant son acceptation : {}", to_string(port.kind),
+                                          rec.message());
+                std::error_code ignored;
+                socket.close(ignored);
+                continue;
+            }
             const auto address = whitelist::normalize(remote.address());
             const auto wl = current_whitelist();
-            if (rec || !wl || !wl->admits(address, port.kind)) {
+            if (!wl || !wl->admits(address, port.kind)) {
                 ++stats_.peers_rejected;
                 logging::activity().info("port={} connexion de {} refusée : adresse absente de la liste blanche",
-                                         to_string(port.kind), rec ? std::string("?") : address.to_string());
+                                         to_string(port.kind), address.to_string());
                 std::error_code ignored;
                 socket.close(ignored);
                 continue;
@@ -697,6 +707,24 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
                 channel->executor(), channel->accept_resume(transport, request, std::move(peer), port.kind),
                 asio::use_awaitable);
         } else {
+            bool finished = false;
+            {
+                std::lock_guard lock(channels_mutex_);
+                if (auto it = finished_.find(key); it != finished_.end() &&
+                                                   it->second.expiry > std::chrono::steady_clock::now() &&
+                                                   CRYPTO_memcmp(it->second.token.data(), request.token.data(),
+                                                                 request.token.size()) == 0) {
+                    finished_.erase(it);
+                    finished = true;
+                }
+            }
+            if (finished) {
+                // Tout a été livré et acquitté de ce côté : seul l'acquittement final s'est perdu.
+                logging::activity().debug("port={} reprise pair={} : session {} déjà terminée normalement", kind,
+                                          endpoint, key);
+                co_await reject(stream, tunnel::encode_resume_fail(code(tunnel::CloseCode::normal)));
+                co_return;
+            }
             ++stats_.resume_failures;
             logging::activity().info("port={} reprise refusée pair={} : session {} inconnue", kind, endpoint, key);
         }
@@ -895,6 +923,19 @@ void Service::on_channel_closed(Port& port, Channel& channel) {
             if (auto it = sessions_.find(key); it != sessions_.end()) {
                 auto current = it->second.lock();
                 if (!current || current.get() == &channel) sessions_.erase(it);
+            }
+            const auto now = std::chrono::steady_clock::now();
+            while (!finished_order_.empty() && finished_order_.front().first <= now) {
+                if (auto it = finished_.find(finished_order_.front().second);
+                    it != finished_.end() && it->second.expiry <= now) {
+                    finished_.erase(it);
+                }
+                finished_order_.pop_front();
+            }
+            if (channel.close_reason() == CloseReason::normal && channel.resume_token()) {
+                const auto expiry = now + config_.limits.renegotiation_grace;
+                finished_[key] = FinishedSession{*channel.resume_token(), expiry};
+                finished_order_.emplace_back(expiry, key);
             }
         }
     }

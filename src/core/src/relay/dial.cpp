@@ -70,7 +70,8 @@ asio::awaitable<std::optional<tcp::socket>> attempt(const DialOptions& options, 
 
 }  // namespace
 
-asio::awaitable<std::optional<tcp::socket>> dial(DialOptions options, std::uint64_t channel_id, Stats& stats) {
+asio::awaitable<std::optional<tcp::socket>> dial(DialOptions options, std::uint64_t channel_id, Stats& stats,
+                                                 std::error_code* last_error) {
     auto ex = co_await asio::this_coro::executor;
     asio::steady_timer backoff_timer(ex);
     Duration delay = options.backoff;
@@ -89,6 +90,7 @@ asio::awaitable<std::optional<tcp::socket>> dial(DialOptions options, std::uint6
         auto socket = co_await attempt(options, ec);
         if (socket) co_return std::move(socket);
 
+        if (last_error) *last_error = ec;
         ++stats.dial_attempt_failures;
         logging::activity().debug("canal={} échec de connexion {}/{} vers {} : {}", channel_id, n, options.attempts,
                                   target, ec.message());
