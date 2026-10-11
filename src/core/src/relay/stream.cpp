@@ -108,19 +108,30 @@ asio::awaitable<std::pair<std::error_code, std::size_t>> Stream::read_some(asio:
     }
 }
 
-asio::awaitable<std::error_code> Stream::write(asio::const_buffer buffer) {
+std::error_code Stream::queue(asio::const_buffer buffer) {
     if (!ssl_) {
-        auto [ec, n] = co_await asio::async_write(socket_, buffer, use_tuple);
-        (void)n;
-        co_return ec;
+        plain_out_.append(static_cast<const char*>(buffer.data()), buffer.size());
+        return {};
     }
     ERR_clear_error();
     std::size_t written = 0;
     // BIO mémoire : l'écriture est toujours complète, l'envoi réel se fait dans flush().
     if (SSL_write_ex(ssl_.get(), buffer.data(), buffer.size(), &written) != 1 || written != buffer.size()) {
-        co_return tls_error();
+        return tls_error();
     }
+    return {};
+}
+
+asio::awaitable<std::error_code> Stream::write(asio::const_buffer buffer) {
+    if (auto ec = queue(buffer)) co_return ec;
     co_return co_await flush();
+}
+
+bool Stream::export_keying_material(std::string_view label, const std::uint8_t* context, std::size_t context_size,
+                                    std::uint8_t* out, std::size_t out_size) const {
+    if (!ssl_) return false;
+    return SSL_export_keying_material(ssl_.get(), out, out_size, label.data(), label.size(), context, context_size,
+                                      1) == 1;
 }
 
 asio::awaitable<std::error_code> Stream::shutdown_send() {
@@ -159,20 +170,34 @@ std::string Stream::peer_subject() const {
 
 asio::awaitable<std::error_code> Stream::flush() {
     // Une seule écriture à la fois sur la socket : on attend la fin de l'envoi
-    // en cours, qui inclura les octets que nous venons de produire.
+    // en cours, qui inclura les octets que nous venons de produire. Seule la
+    // coroutine qui envoie arme le minuteur ; les autres attendent sans le
+    // réarmer (sinon elles s'annuleraient mutuellement).
     while (flushing_) {
-        flush_done_.expires_at(asio::steady_timer::time_point::max());
         co_await flush_done_.async_wait(use_tuple);
         if (co_await cancelled()) co_return asio::error::operation_aborted;
         if (!socket_.is_open()) co_return asio::error::bad_descriptor;
     }
     flushing_ = true;
+    flush_done_.expires_at(asio::steady_timer::time_point::max());
     std::error_code ec;
-    while (BIO_ctrl_pending(network_out_) > 0) {
-        const int n = BIO_read(network_out_, write_buffer_.data(), static_cast<int>(write_buffer_.size()));
-        if (n <= 0) break;
-        auto [wec, written] =
-            co_await asio::async_write(socket_, asio::buffer(write_buffer_.data(), static_cast<std::size_t>(n)), use_tuple);
+    for (;;) {
+        std::size_t size = 0;
+        const void* data = nullptr;
+        std::string chunk;
+        if (ssl_) {
+            if (BIO_ctrl_pending(network_out_) == 0) break;
+            const int n = BIO_read(network_out_, write_buffer_.data(), static_cast<int>(write_buffer_.size()));
+            if (n <= 0) break;
+            data = write_buffer_.data();
+            size = static_cast<std::size_t>(n);
+        } else {
+            if (plain_out_.empty()) break;
+            chunk.swap(plain_out_);
+            data = chunk.data();
+            size = chunk.size();
+        }
+        auto [wec, written] = co_await asio::async_write(socket_, asio::buffer(data, size), use_tuple);
         (void)written;
         if (wec) {
             ec = wec;

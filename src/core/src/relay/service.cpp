@@ -2,12 +2,15 @@
 
 #include "tlsrelay/logging.hpp"
 #include "tlsrelay/pki/generation.hpp"
+#include "tlsrelay/relay/transport.hpp"
+#include "tlsrelay/tunnel/frame.hpp"
 #include "tlsrelay/whitelist.hpp"
 
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/post.hpp>
 #include <asio/strand.hpp>
+#include <asio/this_coro.hpp>
 #include <asio/use_awaitable.hpp>
 
 #include <csignal>
@@ -38,6 +41,21 @@ auto log_exceptions(const char* what) {
         }
     };
 }
+
+// Répond une dernière trame (OPEN_FAIL, RESUME_FAIL...) puis ferme la connexion.
+asio::awaitable<void> reject(std::shared_ptr<Stream> stream, std::string frame) {
+    asio::steady_timer guard(co_await asio::this_coro::executor);
+    guard.expires_after(1s);
+    guard.async_wait([stream](std::error_code ec) {
+        if (!ec) stream->close();
+    });
+    stream->queue(asio::buffer(frame));
+    co_await stream->shutdown_send();
+    guard.cancel();
+    stream->close();
+}
+
+std::uint16_t code(tunnel::CloseCode c) { return static_cast<std::uint16_t>(c); }
 
 #ifdef _WIN32
 using exclusive_address_use = asio::detail::socket_option::boolean<SOL_SOCKET, SO_EXCLUSIVEADDRUSE>;
@@ -202,23 +220,8 @@ void Service::close_retired_generations() {
         std::lock_guard lock(pki_mutex_);
         current = contexts_;
     }
-    std::vector<std::shared_ptr<Channel>> channels;
-    {
-        std::lock_guard lock(channels_mutex_);
-        for (auto& [id, weak] : channels_) {
-            if (auto ch = weak.lock()) channels.push_back(std::move(ch));
-        }
-    }
-    std::size_t closed = 0;
-    for (auto& ch : channels) {
-        const auto* ctx = ch->tls_context();
-        if (ctx && ctx != current.tls.get() && ctx != current.mtls.get()) {
-            ch->abort(CloseReason::generation_retired);
-            ++closed;
-        }
-    }
-    logging::config().warn("PKI : fermeture immédiate de {} connexion(s) établie(s) avec une génération retirée",
-                           closed);
+    logging::config().warn("PKI : fermeture immédiate des connexions établies avec une génération retirée");
+    for (auto& ch : channels()) ch->close_if_retired(current.tls, current.mtls);
 }
 
 void Service::sweep_generations() {
@@ -350,14 +353,7 @@ void Service::reload_whitelist() {
     }
     if (config_.whitelist->revoke_mode != RevokeMode::immediate) return;
     // Chaque canal vérifie de nouveau son pair et se ferme s'il n'est plus autorisé.
-    std::vector<std::shared_ptr<Channel>> channels;
-    {
-        std::lock_guard lock(channels_mutex_);
-        for (auto& [id, weak] : channels_) {
-            if (auto ch = weak.lock()) channels.push_back(std::move(ch));
-        }
-    }
-    for (auto& ch : channels) ch->revalidate();
+    for (auto& ch : channels()) ch->revalidate();
 }
 
 int Service::run() {
@@ -405,7 +401,7 @@ std::optional<tcp::endpoint> Service::local_endpoint(PortKind kind) const {
 
 std::size_t Service::active_channels() const {
     std::size_t total = 0;
-    for (const auto& port : ports_) total += port.active.load();
+    for (const auto& port : ports_) total += port.active.load() + port.handshakes.load();
     return total;
 }
 
@@ -445,38 +441,207 @@ asio::awaitable<void> Service::accept_loop(Port& port) {
             }
         }
 
-        if (port.active.load() >= config_.limits.max_channels) {
+        // Serveur : une connexion de transport peut aussi reprendre une session
+        // existante ; la limite de canaux s'applique donc à OPEN (serve).
+        auto& counter = config_.mode == Mode::server ? port.handshakes : port.active;
+        if (counter.load() >= config_.limits.max_channels) {
             ++stats_.channels_rejected;
             std::error_code ignored;
             const auto peer = socket.remote_endpoint(ignored);
-            logging::activity().warn("port={} limite de {} canaux atteinte : connexion de {} refusée",
+            logging::activity().warn("port={} limite de {} connexions atteinte : connexion de {} refusée",
                                      to_string(port.kind), config_.limits.max_channels,
                                      Endpoint{peer.address().to_string(), peer.port()}.to_string());
             socket.close(ignored);
             continue;
         }
 
-        // Compté avant d'être enregistré : drain() ne peut pas manquer ce canal.
-        ++port.active;
+        // Compté avant d'être enregistré : drain() ne peut pas manquer cette connexion.
+        ++counter;
         const auto id = next_id_++;
-        std::shared_ptr<Channel> channel;
-        try {
-            channel = std::make_shared<Channel>(id, std::move(socket), settings_for(port), stats_,
-                                                [this, &port](std::uint64_t cid) { on_channel_closed(port, cid); });
-        } catch (const std::exception& e) {
-            // Par exemple, session TLS impossible à créer : on refuse cette connexion seulement.
-            --port.active;
-            logging::activity().error("port={} connexion refusée : {}", to_string(port.kind), e.what());
+        const auto strand = socket.get_executor();
+        if (config_.mode == Mode::server) {
+            asio::co_spawn(strand, serve(port, std::move(socket), id), log_exceptions("connexion de transport"));
             continue;
         }
+        auto channel = std::make_shared<Channel>(id, strand, settings_for(port), stats_,
+                                                 [this, &port](Channel& ch) { on_channel_closed(port, ch); });
         {
             std::lock_guard lock(channels_mutex_);
             channels_.emplace(id, channel);
         }
-        channel->start();
+        channel->start_client(std::move(socket));
         // Arrêt demandé pendant l'acceptation : drain() a pu parcourir la liste avant l'enregistrement.
         if (stopping_) channel->abort(CloseReason::shutdown);
     }
+}
+
+asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64_t id) {
+    std::error_code ec;
+    const auto remote = socket.remote_endpoint(ec);
+    PeerIdentity peer;
+    peer.address = whitelist::normalize(remote.address());
+    peer.endpoint = ec ? std::string("?") : Endpoint{remote.address().to_string(), remote.port()}.to_string();
+    socket.set_option(tcp::no_delay(true), ec);
+    const auto kind = to_string(port.kind);
+
+    std::shared_ptr<Stream> stream;
+    try {
+        std::shared_ptr<const tls::Context> context;
+        if (port.kind != PortKind::plain) {
+            std::lock_guard lock(pki_mutex_);
+            context = port.kind == PortKind::mtls ? contexts_.mtls : contexts_.tls;
+        }
+        stream = context ? std::make_shared<Stream>(std::move(socket), context) : std::make_shared<Stream>(std::move(socket));
+    } catch (const std::exception& e) {
+        // Par exemple, session TLS impossible à créer : on refuse cette connexion seulement.
+        --port.handshakes;
+        logging::activity().error("port={} connexion de {} refusée : {}", kind, peer.endpoint, e.what());
+        co_return;
+    }
+    {
+        std::lock_guard lock(channels_mutex_);
+        handshakes_.emplace(id, stream);
+    }
+    // Quelle que soit l'issue, la connexion n'est plus « en attente » à la sortie.
+    struct Done {
+        Service& service;
+        Port& port;
+        std::uint64_t id;
+        ~Done() {
+            {
+                std::lock_guard lock(service.channels_mutex_);
+                service.handshakes_.erase(id);
+            }
+            --port.handshakes;
+        }
+    } done{*this, port, id};
+    if (stopping_) {
+        stream->close();
+        co_return;
+    }
+
+    if (stream->is_tls()) {
+        const auto failure = co_await secure(stream, config_.limits.handshake_timeout);
+        if (!failure.empty()) {
+            ++stats_.tls_handshake_failures;
+            logging::activity().info("port={} handshake TLS refusé pair={} : {}", kind, peer.endpoint, failure);
+            stream->close();
+            co_return;
+        }
+        const auto subject = stream->peer_subject();
+        logging::activity().debug("port={} TLS établi pair={} : {}, certificat du pair : {}", kind, peer.endpoint,
+                                  stream->session_description(), subject.empty() ? "aucun" : subject);
+    }
+
+    auto transport = std::make_shared<Transport>(stream);
+    const auto first = co_await read_frame(*transport, config_.limits.handshake_timeout);
+    if (!first.frame) {
+        if (first.protocol != tunnel::Decoder::Error::none) ++stats_.protocol_errors;
+        logging::activity().info("port={} pair={} : pas de trame OPEN ou RESUME valide ({})", kind, peer.endpoint,
+                                 first.protocol != tunnel::Decoder::Error::none ? transport->decoder.error_detail()
+                                 : first.error == asio::error::timed_out        ? std::string("délai dépassé")
+                                                                                : first.error.message());
+        stream->close();
+        co_return;
+    }
+    const auto& frame = *first.frame;
+    const bool resume = frame.type == tunnel::FrameType::resume;
+    if (frame.type != tunnel::FrameType::open && !resume) {
+        ++stats_.protocol_errors;
+        logging::activity().info("port={} pair={} : trame {} au lieu de OPEN ou RESUME", kind, peer.endpoint,
+                                 tunnel::to_string(frame.type));
+        co_await reject(stream, tunnel::encode_close(code(tunnel::CloseCode::protocol_error), "OPEN ou RESUME attendu"));
+        co_return;
+    }
+
+    // Liste blanche : en mTLS, l'IP et le sujet du certificat doivent figurer dans la même entrée.
+    if (port.kind == PortKind::mtls) {
+        if (X509* cert = stream->peer_certificate()) peer.subject.reset(X509_NAME_dup(X509_get_subject_name(cert)));
+    }
+    const auto name = authorize(peer.address, port.kind, peer.subject.get());
+    if (!name) {
+        ++stats_.peers_rejected;
+        logging::activity().info("port={} pair refusé par la liste blanche : ip={}{}", kind, peer.endpoint,
+                                 peer.subject ? " sujet=" + tls::name_to_string(peer.subject.get()) : std::string());
+        co_await reject(stream, resume ? tunnel::encode_resume_fail(code(tunnel::CloseCode::not_authorized))
+                                       : tunnel::encode_open_fail(code(tunnel::CloseCode::not_authorized),
+                                                                  "pair non autorisé"));
+        co_return;
+    }
+    peer.name = *name;
+    if (stopping_) {
+        co_await reject(stream, resume ? tunnel::encode_resume_fail(code(tunnel::CloseCode::shutdown))
+                                       : tunnel::encode_open_fail(code(tunnel::CloseCode::shutdown), "arrêt en cours"));
+        co_return;
+    }
+
+    if (resume) {
+        const auto request = tunnel::read_resume(frame);
+        const auto key = tunnel::to_hex(request.session.data(), request.session.size());
+        std::shared_ptr<Channel> channel;
+        {
+            std::lock_guard lock(channels_mutex_);
+            if (auto it = sessions_.find(key); it != sessions_.end()) channel = it->second.lock();
+        }
+        const auto endpoint = peer.endpoint;
+        bool accepted = false;
+        if (channel) {
+            // Le canal prend la connexion sur son propre strand.
+            accepted = co_await asio::co_spawn(
+                channel->executor(), channel->accept_resume(transport, request, std::move(peer), port.kind),
+                asio::use_awaitable);
+        } else {
+            ++stats_.resume_failures;
+            logging::activity().info("port={} reprise refusée pair={} : session {} inconnue", kind, endpoint, key);
+        }
+        if (!accepted) co_await reject(stream, tunnel::encode_resume_fail(code(tunnel::CloseCode::not_authorized)));
+        co_return;
+    }
+
+    const auto open = tunnel::read_open(frame);
+    std::string problem;
+    if (open.version != tunnel::kVersion) {
+        problem = "version de protocole " + std::to_string(open.version) + " non prise en charge";
+    } else if (open.port != port.kind) {
+        problem = "OPEN pour le port " + std::string(to_string(open.port)) + " reçu sur le port " + std::string(kind);
+    }
+    if (!problem.empty()) {
+        ++stats_.protocol_errors;
+        logging::activity().info("port={} pair={} : {}", kind, peer.endpoint, problem);
+        co_await reject(stream, tunnel::encode_open_fail(code(tunnel::CloseCode::protocol_error), problem));
+        co_return;
+    }
+    if (port.active.load() >= config_.limits.max_channels) {
+        ++stats_.channels_rejected;
+        logging::activity().warn("port={} limite de {} canaux atteinte : tunnel de {} refusé", kind,
+                                 config_.limits.max_channels, peer.endpoint);
+        co_await reject(stream, tunnel::encode_open_fail(code(tunnel::CloseCode::internal_error),
+                                                         "limite de canaux atteinte"));
+        co_return;
+    }
+
+    auto channel = std::make_shared<Channel>(id, co_await asio::this_coro::executor, settings_for(port), stats_,
+                                             [this, &port](Channel& ch) { on_channel_closed(port, ch); });
+    const auto key = tunnel::to_hex(open.session.data(), open.session.size());
+    bool duplicate = false;
+    {
+        std::lock_guard lock(channels_mutex_);
+        auto& slot = sessions_[key];
+        duplicate = !slot.expired();
+        if (!duplicate) {
+            slot = channel;
+            channels_.emplace(id, channel);
+            ++port.active;
+        }
+    }
+    if (duplicate) {
+        ++stats_.protocol_errors;
+        logging::activity().info("port={} pair={} : session {} déjà ouverte", kind, peer.endpoint, key);
+        co_await reject(stream, tunnel::encode_open_fail(code(tunnel::CloseCode::protocol_error), "session déjà ouverte"));
+        co_return;
+    }
+    channel->start_server(transport, open.session, std::move(peer));
+    if (stopping_) channel->abort(CloseReason::shutdown);
 }
 
 asio::awaitable<void> Service::drain(Duration timeout) {
@@ -546,28 +711,31 @@ asio::awaitable<void> Service::wait_signals() {
 }
 
 ChannelSettings Service::settings_for(const Port& port) const {
+    const auto& l = config_.limits;
     ChannelSettings s;
+    s.side = config_.mode == Mode::client ? Side::client : Side::server;
     s.port = port.kind;
-    s.idle_timeout = config_.limits.idle_timeout;
-    s.handshake_timeout = config_.limits.handshake_timeout;
-    std::shared_ptr<const tls::Context> context;
-    {
-        std::lock_guard lock(pki_mutex_);
-        context = port.kind == PortKind::mtls ? contexts_.mtls : contexts_.tls;
-    }
-    const bool tls = port.kind != PortKind::plain;
+    s.idle_timeout = l.idle_timeout;
+    s.handshake_timeout = l.handshake_timeout;
+    s.session_lifetime = l.session_lifetime;
+    s.session_jitter = l.session_jitter;
+    s.renegotiation_grace = l.renegotiation_grace;
+    s.resume_buffer = l.resume_buffer;
     if (config_.mode == Mode::client) {
         s.dial.target = *port.config.upstream;
         s.dial.source = source_address_;
-        s.dial.timeout = config_.limits.handshake_timeout;
+        s.dial.timeout = l.handshake_timeout;
         s.dial.attempts = 1;
-        if (tls) {
-            s.outbound_tls = context;
+        if (port.kind != PortKind::plain) {
+            // Relu à chaque connexion de transport : une renégociation utilise la génération courante.
+            s.tls_context = [this, kind = port.kind] {
+                std::lock_guard lock(pki_mutex_);
+                return kind == PortKind::mtls ? contexts_.mtls : contexts_.tls;
+            };
             s.server_name = port.config.server_name.value_or(port.config.upstream->host);
         }
     } else {
         s.authorizer = this;
-        if (tls) s.inbound_tls = context;
         const auto& d = *config_.destination;
         s.dial.target = d.endpoint;
         s.dial.timeout = d.dial_timeout;
@@ -577,21 +745,39 @@ ChannelSettings Service::settings_for(const Port& port) const {
     return s;
 }
 
-void Service::abort_all_channels() {
-    std::vector<std::shared_ptr<Channel>> channels;
-    {
-        std::lock_guard lock(channels_mutex_);
-        for (auto& [id, weak] : channels_) {
-            if (auto ch = weak.lock()) channels.push_back(std::move(ch));
-        }
+std::vector<std::shared_ptr<Channel>> Service::channels() const {
+    std::vector<std::shared_ptr<Channel>> result;
+    std::lock_guard lock(channels_mutex_);
+    for (const auto& [id, weak] : channels_) {
+        if (auto ch = weak.lock()) result.push_back(std::move(ch));
     }
-    for (auto& ch : channels) ch->abort(CloseReason::shutdown);
+    return result;
 }
 
-void Service::on_channel_closed(Port& port, std::uint64_t id) {
+void Service::abort_all_channels() {
+    for (auto& ch : channels()) ch->abort(CloseReason::shutdown);
+    // Connexions de transport pas encore attribuées : fermées sur leur strand.
+    std::vector<std::shared_ptr<Stream>> pending;
     {
         std::lock_guard lock(channels_mutex_);
-        channels_.erase(id);
+        for (auto& [id, weak] : handshakes_) {
+            if (auto s = weak.lock()) pending.push_back(std::move(s));
+        }
+    }
+    for (auto& s : pending) asio::post(s->socket().get_executor(), [s] { s->close(); });
+}
+
+void Service::on_channel_closed(Port& port, Channel& channel) {
+    {
+        std::lock_guard lock(channels_mutex_);
+        channels_.erase(channel.id());
+        if (config_.mode == Mode::server) {
+            const auto key = tunnel::to_hex(channel.session().data(), channel.session().size());
+            if (auto it = sessions_.find(key); it != sessions_.end()) {
+                auto current = it->second.lock();
+                if (!current || current.get() == &channel) sessions_.erase(it);
+            }
+        }
     }
     --port.active;
 }

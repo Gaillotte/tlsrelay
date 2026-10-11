@@ -199,8 +199,10 @@ TEST_F(MtlsTest, PeerIsLimitedToItsPorts) {
 
     RawTlsClient tls(server.port(PortKind::tls), TLS1_3_VERSION, "tlsrelay/1", h_->root.cert.get());
     ASSERT_TRUE(tls.handshake());
-    ASSERT_TRUE(tls.write("ok"));
-    EXPECT_EQ(tls.read(2), "ok");
+    TunnelProbe tunnel(tls);
+    ASSERT_TRUE(tunnel.open(PortKind::tls));
+    ASSERT_TRUE(tunnel.send("ok"));
+    EXPECT_EQ(tunnel.receive(2), "ok");
 }
 
 TEST_F(MtlsTest, ReloadRevokesActiveChannelOfRemovedPeer) {

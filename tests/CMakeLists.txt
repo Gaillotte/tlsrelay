@@ -9,6 +9,8 @@ add_executable(tlsrelay_tests
     test_whitelist.cpp
     test_mtls.cpp
     test_rotation.cpp
+    test_frame.cpp
+    test_tunnel.cpp
     support/test_pki.cpp)
 
 target_link_libraries(tlsrelay_tests PRIVATE

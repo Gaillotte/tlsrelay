@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -31,8 +32,10 @@ struct ServiceOptions {
     Duration watch_interval = std::chrono::seconds(2);  // surveillance de la liste blanche et de la PKI
 };
 
-// Le service ouvre les ports configurés et relaie chaque connexion acceptée
-// (mode client : vers l'upstream du port ; mode serveur : vers la destination).
+// Le service ouvre les ports configurés. En mode client, chaque connexion
+// d'application devient un canal tunnelé vers l'upstream du port ; en mode
+// serveur, chaque tunnel ouvert (OPEN) devient un canal vers la destination,
+// et les reprises de session (RESUME) rejoignent leur canal (SPEC §4).
 // En mode serveur, il applique la liste blanche et la recharge quand son
 // fichier change. Quand le fichier <pki_root>/current désigne une nouvelle
 // génération, il bascule à chaud : les nouvelles connexions utilisent la
@@ -82,7 +85,8 @@ private:
         PortKind kind;
         PortConfig config;
         asio::ip::tcp::acceptor acceptor;
-        std::atomic<std::size_t> active{0};
+        std::atomic<std::size_t> active{0};      // canaux
+        std::atomic<std::size_t> handshakes{0};  // serveur : connexions de transport pas encore attribuées
     };
 
     struct Contexts {
@@ -110,11 +114,15 @@ private:
                                          const X509_NAME* subject) const override;
     asio::awaitable<void> watch();
     asio::awaitable<void> accept_loop(Port& port);
+    // Serveur : authentifie une connexion de transport, puis ouvre un canal
+    // (OPEN) ou la confie au canal dont elle reprend la session (RESUME).
+    asio::awaitable<void> serve(Port& port, asio::ip::tcp::socket socket, std::uint64_t id);
     asio::awaitable<void> drain(Duration timeout);
     asio::awaitable<void> wait_signals();
     ChannelSettings settings_for(const Port& port) const;
     void abort_all_channels();
-    void on_channel_closed(Port& port, std::uint64_t id);
+    void on_channel_closed(Port& port, Channel& channel);
+    std::vector<std::shared_ptr<Channel>> channels() const;
 
     Config config_;
     ServiceOptions options_;
@@ -139,6 +147,8 @@ private:
 
     mutable std::mutex channels_mutex_;
     std::unordered_map<std::uint64_t, std::weak_ptr<Channel>> channels_;
+    std::unordered_map<std::string, std::weak_ptr<Channel>> sessions_;      // serveur : par session_id (hex)
+    std::unordered_map<std::uint64_t, std::weak_ptr<Stream>> handshakes_;   // serveur : connexions en attente
     std::atomic<std::uint64_t> next_id_{1};
     std::atomic<bool> stopping_{false};
     std::atomic<bool> aborting_{false};

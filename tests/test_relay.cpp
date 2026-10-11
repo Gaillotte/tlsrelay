@@ -136,8 +136,9 @@ TEST(Relay, DestinationUnreachableAfterThreeAttempts) {
     cfg.destination->dial_retries = 3;
     cfg.destination->dial_backoff = 100ms;  // attentes : 100 ms puis 200 ms
     RunningService server(std::move(cfg));
+    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
 
-    TestClient app(server.port());
+    TestClient app(client.port());
     const auto start = Clock::now();
     EXPECT_TRUE(app.wait_closed(5s));
     EXPECT_GE(Clock::now() - start, 250ms);
@@ -154,9 +155,10 @@ TEST(Relay, DestinationRetrySucceeds) {
     // refusée immédiatement mais reste en attente jusqu'au délai.
     cfg.destination->dial_timeout = 100ms;
     RunningService server(std::move(cfg));
+    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
 
     // Essais : t=0 (échec avant 100 ms), ~200-300 ms (échec avant ~400 ms), puis ≥ 600 ms.
-    TestClient app(server.port());
+    TestClient app(client.port());
     app.write("hello");  // mis en tampon pendant les essais
     std::this_thread::sleep_for(500ms);
     EchoServer echo(reserved);  // la destination devient disponible avant le 3e essai
@@ -171,15 +173,16 @@ TEST(Relay, MaxChannelsRejectsExtraConnections) {
     auto cfg = server_config(echo.port());
     cfg.limits.max_channels = 2;
     RunningService server(std::move(cfg));
+    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
 
-    TestClient first(server.port());
-    TestClient second(server.port());
+    TestClient first(client.port());
+    TestClient second(client.port());
     first.write("a");
     second.write("b");
     ASSERT_EQ(first.read_exactly(1), "a");
     ASSERT_EQ(second.read_exactly(1), "b");
 
-    TestClient third(server.port());
+    TestClient third(client.port());
     EXPECT_TRUE(third.wait_closed(2s));
     EXPECT_EQ(server.stats().channels_rejected.load(), 1u);
 
@@ -192,9 +195,10 @@ TEST(Relay, GracefulStopDrainsThenClosesRemainingChannels) {
     auto cfg = server_config(echo.port());
     cfg.limits.shutdown_timeout = 300ms;
     RunningService server(std::move(cfg));
+    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
     const auto port = server.port();
 
-    TestClient app(port);
+    TestClient app(client.port());
     app.write("a");
     ASSERT_EQ(app.read_exactly(1), "a");
 
@@ -220,8 +224,9 @@ TEST(Relay, AbortClosesChannelsImmediately) {
     auto cfg = server_config(echo.port());
     cfg.limits.shutdown_timeout = 30s;
     RunningService server(std::move(cfg));
+    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
 
-    TestClient app(server.port());
+    TestClient app(client.port());
     app.write("a");
     ASSERT_EQ(app.read_exactly(1), "a");
 
@@ -244,8 +249,9 @@ TEST(Relay, SecondSignalForcesImmediateStop) {
     auto cfg = server_config(echo.port());
     cfg.limits.shutdown_timeout = 30s;
     RunningService server(std::move(cfg), relay::ServiceOptions{true, 2});
+    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
 
-    TestClient app(server.port());
+    TestClient app(client.port());
     app.write("a");
     ASSERT_EQ(app.read_exactly(1), "a");
 

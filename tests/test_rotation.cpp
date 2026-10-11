@@ -98,8 +98,8 @@ bool works(TestClient& app, const std::string& data) {
     return app.read_exactly(data.size(), 3s) == data;
 }
 
-bool works(RawTlsClient& raw, const std::string& data) {
-    return raw.write(data) && raw.read(data.size()) == data;
+bool works(TunnelProbe& tunnel, const std::string& data) {
+    return tunnel.send(data) && tunnel.receive(data.size()) == data;
 }
 
 }  // namespace
@@ -112,8 +112,10 @@ TEST_F(RotationTest, NewConnectionsUseNewGenerationWhileOldOnesDrain) {
 
     RawTlsClient before(server.port(PortKind::tls), TLS1_3_VERSION, "tlsrelay/1", a_->root.cert.get());
     ASSERT_TRUE(before.handshake());
+    TunnelProbe before_tunnel(before);
+    ASSERT_TRUE(before_tunnel.open(PortKind::tls));
     EXPECT_TRUE(same_cert(SSL_get0_peer_certificate(before.ssl()), a_->server.cert.get()));
-    ASSERT_TRUE(works(before, "v1"));
+    ASSERT_TRUE(works(before_tunnel, "v1"));
 
     // Nouveau certificat (nouvelle bi-clé), même AC.
     auto renewed = make_certificate({.common_name = "relay.test", .usage = Usage::server, .dns = {"relay.test"}},
@@ -124,11 +126,13 @@ TEST_F(RotationTest, NewConnectionsUseNewGenerationWhileOldOnesDrain) {
 
     RawTlsClient after(server.port(PortKind::tls), TLS1_3_VERSION, "tlsrelay/1", a_->root.cert.get());
     ASSERT_TRUE(after.handshake());
+    TunnelProbe after_tunnel(after);
+    ASSERT_TRUE(after_tunnel.open(PortKind::tls));
     EXPECT_TRUE(same_cert(SSL_get0_peer_certificate(after.ssl()), renewed.cert.get()));
-    EXPECT_TRUE(works(after, "v2"));
+    EXPECT_TRUE(works(after_tunnel, "v2"));
 
     // La connexion ouverte avant la bascule continue sur l'ancienne génération.
-    EXPECT_TRUE(works(before, "toujours v1"));
+    EXPECT_TRUE(works(before_tunnel, "toujours v1"));
     EXPECT_EQ(service.live_generations(), (std::vector<std::string>{"v2", "v1"}));
     EXPECT_EQ(server.stats().pki_rotations.load(), 1u);
 }
@@ -140,10 +144,14 @@ TEST_F(RotationTest, OldGenerationIsReleasedWhenItsLastConnectionCloses) {
     {
         RawTlsClient before(server.port(PortKind::tls), TLS1_3_VERSION, "tlsrelay/1", a_->root.cert.get());
         ASSERT_TRUE(before.handshake());
-        ASSERT_TRUE(works(before, "v1"));
+        TunnelProbe before_tunnel(before);
+        ASSERT_TRUE(before_tunnel.open(PortKind::tls));
+        ASSERT_TRUE(works(before_tunnel, "v1"));
         write_generation(server_pki(), "v2", server_files(*a_));
         ASSERT_TRUE(eventually([&] { return service.current_generation() == "v2"; }));
         EXPECT_EQ(service.live_generations().size(), 2u);
+        // Fermeture du canal : sans CLOSE, le serveur attendrait une reprise de session.
+        ASSERT_TRUE(before_tunnel.close());
     }  // fermeture de la dernière connexion de v1
     EXPECT_TRUE(eventually([&] { return service.live_generations() == std::vector<std::string>{"v2"}; }));
 }
@@ -161,7 +169,9 @@ TEST_F(RotationTest, InvalidGenerationIsRefusedAndServiceContinues) {
 
     RawTlsClient raw(server.port(PortKind::tls), TLS1_3_VERSION, "tlsrelay/1", a_->root.cert.get());
     ASSERT_TRUE(raw.handshake());
-    EXPECT_TRUE(works(raw, "service maintenu"));
+    TunnelProbe raw_tunnel(raw);
+    ASSERT_TRUE(raw_tunnel.open(PortKind::tls));
+    EXPECT_TRUE(works(raw_tunnel, "service maintenu"));
 }
 
 TEST_F(RotationTest, GuardRefusesRootChangeWithoutPreTrust) {
@@ -195,16 +205,20 @@ TEST_F(RotationTest, KillOldClosesConnectionsOfRetiredGeneration) {
 
     RawTlsClient before(server.port(PortKind::tls), TLS1_3_VERSION, "tlsrelay/1", a_->root.cert.get());
     ASSERT_TRUE(before.handshake());
-    ASSERT_TRUE(works(before, "v1"));
+    TunnelProbe before_tunnel(before);
+    ASSERT_TRUE(before_tunnel.open(PortKind::tls));
+    ASSERT_TRUE(works(before_tunnel, "v1"));
     write_generation(server_pki(), "v2", server_files(*a_));
     ASSERT_TRUE(eventually([&] { return service.current_generation() == "v2"; }));
     RawTlsClient after(server.port(PortKind::tls), TLS1_3_VERSION, "tlsrelay/1", a_->root.cert.get());
     ASSERT_TRUE(after.handshake());
-    ASSERT_TRUE(works(after, "v2"));
+    TunnelProbe after_tunnel(after);
+    ASSERT_TRUE(after_tunnel.open(PortKind::tls));
+    ASSERT_TRUE(works(after_tunnel, "v2"));
 
     service.reload(true);  // révocation d'urgence de l'ancienne génération
-    EXPECT_EQ(before.read(1), "");  // fermée
-    EXPECT_TRUE(works(after, "toujours ouverte"));
+    EXPECT_TRUE(before_tunnel.closed());
+    EXPECT_TRUE(works(after_tunnel, "toujours ouverte"));
     EXPECT_TRUE(eventually([&] { return service.live_generations() == std::vector<std::string>{"v2"}; }));
 }
 

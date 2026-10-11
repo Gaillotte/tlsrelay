@@ -186,8 +186,10 @@ TEST_F(TlsTest, ServerNegotiatesTls13WithAlpn) {
     SSL_get0_alpn_selected(raw.ssl(), &proto, &len);
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(proto), len), "tlsrelay/1");
     EXPECT_STREQ(SSL_CIPHER_get_name(SSL_get_current_cipher(raw.ssl())), "TLS_AES_256_GCM_SHA384");
-    ASSERT_TRUE(raw.write("bonjour"));
-    EXPECT_EQ(raw.read(7), "bonjour");
+    TunnelProbe tunnel(raw);
+    ASSERT_TRUE(tunnel.open(PortKind::tls));
+    ASSERT_TRUE(tunnel.send("bonjour"));
+    EXPECT_EQ(tunnel.receive(7), "bonjour");
 }
 
 TEST_F(TlsTest, ServerRejectsTls12) {

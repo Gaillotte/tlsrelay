@@ -82,7 +82,7 @@ Tous les entiers sont en ordre réseau (big-endian).
 
 - `session_id` : 128 bits issus de `RAND_bytes`, choisis par le client.
 - Les numéros `seq` commencent à 1 dans chaque sens, et sont propres à chaque sens.
-- `PING`/`PONG` servent à détecter un transport mort ; ils ne repoussent **pas** l'échéance d'inactivité.
+- `PING`/`PONG` servent à détecter un transport mort ; ils ne repoussent **pas** l'échéance d'inactivité. tlsrelay répond toujours à `PING` ; l'émission périodique de `PING` arrive avec le durcissement (phase 8). D'ici là, un transport mort sans erreur TCP est remplacé au plus tard à la renégociation suivante.
 
 ### 4.3 Ouverture d'un canal
 
@@ -119,16 +119,19 @@ token_n = SSL_export_keying_material(connexion_n,
 2. Le serveur applique les mêmes contrôles qu'à l'ouverture : liste blanche (IP + sujet + AC émettrice). L'entrée de liste blanche doit être **la même** que pour la connexion précédente.
 3. Le client envoie `RESUME(session_id, token_n, last_rx_seq)`.
 4. Le serveur vérifie le jeton (comparaison à temps constant), le marque comme consommé, répond `RESUMED(last_rx_seq)`.
-5. Chaque côté renvoie, sur la nouvelle connexion, les trames non acquittées au-delà du `last_rx_seq` de l'autre, puis reprend le flux normal.
-6. L'ancienne connexion est fermée proprement (`close_notify`).
+5. Chaque côté renvoie, sur la nouvelle connexion, les trames non acquittées au-delà du `last_rx_seq` de l'autre, puis reprend le flux normal. Si l'autre côté a déjà acquitté davantage (un `ACK` parti sur l'ancienne connexion après `RESUME`), le renvoi commence après ce qu'il a acquitté.
+6. L'ancienne connexion est fermée proprement (`close_notify`) par le serveur dès qu'il accepte la reprise.
+
+Pendant toute la renégociation, les données continuent de circuler sur l'ancienne connexion : l'application ne voit ni pause ni coupure.
 
 **Échecs**
 
-- Échec du handshake, de la liste blanche ou du jeton : `RESUME_FAIL`, la nouvelle connexion est fermée. Le client réessaie tant que le délai de grâce n'est pas écoulé.
-- Le serveur ferme la session (application et destination comprises) si aucun `RESUME` valide n'a eu lieu à `session_lifetime + renegotiation_grace`.
+- Échec de connexion ou de handshake, absence de réponse à `RESUME` (délai `handshake_timeout`) : la nouvelle connexion est fermée et le client réessaie (attente de 250 ms doublée à chaque essai, 5 s au plus) tant que le délai de grâce n'est pas écoulé.
+- Refus par le serveur — liste blanche (l'entrée doit rester la même), jeton invalide ou déjà consommé, session inconnue, `last_rx_seq` incohérent — : `RESUME_FAIL(code)`. Ce refus est définitif : le client ferme le canal (`CLOSE(NOT_AUTHORIZED)` sur l'ancienne connexion si elle est encore ouverte).
+- Le serveur ferme la session (application et destination comprises), avec `CLOSE(LIFETIME_EXCEEDED)`, si aucun `RESUME` valide n'a eu lieu à `session_lifetime × (1 + session_jitter) + renegotiation_grace` depuis l'établissement de la connexion courante.
 - On ne revient jamais à une connexion de transport plus ancienne.
 
-**Reprise après coupure** (option `resume_on_failure`, activée par défaut) : si la connexion de transport tombe avant l'échéance, le client applique la même procédure, dans la limite de `renegotiation_grace`.
+**Reprise après coupure** (toujours active sur les ports 2 et 3) : si la connexion de transport tombe avant l'échéance, le client applique la même procédure, dans la limite de `renegotiation_grace` ; le serveur garde la session (et la connexion à la destination) pendant ce même délai, puis la ferme. Une coupure avant `OPEN_OK` ferme le canal.
 
 **Port 1** : pas de `session_lifetime` ni de reprise (le jeton ne peut pas être protégé sans TLS). Seul `idle_timeout` s'applique.
 

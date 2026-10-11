@@ -10,8 +10,10 @@ add_library(tlsrelay_core STATIC
     src/tls/openssl_ptr.cpp
     src/tls/context.cpp
     src/pki/generation.cpp
+    src/tunnel/frame.cpp
     src/relay/stream.cpp
     src/relay/dial.cpp
+    src/relay/transport.cpp
     src/relay/channel.cpp
     src/relay/service.cpp)
 add_library(tlsrelay::core ALIAS tlsrelay_core)

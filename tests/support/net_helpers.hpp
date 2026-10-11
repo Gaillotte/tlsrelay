@@ -178,7 +178,8 @@ public:
         return last_error_ && last_error_ != asio::error::timed_out;
     }
 
-private:
+    // Lit ce qui arrive avant l'échéance (au plus max octets) ; error vaut
+    // asio::error::timed_out si rien n'est arrivé.
     std::pair<std::error_code, std::string> read_some(std::size_t max, Clock::time_point deadline) {
         std::string buffer(max, '\0');
         std::error_code result = asio::error::timed_out;
@@ -196,12 +197,17 @@ private:
             socket_.cancel();
             io_.restart();
             io_.run();
-            result = asio::error::timed_out;
-            received = 0;
+            // La lecture a pu aboutir juste avant l'annulation : ses données sont gardées.
+            if (result == asio::error::operation_aborted) {
+                result = asio::error::timed_out;
+                received = 0;
+            }
         }
         buffer.resize(received);
         return {result, buffer};
     }
+
+private:
 
     asio::io_context io_;
     tcp::socket socket_;

@@ -8,8 +8,10 @@
 #include <asio/steady_timer.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -38,6 +40,8 @@ public:
     Stream& operator=(const Stream&) = delete;
 
     bool is_tls() const { return ssl_ != nullptr; }
+    // Contexte TLS (donc génération PKI) du flux, nullptr en clair.
+    const tls::Context* context() const { return context_.get(); }
     asio::ip::tcp::socket& socket() { return socket_; }
 
     // TLS : établit la session et vérifie le pair. Sans effet en clair.
@@ -46,7 +50,17 @@ public:
 
     // Retourne asio::error::eof à la fin propre du flux (close_notify en TLS).
     asio::awaitable<std::pair<std::error_code, std::size_t>> read_some(asio::mutable_buffer buffer);
+    // Écrit et envoie. Les écritures ne s'entremêlent jamais, même concurrentes.
     asio::awaitable<std::error_code> write(asio::const_buffer buffer);
+
+    // Ajoute à l'envoi sans attendre ; flush() envoie. Permet d'envoyer une
+    // dernière trame juste avant de fermer.
+    std::error_code queue(asio::const_buffer buffer);
+    asio::awaitable<std::error_code> flush();
+
+    // Exporteur de clés TLS 1.3 (RFC 8446 §7.5). Faux en clair ou en cas d'échec.
+    bool export_keying_material(std::string_view label, const std::uint8_t* context, std::size_t context_size,
+                                std::uint8_t* out, std::size_t out_size) const;
 
     // Fin de ce sens d'émission ; la réception continue.
     asio::awaitable<std::error_code> shutdown_send();
@@ -61,7 +75,6 @@ public:
     const std::string& failure_reason() const { return failure_reason_; }
 
 private:
-    asio::awaitable<std::error_code> flush();
     asio::awaitable<std::error_code> fill();
     std::error_code tls_error();
 
@@ -72,6 +85,7 @@ private:
     BIO* network_out_ = nullptr;  // octets produits par OpenSSL, à envoyer (appartient à ssl_)
     std::vector<unsigned char> read_buffer_;
     std::vector<unsigned char> write_buffer_;
+    std::string plain_out_;  // en clair : octets en attente d'envoi
     bool flushing_ = false;
     asio::steady_timer flush_done_;
     std::string failure_reason_;
