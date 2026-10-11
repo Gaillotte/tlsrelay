@@ -10,8 +10,9 @@ namespace testkit {
 
 tcp::endpoint resolve(const std::string& host, std::uint16_t port);
 
-// Destination d'écho (jusqu'à Ctrl+C).
-int run_echo(const tcp::endpoint& listen, unsigned threads);
+// Destination d'écho (jusqu'à Ctrl+C). Par défaut, la lecture continue pendant
+// l'écriture ; half_duplex : ne lit plus tant que la réponse n'est pas écrite.
+int run_echo(const tcp::endpoint& listen, unsigned threads, bool half_duplex = false);
 
 struct LoadOptions {
     int channels = 100;

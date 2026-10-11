@@ -60,6 +60,8 @@ int main(int argc, char** argv) {
     std::string listen, target;
     auto* echo = app.add_subcommand("echo", "Destination d'écho");
     echo->add_option("--listen", listen, "Adresse d'écoute (hôte:port)")->required();
+    bool half_duplex = false;
+    echo->add_flag("--half-duplex", half_duplex, "Ne lit plus tant que la réponse n'est pas écrite (destination à l'alternat)");
 
     testkit::LoadOptions load_options;
     std::string bytes = "1MiB", hold = "0s";
@@ -106,7 +108,7 @@ int main(int argc, char** argv) {
     if (*pki) return testkit::run_pki(pki_options);
     if (*echo) {
         const auto ep = endpoint(listen);
-        return ep ? testkit::run_echo(*ep, threads) : 2;
+        return ep ? testkit::run_echo(*ep, threads, half_duplex) : 2;
     }
     const auto ep = endpoint(target);
     if (!ep) return 2;

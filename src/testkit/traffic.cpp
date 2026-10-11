@@ -13,6 +13,8 @@
 #include <asio/write.hpp>
 
 #include <atomic>
+#include <deque>
+#include <memory>
 #include <cstdio>
 #include <iostream>
 #include <mutex>
@@ -33,7 +35,8 @@ std::string json_escape(const std::string& s) {
     return out;
 }
 
-asio::awaitable<void> echo_connection(tcp::socket socket) {
+// Écho à l'alternat : ne lit pas tant que la réponse n'est pas écrite.
+asio::awaitable<void> echo_half_duplex(tcp::socket socket) {
     std::vector<unsigned char> buffer(64ULL * 1024);
     for (;;) {
         auto [ec, n] = co_await socket.async_read_some(asio::buffer(buffer), use_tuple);
@@ -46,7 +49,65 @@ asio::awaitable<void> echo_connection(tcp::socket socket) {
     socket.shutdown(tcp::socket::shutdown_send, ignored);
 }
 
-asio::awaitable<void> echo_accept(tcp::acceptor& acceptor, asio::io_context& io) {
+// Écho bidirectionnel simultané : la lecture continue pendant l'écriture, dans
+// la limite d'une file de kEchoBuffer octets.
+constexpr std::size_t kEchoBuffer = 8ULL << 20;
+
+struct EchoConnection {
+    explicit EchoConnection(tcp::socket s)
+        : socket(std::move(s)), has_data(socket.get_executor()), has_space(socket.get_executor()) {}
+    tcp::socket socket;
+    std::deque<std::vector<unsigned char>> pending;
+    std::size_t bytes = 0;
+    bool eof = false;
+    bool failed = false;
+    asio::steady_timer has_data;
+    asio::steady_timer has_space;
+};
+
+asio::awaitable<void> echo_reader(std::shared_ptr<EchoConnection> c) {
+    for (;;) {
+        while (c->bytes >= kEchoBuffer && !c->failed) {
+            c->has_space.expires_at(asio::steady_timer::time_point::max());
+            co_await c->has_space.async_wait(use_tuple);
+        }
+        if (c->failed) co_return;
+        std::vector<unsigned char> buffer(64ULL * 1024);
+        auto [ec, n] = co_await c->socket.async_read_some(asio::buffer(buffer), use_tuple);
+        if (ec) {
+            c->eof = true;
+            c->has_data.cancel();
+            co_return;
+        }
+        buffer.resize(n);
+        c->bytes += n;
+        c->pending.push_back(std::move(buffer));
+        c->has_data.cancel();
+    }
+}
+
+asio::awaitable<void> echo_writer(std::shared_ptr<EchoConnection> c) {
+    for (;;) {
+        while (c->pending.empty() && !c->eof) {
+            c->has_data.expires_at(asio::steady_timer::time_point::max());
+            co_await c->has_data.async_wait(use_tuple);
+        }
+        if (c->pending.empty()) break;  // fin de lecture et tout est renvoyé
+        auto [ec, w] = co_await asio::async_write(c->socket, asio::buffer(c->pending.front()), use_tuple);
+        if (ec) {
+            c->failed = true;
+            c->has_space.cancel();
+            co_return;
+        }
+        c->bytes -= w;
+        c->pending.pop_front();
+        c->has_space.cancel();
+    }
+    std::error_code ignored;
+    c->socket.shutdown(tcp::socket::shutdown_send, ignored);
+}
+
+asio::awaitable<void> echo_accept(tcp::acceptor& acceptor, asio::io_context& io, bool half_duplex) {
     for (;;) {
         auto [ec, socket] = co_await acceptor.async_accept(asio::make_strand(io), use_tuple);
         if (ec) {
@@ -56,7 +117,13 @@ asio::awaitable<void> echo_accept(tcp::acceptor& acceptor, asio::io_context& io)
         std::error_code ignored;
         socket.set_option(tcp::no_delay(true), ignored);
         auto ex = socket.get_executor();
-        asio::co_spawn(ex, echo_connection(std::move(socket)), asio::detached);
+        if (half_duplex) {
+            asio::co_spawn(ex, echo_half_duplex(std::move(socket)), asio::detached);
+            continue;
+        }
+        auto c = std::make_shared<EchoConnection>(std::move(socket));
+        asio::co_spawn(ex, echo_reader(c), asio::detached);
+        asio::co_spawn(ex, echo_writer(c), asio::detached);
     }
 }
 
@@ -195,7 +262,7 @@ tcp::endpoint resolve(const std::string& host, std::uint16_t port) {
     return *resolver.resolve(host, std::to_string(port)).begin();
 }
 
-int run_echo(const tcp::endpoint& listen, unsigned threads) {
+int run_echo(const tcp::endpoint& listen, unsigned threads, bool half_duplex) {
     asio::io_context io;
     tcp::acceptor acceptor(io);
     acceptor.open(listen.protocol());
@@ -209,7 +276,7 @@ int run_echo(const tcp::endpoint& listen, unsigned threads) {
         acceptor.close(ignored);
         io.stop();
     });
-    asio::co_spawn(io, echo_accept(acceptor, io), asio::detached);
+    asio::co_spawn(io, echo_accept(acceptor, io, half_duplex), asio::detached);
     run_threads(io, threads);
     return 0;
 }
