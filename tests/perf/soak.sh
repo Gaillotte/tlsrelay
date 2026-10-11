@@ -36,7 +36,7 @@ limits="limits: { session_lifetime: ${lifetime}s, renegotiation_grace: 20s, idle
 cat > server.yaml <<YAML
 mode: server
 instance: soak-server
-logging: { output: $work/server.log, level: ${LOG_LEVEL:-info} }
+logging: { output: $work/server.log, level: ${LOG_LEVEL:-debug} }
 admin: { endpoint: $work/server.sock }
 credentials: { pki_root: $work/pki/serveur }
 whitelist: { file: $work/wl.yaml }
@@ -48,7 +48,7 @@ YAML
 cat > client.yaml <<YAML
 mode: client
 instance: soak-client
-logging: { output: $work/client.log, level: ${LOG_LEVEL:-info} }
+logging: { output: $work/client.log, level: ${LOG_LEVEL:-debug} }
 admin: { endpoint: $work/client.sock }
 credentials: { pki_root: $work/pki/client }
 $limits
@@ -87,7 +87,15 @@ while [ "$(date +%s)" -lt "$end" ]; do
     "$(metric client tlsrelay_renegotiations_total)" "$(grep -c coupure proxy.log || true)" >> samples.csv
   sleep 5
 done
-wait "$stream" || cat stream.json
+if ! wait "$stream"; then
+  cat stream.json
+  # Historique du canal de flux (le premier ouvert) des deux côtés.
+  session=$(grep -m1 -o 'canal=[0-9]* ouvert .*session=[0-9a-f]*' client.log | grep -o 'session=[0-9a-f]*' | cut -d= -f2)
+  ccanal=$(grep -m1 "session=$session" client.log | grep -o 'canal=[0-9]*')
+  scanal=$(grep -m1 "session=$session" server.log | grep -o 'canal=[0-9]*' || true)
+  echo "-- flux, client ($ccanal)"; grep -E "$ccanal[^0-9]" client.log | tail -n 60
+  echo "-- flux, serveur (${scanal:-?})"; [ -n "$scanal" ] && grep -E "$scanal[^0-9]|$session" server.log | tail -n 60
+fi
 [ -n "$csv_out" ] && cp samples.csv "$csv_out"
 
 python3 - "$rounds" "$failed_rounds" "$minutes" <<'PY'
