@@ -22,3 +22,9 @@ ports:
   # tls:  { listen: "127.0.0.1:7002", upstream: "relay.example:9002", server_name: relay.example }
   # mTLS : nécessite credentials.pki_root avec l'identité du client
   # mtls: { listen: "127.0.0.1:7003", upstream: "relay.example:9003", server_name: relay.example }
+
+# Canal d'administration (tlsrelay status/stop/reload..., SPEC §10.1).
+# Par défaut : /run/tlsrelay/<instance>.sock ou \\.\pipe\tlsrelay-<instance>.
+# admin:
+#   endpoint: /tmp/tlsrelay-exemple.sock
+#   enabled: true

@@ -50,6 +50,10 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1
         run: ctest --output-on-failure -j 2
 
+      - name: Cycle de vie sous systemd (service réel)
+        if: matrix.name == 'GCC Release'
+        run: sudo bash tests/lifecycle/systemd.sh build/src/app/tlsrelay
+
   windows:
     name: Windows MSVC Release
     runs-on: windows-2022
@@ -87,3 +91,7 @@ jobs:
           $out = .\build\windows-msvc\src\app\Release\tlsrelay.exe version
           $out
           if (-not ($out -match 'OpenSSL 3\.5\.')) { throw "OpenSSL 3.5.x attendu" }
+
+      - name: Cycle de vie du service Windows (service réel)
+        shell: pwsh
+        run: .\tests\lifecycle\windows-service.ps1 -BuildDir build\windows-msvc\src\app\Release

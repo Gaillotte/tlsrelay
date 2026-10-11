@@ -33,3 +33,9 @@ ports:
   # tls:  { listen: "0.0.0.0:9002" }
   # mTLS : nécessite aussi credentials.pki_root
   # mtls: { listen: "0.0.0.0:9003" }
+
+# Canal d'administration (tlsrelay status/stop/reload..., SPEC §10.1).
+# Par défaut : /run/tlsrelay/<instance>.sock ou \\.\pipe\tlsrelay-<instance>.
+# admin:
+#   endpoint: /tmp/tlsrelay-exemple.sock
+#   enabled: true

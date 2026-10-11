@@ -15,7 +15,14 @@ add_library(tlsrelay_core STATIC
     src/relay/dial.cpp
     src/relay/transport.cpp
     src/relay/channel.cpp
-    src/relay/service.cpp)
+    src/relay/service.cpp
+    src/admin/admin.cpp
+    src/system/notify.cpp)
+if(WIN32)
+    target_sources(tlsrelay_core PRIVATE src/admin/windows.cpp)
+else()
+    target_sources(tlsrelay_core PRIVATE src/admin/posix.cpp)
+endif()
 add_library(tlsrelay::core ALIAS tlsrelay_core)
 
 target_include_directories(tlsrelay_core PUBLIC
@@ -35,5 +42,5 @@ target_link_libraries(tlsrelay_core
         yaml-cpp::yaml-cpp)
 
 if(WIN32)
-    target_link_libraries(tlsrelay_core PUBLIC ws2_32 mswsock)
+    target_link_libraries(tlsrelay_core PUBLIC ws2_32 mswsock advapi32)
 endif()

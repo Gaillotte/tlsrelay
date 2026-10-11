@@ -29,6 +29,18 @@ spdlog::logger& activity();
 spdlog::logger& config();
 
 void set_level(Category cat, LogLevel level);
+LogLevel level(Category cat);
+
+// « niveau » (les deux catégories) ou « catégorie=niveau ». Retourne un
+// message d'erreur, vide en cas de succès.
+std::string apply_level_spec(std::string_view spec);
+
+// Rouvre le fichier de log (après une rotation externe). Faux si la sortie est stderr.
+// Lève std::runtime_error si le fichier ne peut pas être rouvert (l'ancien reste utilisé).
+bool reopen();
+
+// Sortie courante : "stderr" ou chemin du fichier.
+std::string output();
 
 spdlog::level::level_enum to_spdlog(LogLevel level);
 

@@ -1,8 +1,11 @@
 #include "tlsrelay/relay/service.hpp"
 
 #include "tlsrelay/logging.hpp"
+#include "tlsrelay/version.hpp"
 #include "tlsrelay/pki/generation.hpp"
+#include "tlsrelay/openssl_info.hpp"
 #include "tlsrelay/relay/transport.hpp"
+#include "tlsrelay/system/notify.hpp"
 #include "tlsrelay/tunnel/frame.hpp"
 #include "tlsrelay/whitelist.hpp"
 
@@ -13,7 +16,10 @@
 #include <asio/this_coro.hpp>
 #include <asio/use_awaitable.hpp>
 
+#include <algorithm>
 #include <csignal>
+#include <ctime>
+#include <iomanip>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -21,6 +27,12 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace tlsrelay::relay {
 namespace {
@@ -77,6 +89,23 @@ Service::Service(Config config, ServiceOptions options)
     if (config_.mode == Mode::server && !config_.destination) throw std::invalid_argument("destination manquante");
     if (config_.mode == Mode::server && !config_.whitelist) throw std::invalid_argument("liste blanche manquante");
     if (config_.source_address) source_address_ = asio::ip::make_address(*config_.source_address);
+    // Canal d'administration en premier : il sert de verrou d'instance.
+    if (config_.admin.enabled) {
+        const auto endpoint = admin::endpoint_for(config_);
+        try {
+            admin::Handler& handler = *this;
+            admin_ = std::make_unique<admin::Server>(io_, endpoint, handler);
+        } catch (const admin::AlreadyRunning&) {
+            throw;
+        } catch (const std::exception& e) {
+            // Emplacement par défaut inaccessible (exécution en console sans droits
+            // sur /run/tlsrelay) : le relais fonctionne, sans canal d'administration.
+            if (config_.admin.endpoint) throw;
+            logging::config().warn("{} ; canal d'administration désactivé (définir admin.endpoint pour l'activer)",
+                                   e.what());
+        }
+        if (admin_) logging::config().info("canal d'administration : {}", admin_->endpoint());
+    }
     load_pki();
     if (config_.mode == Mode::server) load_whitelist();
 
@@ -107,6 +136,9 @@ Service::Service(Config config, ServiceOptions options)
         signals_.add(SIGTERM);
 #ifdef SIGHUP
         signals_.add(SIGHUP);  // rechargement de la PKI et de la liste blanche
+#endif
+#ifdef SIGUSR1
+        signals_.add(SIGUSR1);  // réouverture du fichier de log
 #endif
 #ifdef SIGBREAK
         signals_.add(SIGBREAK);
@@ -237,18 +269,80 @@ void Service::sweep_generations() {
 }
 
 void Service::reload(bool kill_old) {
-    asio::post(control_, [this, kill_old] {
-        if (stopping_) return;
-        logging::config().info("rechargement demandé{}", kill_old ? " (avec fermeture des anciennes générations)" : "");
-        if (pki::requirements_for(config_)) {
-            pki_pointer_ = read_pki_pointer();
-            reload_pki(kill_old);
+    asio::co_spawn(control_, [this, kill_old]() -> asio::awaitable<void> { co_await reload_now(kill_old); },
+                   log_exceptions("rechargement"));
+}
+
+asio::awaitable<std::string> Service::reload_now(bool kill_old) {
+    if (stopping_) co_return "arrêt en cours : rechargement ignoré\n";
+    logging::config().info("rechargement demandé{}", kill_old ? " (avec fermeture des anciennes générations)" : "");
+    std::string summary = reload_config();
+    if (pki::requirements_for(config_)) {
+        const auto before = current_generation();
+        const auto failures = stats_.pki_reload_failures.load();
+        pki_pointer_ = read_pki_pointer();
+        reload_pki(kill_old);
+        const auto after = current_generation();
+        if (stats_.pki_reload_failures.load() != failures) {
+            summary += "PKI : nouvelle génération refusée (voir le journal) ; " + after + " reste en service\n";
+        } else if (after != before) {
+            summary += "PKI : bascule de " + before + " vers " + after + "\n";
+        } else {
+            summary += "PKI : génération " + after + " inchangée\n";
         }
-        if (config_.mode == Mode::server) {
-            whitelist_content_ = read_whitelist_file();
-            reload_whitelist();
+        if (kill_old) summary += "PKI : connexions des générations retirées fermées\n";
+    }
+    if (config_.mode == Mode::server) {
+        whitelist_content_ = read_whitelist_file();
+        if (reload_whitelist()) {
+            summary += "liste blanche : " + std::to_string(current_whitelist()->peers().size()) + " pair(s)\n";
+        } else {
+            summary += "liste blanche : fichier invalide (voir le journal), liste en vigueur conservée\n";
         }
-    });
+    }
+    co_return summary;
+}
+
+// Relit le fichier de configuration : seuls les niveaux de journalisation
+// s'appliquent à chaud ; les autres changements sont signalés.
+std::string Service::reload_config() {
+    if (options_.config_path.empty()) return {};
+    const auto result = load_config_file(options_.config_path);
+    if (!result.config) {
+        logging::config().error("configuration {} invalide : non relue", options_.config_path);
+        for (const auto& e : result.errors) logging::config().error("  {} : {}", e.path, e.message);
+        return "configuration : fichier invalide (voir le journal), non relu\n";
+    }
+    const Config& next = *result.config;
+    const auto& log = next.logging;
+    logging::set_level(logging::Category::activity, log.activity.value_or(log.level));
+    logging::set_level(logging::Category::config, log.config.value_or(log.level));
+
+    std::vector<std::string> changed;
+    if (next.mode != config_.mode) changed.push_back("mode");
+    if (next.instance != config_.instance) changed.push_back("instance");
+    if (log.output != config_.logging.output || log.format != config_.logging.format) {
+        changed.push_back("logging.output/format");
+    }
+    if (next.ports != config_.ports) changed.push_back("ports");
+    if (next.source_address != config_.source_address) changed.push_back("source_address");
+    if (next.destination != config_.destination) changed.push_back("destination");
+    if (next.whitelist != config_.whitelist) changed.push_back("whitelist");
+    if (next.credentials != config_.credentials) changed.push_back("credentials");
+    if (next.limits != config_.limits) changed.push_back("limits");
+    if (next.admin != config_.admin) changed.push_back("admin");
+    config_.logging.level = log.level;
+    config_.logging.activity = log.activity;
+    config_.logging.config = log.config;
+
+    std::string summary = "configuration : niveaux de journalisation appliqués\n";
+    if (!changed.empty()) {
+        std::string list;
+        for (const auto& c : changed) list += (list.empty() ? "" : ", ") + c;
+        logging::config().warn("configuration modifiée ({}) : redémarrage nécessaire pour l'appliquer", list);
+        summary += "configuration : redémarrage nécessaire pour appliquer " + list + "\n";
+    }
+    return summary;
 }
 
 std::string Service::current_generation() const {
@@ -328,14 +422,14 @@ asio::awaitable<void> Service::watch() {
     }
 }
 
-void Service::reload_whitelist() {
+bool Service::reload_whitelist() {
     const auto& path = config_.whitelist->file;
     auto result = whitelist::Whitelist::load_file(path);
     for (const auto& w : result.warnings) logging::config().warn("liste blanche : {} : {}", w.path, w.message);
     if (!result.whitelist) {
         logging::config().error("liste blanche modifiée mais invalide : la liste en vigueur est conservée");
         for (const auto& e : result.errors) logging::config().error("  {} : {}", e.path, e.message);
-        return;
+        return false;
     }
     const auto previous = current_whitelist();
     const auto changes = whitelist::diff(*previous, *result.whitelist);
@@ -351,9 +445,10 @@ void Service::reload_whitelist() {
         std::lock_guard lock(whitelist_mutex_);
         whitelist_ = std::move(result.whitelist);
     }
-    if (config_.whitelist->revoke_mode != RevokeMode::immediate) return;
+    if (config_.whitelist->revoke_mode != RevokeMode::immediate) return true;
     // Chaque canal vérifie de nouveau son pair et se ferme s'il n'est plus autorisé.
     for (auto& ch : channels()) ch->revalidate();
+    return true;
 }
 
 int Service::run() {
@@ -365,7 +460,9 @@ int Service::run() {
         asio::co_spawn(control_, watch(), log_exceptions("surveillance"));
     }
 
+    if (admin_) admin_->start();
     logging::config().info("service démarré mode={} instance={}", to_string(config_.mode), config_.instance);
+    system::notify("READY=1\nSTATUS=en service");
 
     const unsigned count = options_.threads != 0 ? options_.threads : std::max(1u, std::thread::hardware_concurrency());
     std::vector<std::thread> threads;
@@ -378,9 +475,11 @@ int Service::run() {
     return 0;
 }
 
-void Service::request_stop() {
+void Service::request_stop() { request_stop(config_.limits.shutdown_timeout); }
+
+void Service::request_stop(Duration timeout) {
     if (stopping_.exchange(true)) return;
-    asio::co_spawn(control_, drain(config_.limits.shutdown_timeout), log_exceptions("arrêt"));
+    asio::co_spawn(control_, drain(timeout), log_exceptions("arrêt"));
 }
 
 void Service::request_abort() {
@@ -645,6 +744,7 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
 }
 
 asio::awaitable<void> Service::drain(Duration timeout) {
+    system::notify("STOPPING=1\nSTATUS=arrêt en cours");
     if (timeout == Duration::zero()) {
         logging::config().warn("arrêt immédiat : {} canal(aux) actif(s) coupé(s)", active_channels());
     } else {
@@ -679,6 +779,7 @@ asio::awaitable<void> Service::drain(Duration timeout) {
     }
 
     watch_timer_.cancel();
+    if (admin_) admin_->stop();
     // drain peut s'exécuter à l'intérieur de wait_signals (même strand) : le
     // drapeau empêche la boucle de se réarmer après cette annulation.
     signals_done_ = true;
@@ -696,6 +797,16 @@ asio::awaitable<void> Service::wait_signals() {
         if (signal == SIGHUP) {
             logging::config().info("signal SIGHUP reçu : rechargement");
             reload(false);
+            continue;
+        }
+#endif
+#ifdef SIGUSR1
+        if (signal == SIGUSR1) {
+            try {
+                if (logging::reopen()) logging::config().info("signal SIGUSR1 reçu : fichier de log rouvert");
+            } catch (const std::exception& e) {
+                logging::config().error("réouverture du fichier de log impossible : {}", e.what());
+            }
             continue;
         }
 #endif
@@ -780,6 +891,231 @@ void Service::on_channel_closed(Port& port, Channel& channel) {
         }
     }
     --port.active;
+}
+
+// ---------------------------------------------------------------------------
+// Canal d'administration
+
+namespace {
+
+std::string iso_time(std::chrono::system_clock::time_point tp) {
+    const auto t = std::chrono::system_clock::to_time_t(tp);
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char out[32];
+    std::strftime(out, sizeof out, "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return out;
+}
+
+std::string format_seconds(std::chrono::steady_clock::duration d) {
+    auto total = std::chrono::duration_cast<std::chrono::seconds>(d).count();
+    const auto days = total / 86400;
+    total %= 86400;
+    char out[48];
+    std::snprintf(out, sizeof out, "%lldj %02lld:%02lld:%02lld", static_cast<long long>(days),
+                  static_cast<long long>(total / 3600), static_cast<long long>(total / 60 % 60),
+                  static_cast<long long>(total % 60));
+    return out;
+}
+
+// Échappement d'une valeur d'étiquette Prometheus.
+std::string label(std::string_view value) {
+    std::string out;
+    for (const char c : value) {
+        if (c == '\\' || c == '"') out += '\\';
+        if (c == '\n') {
+            out += "\\n";
+            continue;
+        }
+        out += c;
+    }
+    return out;
+}
+
+constexpr const char* kCommands =
+    "commandes : status, channels, metrics, reload [--kill-old], stop [délai], kill, log-level <niveau|catégorie=niveau>, "
+    "log-reopen, ping\n";
+
+}  // namespace
+
+std::string Service::status_text() const {
+    std::ostringstream out;
+    out << "instance : " << config_.instance << '\n'
+        << "mode : " << to_string(config_.mode) << '\n'
+        << "état : " << (stopping_ ? "arrêt en cours" : "en service") << '\n'
+#ifdef _WIN32
+        << "pid : " << GetCurrentProcessId() << '\n'
+#else
+        << "pid : " << ::getpid() << '\n'
+#endif
+        << "démarré : " << iso_time(started_wall_) << " (depuis " << format_seconds(std::chrono::steady_clock::now() - started_)
+        << ")\n"
+        << "version : tlsrelay " << kVersion << ", " << openssl_runtime_version() << '\n';
+    if (pki::requirements_for(config_)) {
+        const auto live = live_generations();
+        std::string retired;
+        for (std::size_t i = 1; i < live.size(); ++i) retired += (retired.empty() ? "" : ", ") + live[i];
+        out << "génération PKI : " << current_generation()
+            << (retired.empty() ? std::string() : " (en drain : " + retired + ")") << '\n';
+    }
+    if (config_.mode == Mode::server) {
+        const auto wl = current_whitelist();
+        out << "liste blanche : " << (wl ? wl->peers().size() : 0) << " pair(s)\n";
+    }
+    out << "journal : activity=" << to_string(logging::level(logging::Category::activity))
+        << " config=" << to_string(logging::level(logging::Category::config)) << ", sortie " << logging::output()
+        << '\n';
+    for (const auto& port : ports_) {
+        std::error_code ec;
+        const auto ep = port.acceptor.local_endpoint(ec);
+        out << "port " << to_string(port.kind) << " : "
+            << (ec ? port.config.listen.to_string() : Endpoint{ep.address().to_string(), ep.port()}.to_string())
+            << ", " << port.active.load() << " canal(aux) actif(s)";
+        if (config_.mode == Mode::server) out << ", " << port.handshakes.load() << " connexion(s) en attente";
+        out << '\n';
+    }
+    out << "canaux : " << stats_.channels_opened.load() << " ouverts, " << stats_.channels_closed.load()
+        << " fermés, " << stats_.channels_rejected.load() << " refusés ; renégociations : "
+        << stats_.renegotiations.load() << '\n';
+    return out.str();
+}
+
+std::string Service::metrics_text() const {
+    std::ostringstream out;
+    const auto inst = "instance=\"" + label(config_.instance) + "\"";
+    auto metric = [&](const char* name, const char* type, const char* help, const std::string& labels,
+                      auto value) {
+        out << "# HELP tlsrelay_" << name << ' ' << help << '\n'
+            << "# TYPE tlsrelay_" << name << ' ' << type << '\n'
+            << "tlsrelay_" << name << '{' << labels << "} " << value << '\n';
+    };
+    metric("info", "gauge", "Version de tlsrelay et d'OpenSSL.",
+           inst + ",mode=\"" + std::string(to_string(config_.mode)) + "\",version=\"" + label(kVersion) +
+               "\",openssl=\"" + label(openssl_runtime_version()) + "\"",
+           1);
+    metric("uptime_seconds", "gauge", "Durée depuis le démarrage.", inst,
+           std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - started_).count());
+
+    out << "# HELP tlsrelay_channels_active Canaux ouverts, par port.\n# TYPE tlsrelay_channels_active gauge\n";
+    for (const auto& port : ports_) {
+        out << "tlsrelay_channels_active{" << inst << ",port=\"" << to_string(port.kind) << "\"} "
+            << port.active.load() << '\n';
+    }
+    if (pki::requirements_for(config_)) {
+        out << "# HELP tlsrelay_pki_generation_info Génération PKI courante.\n"
+            << "# TYPE tlsrelay_pki_generation_info gauge\n"
+            << "tlsrelay_pki_generation_info{" << inst << ",generation=\"" << label(current_generation()) << "\"} 1\n";
+        metric("pki_generations_live", "gauge", "Générations PKI encore utilisées (courante comprise).", inst,
+               live_generations().size());
+    }
+
+    struct Counter {
+        const char* name;
+        const char* help;
+        const std::atomic<std::uint64_t>& value;
+    };
+    const Counter counters[] = {
+        {"channels_opened_total", "Canaux ouverts.", stats_.channels_opened},
+        {"channels_closed_total", "Canaux fermés.", stats_.channels_closed},
+        {"channels_rejected_total", "Connexions refusées (limite max_channels).", stats_.channels_rejected},
+        {"channels_idle_closed_total", "Canaux fermés pour inactivité.", stats_.channels_idle_closed},
+        {"dial_attempt_failures_total", "Essais de connexion sortante échoués.", stats_.dial_attempt_failures},
+        {"dial_failures_total", "Canaux abandonnés après tous les essais de connexion.", stats_.dial_failures},
+        {"tls_handshake_failures_total", "Handshakes TLS refusés ou expirés.", stats_.tls_handshake_failures},
+        {"peers_rejected_total", "Pairs refusés par la liste blanche.", stats_.peers_rejected},
+        {"peers_revoked_total", "Canaux fermés après retrait du pair de la liste blanche.", stats_.peers_revoked},
+        {"pki_rotations_total", "Bascules vers une nouvelle génération PKI.", stats_.pki_rotations},
+        {"pki_reload_failures_total", "Nouvelles générations PKI refusées.", stats_.pki_reload_failures},
+        {"renegotiations_total", "Reprises de session réussies.", stats_.renegotiations},
+        {"resume_failures_total", "Reprises de session refusées ou échouées.", stats_.resume_failures},
+        {"protocol_errors_total", "Trames non conformes reçues.", stats_.protocol_errors},
+        {"bytes_upstream_total", "Octets relayés de l'application vers la destination (canaux fermés).",
+         stats_.bytes_upstream},
+        {"bytes_downstream_total", "Octets relayés de la destination vers l'application (canaux fermés).",
+         stats_.bytes_downstream},
+    };
+    for (const auto& c : counters) metric(c.name, "counter", c.help, inst, c.value.load());
+    return out.str();
+}
+
+asio::awaitable<std::string> Service::channels_text() {
+    std::ostringstream out;
+    auto list = channels();
+    std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) { return a->id() < b->id(); });
+    out << list.size() << " canal(aux)\n";
+    for (const auto& ch : list) {
+        const auto info = co_await asio::co_spawn(ch->executor(), ch->describe(), asio::use_awaitable);
+        out << "canal=" << info.id << " port=" << to_string(info.port) << " état=" << info.state
+            << " session=" << info.session << " pair=" << info.peer;
+        if (!info.generation.empty()) out << " génération=" << info.generation;
+        out << " connexion=" << info.transport << " âge=" << format_duration(info.age)
+            << " inactif=" << format_duration(info.idle) << " montant=" << info.bytes_up << "o"
+            << " descendant=" << info.bytes_down << "o\n";
+    }
+    co_return out.str();
+}
+
+asio::awaitable<admin::Reply> Service::handle(admin::Request request, std::string caller) {
+    std::string line = request.command;
+    for (const auto& a : request.args) line += " " + a;
+    // Toutes les opérations d'administration sont journalisées (SPEC §9).
+    if (request.command == "status" || request.command == "ping" || request.command == "metrics" ||
+        request.command == "channels") {
+        logging::config().debug("administration : « {} » ({})", line, caller);
+    } else {
+        logging::config().info("administration : « {} » ({})", line, caller);
+    }
+    auto error = [](std::string message) { return admin::Reply{false, std::move(message) + "\n"}; };
+    const auto& cmd = request.command;
+    const auto argc = request.args.size();
+
+    if (cmd == "ping" && argc == 0) co_return admin::Reply{true, "pong\n"};
+    if (cmd == "status" && argc == 0) co_return admin::Reply{true, status_text()};
+    if (cmd == "metrics" && argc == 0) co_return admin::Reply{true, metrics_text()};
+    if (cmd == "channels" && argc == 0) co_return admin::Reply{true, co_await channels_text()};
+    if (cmd == "reload" && (argc == 0 || (argc == 1 && request.args[0] == "--kill-old"))) {
+        co_return admin::Reply{true, co_await asio::co_spawn(control_, reload_now(argc == 1), asio::use_awaitable)};
+    }
+    if (cmd == "stop" && argc <= 1) {
+        Duration timeout = config_.limits.shutdown_timeout;
+        if (argc == 1) {
+            const auto parsed = parse_duration(request.args[0]);
+            if (!parsed) co_return error("délai invalide « " + request.args[0] + " » (exemples : 10s, 1m)");
+            timeout = *parsed;
+        }
+        if (stopping_) co_return admin::Reply{true, "arrêt déjà en cours\n"};
+        request_stop(timeout);
+        co_return admin::Reply{true, "arrêt en cours : drain de " + std::to_string(active_channels()) +
+                                         " canal(aux) pendant " + format_duration(timeout) + " au plus\n"};
+    }
+    if (cmd == "kill" && argc == 0) {
+        request_abort();
+        co_return admin::Reply{true, "arrêt immédiat en cours\n"};
+    }
+    if (cmd == "log-level" && argc == 1) {
+        if (auto problem = logging::apply_level_spec(request.args[0]); !problem.empty()) co_return error(problem);
+        logging::config().info("niveaux de journalisation : activity={} config={}",
+                               to_string(logging::level(logging::Category::activity)),
+                               to_string(logging::level(logging::Category::config)));
+        co_return admin::Reply{true, "niveaux : activity=" +
+                                         std::string(to_string(logging::level(logging::Category::activity))) +
+                                         " config=" + std::string(to_string(logging::level(logging::Category::config))) +
+                                         "\n"};
+    }
+    if (cmd == "log-reopen" && argc == 0) {
+        try {
+            if (!logging::reopen()) co_return admin::Reply{true, "sortie stderr : rien à rouvrir\n"};
+        } catch (const std::exception& e) {
+            co_return error(e.what());
+        }
+        logging::config().info("fichier de log rouvert");
+        co_return admin::Reply{true, "fichier de log rouvert : " + logging::output() + "\n"};
+    }
+    co_return error("commande ou arguments inconnus : « " + line + " »\n" + kCommands);
 }
 
 }  // namespace tlsrelay::relay

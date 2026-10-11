@@ -34,7 +34,8 @@ Principales caractéristiques :
 | 3 | mTLS (certificat client émis par l'AC Clients) et liste blanche des pairs (IP, sujet, ports), rechargée à chaud | Terminée |
 | 4 | Rotation à chaud des certificats et des AC jusqu'à la racine (générations, drain, garde-fou, `check-pki`, `pki activate`, `SIGHUP`) | Terminée |
 | 5 | Protocole de tunnel `tlsrelay/1` (trames, acquittements, contre-pression, demi-fermeture), renégociation transparente à l'échéance de `session_lifetime`, reprise de session après coupure | Terminée |
-| 6 | Cycle de vie : services Windows/systemd, instances nommées, canal d'administration, métriques | À venir |
+| 6 | Cycle de vie : services systemd et Windows (boot, start, stop, restart, kill), instances nommées, canal d'administration, métriques Prometheus, journalisation à chaud | Terminée |
+| 7 | Commandes PKI et mini-AC | À venir |
 
 Les trois ports sont disponibles. Le client et le serveur dialoguent avec le protocole de tunnel (SPEC §4) : sur les ports `tls` et `mtls`, le client renégocie la session à l'échéance de `session_lifetime` (nouvelle connexion, handshake complet avec la génération PKI courante) sans que l'application ne voie de coupure, et reprend la session si la connexion tombe. Le serveur n'accepte que des tlsrelay clients : une application ne peut pas s'y connecter directement.
 
@@ -117,6 +118,20 @@ Les nouvelles connexions utilisent v2. Les canaux déjà ouverts restent sur v1 
 ### Renégociation
 
 Sur les ports `tls` et `mtls`, chaque canal change de connexion TLS à l'échéance de `limits.session_lifetime` (± `session_jitter`). Les données continuent de passer pendant la renégociation et l'application ne voit aucune coupure. Le même mécanisme reprend la session si la connexion tombe, dans la limite de `limits.renegotiation_grace` (30 s par défaut). Avec `logging.level: debug`, chaque renégociation est journalisée.
+
+### Service et administration
+
+```sh
+sudo tlsrelay service install --instance agence --boot   # config : /etc/tlsrelay/agence.yaml
+sudo tlsrelay start   --instance agence
+sudo tlsrelay status  --instance agence                  # PID, OpenSSL, génération PKI, canaux par port
+sudo tlsrelay reload  --instance agence                  # liste blanche, PKI, niveaux de journalisation
+sudo tlsrelay stop    --instance agence --timeout 30s    # drain puis arrêt ; kill : arrêt immédiat
+```
+
+Sous Windows, dans une console administrateur : mêmes commandes (service `tlsrelay-agence`, configuration `%ProgramData%\tlsrelay\agence.yaml`, compte `NT SERVICE\tlsrelay-agence`). Le compte du service doit pouvoir lire la configuration, la liste blanche et la PKI.
+
+Une instance lancée en console (`tlsrelay run`) se pilote de la même façon avec `-c <config>` au lieu de `--instance`. Autres commandes : `channels` (canaux ouverts), `metrics` (format Prometheus), `log-level debug` (journalisation à chaud), `log-reopen` (rotation). Détails : [SPEC §10](docs/SPEC.md).
 
 - Ctrl+C (ou `SIGTERM`) : arrêt propre, avec drain des canaux pendant `limits.shutdown_timeout` ; un second Ctrl+C force l'arrêt immédiat.
 - Codes de sortie : 0 (succès), 1 (erreur d'exécution), 2 (configuration invalide).

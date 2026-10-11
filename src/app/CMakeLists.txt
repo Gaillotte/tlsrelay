@@ -1,4 +1,10 @@
 add_executable(tlsrelay main.cpp)
+if(WIN32)
+    target_sources(tlsrelay PRIVATE platform_windows.cpp)
+    target_link_libraries(tlsrelay PRIVATE advapi32 shell32 ole32)
+else()
+    target_sources(tlsrelay PRIVATE platform_linux.cpp)
+endif()
 target_link_libraries(tlsrelay PRIVATE tlsrelay::core tlsrelay::options CLI11::CLI11)
 
 install(TARGETS tlsrelay RUNTIME DESTINATION bin)

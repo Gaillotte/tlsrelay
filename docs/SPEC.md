@@ -360,6 +360,14 @@ ports:
 
 Un port absent de la configuration n'est pas ouvert.
 
+Section commune aux deux modes (facultative) :
+
+```yaml
+admin:
+  enabled: true                  # canal d'administration (§10.1)
+  endpoint: /run/tlsrelay/rc-server.sock   # défaut selon le système et l'instance
+```
+
 ### 8.3 Règles de validation (partagées avec l'éditeur)
 
 - `mode` ∈ {client, server} ; `destination` obligatoire en mode serveur, interdite en mode client ; `upstream` obligatoire pour chaque port en mode client.
@@ -387,21 +395,61 @@ Un port absent de la configuration n'est pas ouvert.
 
 | Commande | Effet |
 |---|---|
-| `tlsrelay run -c <config> [-v\|-vv\|-q]` | Exécution en console (Ctrl+C : arrêt propre ; second Ctrl+C : arrêt immédiat) |
-| `tlsrelay service install [--instance N] [--boot]` | Installe le service (systemd `tlsrelay@N`, service Windows `tlsrelay-N`) |
-| `tlsrelay service uninstall [--instance N]` | Arrête et désinstalle |
-| `tlsrelay start\|stop\|restart [--instance N] [--timeout 30s]` | Démarrage ; arrêt propre avec drain ; redémarrage |
-| `tlsrelay kill [--instance N]` | Arrêt immédiat |
-| `tlsrelay reload [--instance N] [--kill-old] [--force]` | Recharge config, liste blanche, PKI, sans arrêt |
-| `tlsrelay status [--instance N] [--channels]` | État, PID, durée, version OpenSSL, génération courante, canaux par port |
+| `tlsrelay run -c <config> [--instance N] [-v\|-vv\|-q]` | Exécution en console (Ctrl+C : arrêt propre ; second Ctrl+C : arrêt immédiat). `--instance` vérifie que la configuration est bien celle de l'instance N |
+| `tlsrelay service install [--instance N] [-c <config>] [--boot]` | Installe le service (systemd `tlsrelay@N`, service Windows `tlsrelay-N`) ; `--boot` : démarrage avec le système |
+| `tlsrelay service uninstall [--instance N]` | Arrête (avec drain) et désinstalle |
+| `tlsrelay start\|restart [--instance N] [--timeout 30s]` | Démarre le service installé (attend que le canal d'administration réponde) ; redémarrage = arrêt propre puis démarrage |
+| `tlsrelay stop [cible] [--timeout durée]` | Arrêt propre : plus aucune connexion acceptée, drain des canaux, puis arrêt ; attend la fin du processus |
+| `tlsrelay kill [cible]` | Arrêt immédiat ; si le canal ne répond plus, arrêt forcé par le gestionnaire de services |
+| `tlsrelay reload [cible] [--kill-old]` | Recharge liste blanche, PKI et niveaux de journalisation, sans arrêt ; affiche le bilan |
+| `tlsrelay status [cible]` | État, PID, durée, version OpenSSL, génération courante et en drain, canaux par port |
+| `tlsrelay channels [cible]` | Canaux ouverts : port, état, session, pair, génération, n° de connexion, âge, inactivité, octets |
+| `tlsrelay metrics [cible]` | Métriques au format texte Prometheus |
+| `tlsrelay log-level [cible] <niveau\|catégorie=niveau>` | Niveau de journalisation à chaud |
+| `tlsrelay log-reopen [cible]` | Rouvre le fichier de log (rotation) ; aussi `SIGUSR1` sous Linux |
 | `tlsrelay check-config -c <config>` | Valide une configuration sans la charger |
 
-- Canal d'administration : socket Unix `/run/tlsrelay/<instance>.sock` (root ou groupe `tlsrelay`) ; named pipe `\\.\pipe\tlsrelay-<instance>` (Administrateurs et SYSTEM).
-- Verrou d'instance : une seule exécution par instance.
+`cible` : `--instance N` (défaut `default`), `-c <config>` (instance et point d'accès lus dans la configuration) ou `--admin <point d'accès>`.
+
+### 10.1 Canal d'administration
+
+- Point d'accès : socket Unix `/run/tlsrelay/<instance>.sock` (droits `0660`, groupe `tlsrelay` s'il existe, répertoire `0750`) ; named pipe `\\.\pipe\tlsrelay-<instance>` (Administrateurs, SYSTEM et compte de l'instance ; clients distants refusés). Configurable : `admin.endpoint` ; désactivable : `admin.enabled: false`.
+- En console, si l'emplacement par défaut est inaccessible (utilisateur sans droits sur `/run/tlsrelay`), le relais démarre sans canal, avec un avertissement.
+- Protocole : une commande par connexion. Requête : une ligne de texte (4 Kio au plus, 5 s pour l'envoyer). Réponse : `OK <n>` ou `ERREUR <n>`, puis `n` octets de texte UTF-8.
+- Chaque commande est journalisée avec l'identité de l'appelant (uid et pid sous Linux, pid sous Windows) : niveau `info` pour les commandes qui modifient l'état, `debug` pour les consultations.
+- Verrou d'instance : `flock` sur `<point d'accès>.lock` sous Linux, première instance du named pipe sous Windows. Une seconde exécution de la même instance est refusée ; un socket laissé par un arrêt brutal est remplacé.
+
+### 10.2 Rechargement
+
+- Liste blanche et PKI : comme `SIGHUP` (sections 6 et 7.4).
+- Configuration : le fichier est relu ; seuls les niveaux de journalisation s'appliquent à chaud. Les autres sections modifiées (ports, destination, limites, etc.) sont signalées : elles demandent un redémarrage.
+
+### 10.3 Services
+
+- **Linux (systemd)** : unité modèle `/etc/systemd/system/tlsrelay@.service` et complément par instance (`tlsrelay@N.service.d/10-tlsrelay.conf` : configuration, délai d'arrêt = `shutdown_timeout` + 15 s). `Type=notify` (prêt quand les ports sont ouverts), compte système `tlsrelay`, `ProtectSystem=strict`, `ProtectHome`, seule capacité `CAP_NET_BIND_SERVICE`, relance en cas d'échec. Configuration par défaut : `/etc/tlsrelay/<instance>.yaml`. Le binaire doit être installé hors de `/home`.
+- **Windows** : service `tlsrelay-N` exécuté sous le compte virtuel `NT SERVICE\tlsrelay-N` (seul privilège : `SeChangeNotifyPrivilege`), arrêt du système notifié (`PRESHUTDOWN`) avec le délai de drain, relance en cas d'échec. Configuration par défaut : `%ProgramData%\tlsrelay\<instance>.yaml` ; si `logging.output` vaut `stderr`, journal dans `%ProgramData%\tlsrelay\logs\<instance>.log`.
+- Le compte du service doit pouvoir lire la configuration, la liste blanche et la PKI ; ces fichiers ne doivent être lisibles que par lui et par les administrateurs.
 - Sockets d'écoute : `SO_REUSEADDR` (Linux), `SO_EXCLUSIVEADDRUSE` (Windows).
 - Au démarrage : contrôle de la version d'OpenSSL chargée (≥ 3.0), écrite dans les logs.
 
+### 10.4 Métriques
+
+Format texte Prometheus (version 0.0.4), lu par `tlsrelay metrics` sur le canal d'administration : aucun port réseau supplémentaire n'est ouvert. Un exportateur (par exemple le collecteur textfile de node_exporter) peut l'écrire périodiquement dans un fichier. Toutes les séries portent l'étiquette `instance`.
+
+| Série | Type |
+|---|---|
+| `tlsrelay_info{mode,version,openssl}` | gauge (1) |
+| `tlsrelay_uptime_seconds` | gauge |
+| `tlsrelay_channels_active{port}` | gauge |
+| `tlsrelay_pki_generation_info{generation}`, `tlsrelay_pki_generations_live` | gauge |
+| `tlsrelay_channels_{opened,closed,rejected,idle_closed}_total` | counter |
+| `tlsrelay_dial_attempt_failures_total`, `tlsrelay_dial_failures_total` | counter |
+| `tlsrelay_tls_handshake_failures_total`, `tlsrelay_peers_{rejected,revoked}_total` | counter |
+| `tlsrelay_pki_rotations_total`, `tlsrelay_pki_reload_failures_total` | counter |
+| `tlsrelay_renegotiations_total`, `tlsrelay_resume_failures_total`, `tlsrelay_protocol_errors_total` | counter |
+| `tlsrelay_bytes_{upstream,downstream}_total` (canaux fermés) | counter |
+
 ## 11. Points ouverts
 
-- Format exact des métriques (Prometheus texte via le canal d'administration, ou point HTTP local).
-- Nommage définitif des paquets et chemins par défaut sous Windows (`%ProgramData%\tlsrelay\...`).
+- Nommage définitif des paquets (phase 11).
+- Décidé en phase 6 : métriques au format Prometheus texte via le canal d'administration (§10.4) ; chemins par défaut sous Windows dans `%ProgramData%\tlsrelay\` (§10.3).

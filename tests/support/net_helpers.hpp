@@ -217,8 +217,10 @@ private:
 // Service exécuté dans un thread, arrêté proprement à la destruction.
 class RunningService {
 public:
+    // Canal d'administration désactivé, sauf si le test donne admin.endpoint :
+    // l'emplacement par défaut serait partagé entre les tests.
     explicit RunningService(Config config, relay::ServiceOptions options = {false, 2})
-        : service_(std::make_unique<relay::Service>(std::move(config), options)),
+        : service_(std::make_unique<relay::Service>(without_default_admin(std::move(config)), options)),
           thread_([this] {
               service_->run();
               finished_ = true;
@@ -251,6 +253,11 @@ public:
     std::size_t active_channels() const { return service_->active_channels(); }
 
 private:
+    static Config without_default_admin(Config config) {
+        if (!config.admin.endpoint) config.admin.enabled = false;
+        return config;
+    }
+
     bool eventually_finished(std::chrono::milliseconds timeout) {
         const auto deadline = Clock::now() + timeout;
         while (Clock::now() < deadline) {

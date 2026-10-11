@@ -1,5 +1,6 @@
 #pragma once
 
+#include "tlsrelay/admin/admin.hpp"
 #include "tlsrelay/config.hpp"
 #include "tlsrelay/relay/channel.hpp"
 #include "tlsrelay/relay/stats.hpp"
@@ -30,6 +31,7 @@ struct ServiceOptions {
     bool handle_signals = true;  // Ctrl+C / SIGTERM : arrêt propre ; second signal : arrêt immédiat
     unsigned threads = 0;        // 0 : nombre de cœurs
     Duration watch_interval = std::chrono::seconds(2);  // surveillance de la liste blanche et de la PKI
+    std::string config_path{};  // fichier relu par la commande reload (vide : pas de relecture)
 };
 
 // Le service ouvre les ports configurés. En mode client, chaque connexion
@@ -41,7 +43,10 @@ struct ServiceOptions {
 // génération, il bascule à chaud : les nouvelles connexions utilisent la
 // nouvelle génération, les connexions ouvertes finissent sur l'ancienne
 // (SPEC §7.4).
-class Service : private PeerAuthorizer {
+//
+// Si admin.enabled, le service ouvre le canal d'administration (SPEC §10), qui
+// sert aussi de verrou d'instance.
+class Service : private PeerAuthorizer, private admin::Handler {
 public:
     // Charge la PKI si un port TLS est configuré, puis ouvre les ports d'écoute.
     // Lève std::system_error si un port ne peut pas être ouvert,
@@ -59,6 +64,7 @@ public:
     // Arrêt propre : plus aucune connexion acceptée, drain des canaux pendant
     // limits.shutdown_timeout, puis fermeture des canaux restants.
     void request_stop();
+    void request_stop(Duration timeout);
 
     // Arrêt immédiat, sans drain.
     void request_abort();
@@ -72,6 +78,13 @@ public:
     // utilisées par des connexions (courante comprise).
     std::string current_generation() const;
     std::vector<std::string> live_generations() const;
+
+    // Point d'accès du canal d'administration (vide s'il est désactivé).
+    std::string admin_endpoint() const { return admin_ ? admin_->endpoint() : std::string(); }
+
+    // Contenus des commandes d'administration.
+    std::string status_text() const;
+    std::string metrics_text() const;
 
     std::optional<asio::ip::tcp::endpoint> local_endpoint(PortKind kind) const;
     std::size_t active_channels() const;
@@ -107,12 +120,16 @@ private:
     void sweep_generations();
     std::optional<std::string> read_pki_pointer() const;
     void load_whitelist();
-    void reload_whitelist();
+    bool reload_whitelist();
     std::optional<std::string> read_whitelist_file() const;
     std::shared_ptr<const whitelist::Whitelist> current_whitelist() const;
     std::optional<std::string> authorize(const asio::ip::address& address, PortKind port,
                                          const X509_NAME* subject) const override;
     asio::awaitable<void> watch();
+    asio::awaitable<admin::Reply> handle(admin::Request request, std::string caller) override;
+    asio::awaitable<std::string> reload_now(bool kill_old);
+    asio::awaitable<std::string> channels_text();
+    std::string reload_config();
     asio::awaitable<void> accept_loop(Port& port);
     // Serveur : authentifie une connexion de transport, puis ouvre un canal
     // (OPEN) ou la confie au canal dont elle reprend la session (RESUME).
@@ -153,6 +170,9 @@ private:
     std::atomic<bool> stopping_{false};
     std::atomic<bool> aborting_{false};
     Stats stats_;
+    std::unique_ptr<admin::Server> admin_;
+    std::chrono::steady_clock::time_point started_ = std::chrono::steady_clock::now();
+    std::chrono::system_clock::time_point started_wall_ = std::chrono::system_clock::now();
 };
 
 }  // namespace tlsrelay::relay

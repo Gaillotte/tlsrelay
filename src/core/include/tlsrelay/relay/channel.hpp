@@ -65,6 +65,21 @@ struct PeerIdentity {
 
 enum class Side { client, server };
 
+// État d'un canal pour la commande d'administration « channels ».
+struct ChannelInfo {
+    std::uint64_t id = 0;
+    PortKind port = PortKind::plain;
+    std::string state;       // ouverture, ouvert, renégociation, reprise, fermeture
+    std::string session;     // 8 premiers caractères hexadécimaux
+    std::string peer;        // client : application ; serveur : entrée de liste blanche et adresse
+    std::string generation;  // génération PKI de la connexion de transport courante
+    std::uint32_t transport = 0;  // numéro de la connexion de transport courante
+    std::chrono::milliseconds age{};
+    std::chrono::milliseconds idle{};
+    std::uint64_t bytes_up = 0;
+    std::uint64_t bytes_down = 0;
+};
+
 struct ChannelSettings {
     Side side = Side::client;
     PortKind port = PortKind::plain;
@@ -117,6 +132,9 @@ public:
     // Ferme le canal si sa connexion de transport utilise un autre contexte que
     // ceux donnés (génération retirée). Utilisable depuis n'importe quel thread.
     void close_if_retired(std::shared_ptr<const tls::Context> tls, std::shared_ptr<const tls::Context> mtls);
+
+    // À exécuter sur le strand du canal.
+    asio::awaitable<ChannelInfo> describe() const;
 
     std::uint64_t id() const { return id_; }
     const asio::any_io_executor& executor() const { return executor_; }

@@ -11,6 +11,7 @@ add_executable(tlsrelay_tests
     test_rotation.cpp
     test_frame.cpp
     test_tunnel.cpp
+    test_admin.cpp
     support/test_pki.cpp)
 
 target_link_libraries(tlsrelay_tests PRIVATE
@@ -29,3 +30,10 @@ gtest_discover_tests(tlsrelay_tests
     DISCOVERY_MODE PRE_TEST
     DISCOVERY_TIMEOUT 60
     PROPERTIES TIMEOUT 60)
+
+# Cycle de vie en console avec le binaire réel (Linux).
+if(NOT WIN32)
+    add_test(NAME Lifecycle.Console
+             COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle/console.sh" $<TARGET_FILE:tlsrelay>)
+    set_tests_properties(Lifecycle.Console PROPERTIES TIMEOUT 120)
+endif()

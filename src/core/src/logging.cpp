@@ -2,6 +2,7 @@
 
 #include <spdlog/pattern_formatter.h>
 #include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/dist_sink.h>
 #include <spdlog/sinks/stdout_sinks.h>
 
 #include <cstdio>
@@ -18,6 +19,10 @@ struct State {
     std::mutex mutex;
     std::shared_ptr<spdlog::logger> activity;
     std::shared_ptr<spdlog::logger> config;
+    // Les journaux écrivent dans dist, dont la sortie réelle peut être remplacée
+    // à chaud (réouverture du fichier) sans toucher aux loggers.
+    std::shared_ptr<spdlog::sinks::dist_sink_mt> dist;
+    LogConfig cfg;
 };
 
 State& state() {
@@ -69,11 +74,28 @@ std::shared_ptr<spdlog::logger> make_logger(const std::string& name, spdlog::sin
     return logger;
 }
 
+spdlog::sink_ptr make_output(const LogConfig& cfg) {
+    spdlog::sink_ptr sink;
+    if (cfg.output == "stderr") {
+        sink = std::make_shared<spdlog::sinks::stderr_sink_mt>();
+    } else {
+        try {
+            sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(cfg.output, false);
+        } catch (const spdlog::spdlog_ex& e) {
+            throw std::runtime_error("impossible d'ouvrir le fichier de log « " + cfg.output + " » : " + e.what());
+        }
+    }
+    if (cfg.format == LogFormat::json) sink->set_formatter(make_json_formatter());
+    else sink->set_formatter(std::make_unique<spdlog::pattern_formatter>(kTextPattern, spdlog::pattern_time_type::utc));
+    return sink;
+}
+
 void install_default_locked(State& s) {
-    auto sink = std::make_shared<spdlog::sinks::stderr_sink_mt>();
-    sink->set_formatter(std::make_unique<spdlog::pattern_formatter>(kTextPattern, spdlog::pattern_time_type::utc));
-    s.activity = make_logger("activity", sink, spdlog::level::info);
-    s.config = make_logger("config", sink, spdlog::level::info);
+    s.cfg = LogConfig{};
+    s.dist = std::make_shared<spdlog::sinks::dist_sink_mt>();
+    s.dist->add_sink(make_output(s.cfg));
+    s.activity = make_logger("activity", s.dist, spdlog::level::info);
+    s.config = make_logger("config", s.dist, spdlog::level::info);
 }
 
 spdlog::logger& get(std::shared_ptr<spdlog::logger> State::*member) {
@@ -102,26 +124,57 @@ void init_default() {
 }
 
 void init(const LogConfig& cfg, std::optional<LogLevel> cli_level) {
-    spdlog::sink_ptr sink;
-    if (cfg.output == "stderr") {
-        sink = std::make_shared<spdlog::sinks::stderr_sink_mt>();
-    } else {
-        try {
-            sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(cfg.output, false);
-        } catch (const spdlog::spdlog_ex& e) {
-            throw std::runtime_error("impossible d'ouvrir le fichier de log « " + cfg.output + " » : " + e.what());
-        }
-    }
-    if (cfg.format == LogFormat::json) sink->set_formatter(make_json_formatter());
-    else sink->set_formatter(std::make_unique<spdlog::pattern_formatter>(kTextPattern, spdlog::pattern_time_type::utc));
-
+    auto sink = make_output(cfg);
     const LogLevel activity_level = cli_level.value_or(cfg.activity.value_or(cfg.level));
     const LogLevel config_level = cli_level.value_or(cfg.config.value_or(cfg.level));
 
     auto& s = state();
     std::lock_guard lock(s.mutex);
-    s.activity = make_logger("activity", sink, to_spdlog(activity_level));
-    s.config = make_logger("config", sink, to_spdlog(config_level));
+    s.cfg = cfg;
+    s.dist = std::make_shared<spdlog::sinks::dist_sink_mt>();
+    s.dist->add_sink(std::move(sink));
+    s.activity = make_logger("activity", s.dist, to_spdlog(activity_level));
+    s.config = make_logger("config", s.dist, to_spdlog(config_level));
+}
+
+bool reopen() {
+    auto& s = state();
+    std::lock_guard lock(s.mutex);
+    if (!s.dist || s.cfg.output == "stderr") return false;
+    // Le fichier courant est fermé par set_sinks après l'ouverture du nouveau.
+    s.dist->set_sinks({make_output(s.cfg)});
+    return true;
+}
+
+std::string output() {
+    auto& s = state();
+    std::lock_guard lock(s.mutex);
+    return s.cfg.output;
+}
+
+LogLevel level(Category cat) {
+    const auto l = (cat == Category::activity ? activity() : config()).level();
+    if (l <= spdlog::level::trace) return LogLevel::trace;
+    if (l <= spdlog::level::debug) return LogLevel::debug;
+    if (l <= spdlog::level::info) return LogLevel::info;
+    return LogLevel::error;
+}
+
+std::string apply_level_spec(std::string_view spec) {
+    const auto eq = spec.find('=');
+    const auto level_text = eq == std::string_view::npos ? spec : spec.substr(eq + 1);
+    const auto parsed = parse_log_level(level_text);
+    if (!parsed) return "niveau inconnu « " + std::string(level_text) + " » (error, info, debug ou trace)";
+    if (eq == std::string_view::npos) {
+        set_level(Category::activity, *parsed);
+        set_level(Category::config, *parsed);
+        return {};
+    }
+    const auto cat = spec.substr(0, eq);
+    if (cat == "activity") set_level(Category::activity, *parsed);
+    else if (cat == "config") set_level(Category::config, *parsed);
+    else return "catégorie inconnue « " + std::string(cat) + " » (activity ou config)";
+    return {};
 }
 
 spdlog::logger& activity() { return get(&State::activity); }

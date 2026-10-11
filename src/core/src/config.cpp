@@ -58,7 +58,7 @@ public:
         Config cfg;
         if (!is_map(root, "")) return cfg;
         check_keys(root, "", {"mode", "instance", "logging", "credentials", "limits", "ports",
-                              "source_address", "destination", "whitelist"});
+                              "source_address", "destination", "whitelist", "admin"});
 
         if (auto v = required_string(root, "mode", "")) {
             if (*v == "client") cfg.mode = Mode::client;
@@ -73,6 +73,7 @@ public:
         cfg.source_address = optional_string(root, "source_address", "");
         if (auto node = section(root, "destination", "")) cfg.destination = parse_destination(*node, "destination");
         if (auto node = section(root, "whitelist", "")) cfg.whitelist = parse_whitelist(*node, "whitelist");
+        if (auto node = section(root, "admin", "")) cfg.admin = parse_admin(*node, "admin");
         return cfg;
     }
 
@@ -249,6 +250,14 @@ private:
         return d;
     }
 
+    AdminConfig parse_admin(const YAML::Node& node, const std::string& path) {
+        AdminConfig a;
+        check_keys(node, path, {"enabled", "endpoint"});
+        read_bool(node, "enabled", path, a.enabled);
+        a.endpoint = optional_string(node, "endpoint", path);
+        return a;
+    }
+
     WhitelistRef parse_whitelist(const YAML::Node& node, const std::string& path) {
         WhitelistRef w;
         check_keys(node, path, {"file", "revoke_mode"});
@@ -264,14 +273,14 @@ private:
     std::vector<Issue>& errors_;
 };
 
+}  // namespace
+
 bool valid_instance_name(std::string_view name) {
     if (name.empty() || name.size() > 32) return false;
     return std::all_of(name.begin(), name.end(), [](char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
     });
 }
-
-}  // namespace
 
 void validate(const Config& cfg, std::vector<Issue>& errors, std::vector<Issue>& warnings) {
     (void)warnings;  // aucun avertissement défini pour l'instant
@@ -281,6 +290,7 @@ void validate(const Config& cfg, std::vector<Issue>& errors, std::vector<Issue>&
     if (!valid_instance_name(cfg.instance)) {
         err("instance", "nom invalide : 1 à 32 caractères parmi lettres, chiffres, - et _");
     }
+    if (cfg.admin.endpoint && cfg.admin.endpoint->empty()) err("admin.endpoint", "valeur vide");
 
     // Ports
     if (cfg.ports.empty()) err("ports", "aucun port configuré");

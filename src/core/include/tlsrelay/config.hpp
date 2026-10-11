@@ -31,12 +31,16 @@ struct LogConfig {
     std::optional<LogLevel> config;    // surcharge du niveau pour la catégorie config
     LogFormat format = LogFormat::text;
     std::string output = "stderr";     // "stderr" ou chemin de fichier
+
+    bool operator==(const LogConfig&) const = default;
 };
 
 struct Credentials {
     std::string pki_root;
     bool watch = true;
     Duration expiry_warning = std::chrono::days(30);
+
+    bool operator==(const Credentials&) const = default;
 };
 
 struct Limits {
@@ -48,12 +52,16 @@ struct Limits {
     Duration handshake_timeout = std::chrono::seconds(10);
     std::uint32_t max_channels = 5000;
     Duration shutdown_timeout = std::chrono::seconds(30);
+
+    bool operator==(const Limits&) const = default;
 };
 
 struct PortConfig {
     Endpoint listen;
     std::optional<Endpoint> upstream;        // mode client uniquement
     std::optional<std::string> server_name;  // mode client, ports tls et mtls
+
+    bool operator==(const PortConfig&) const = default;
 };
 
 struct Destination {
@@ -61,11 +69,23 @@ struct Destination {
     Duration dial_timeout = std::chrono::seconds(5);
     std::uint32_t dial_retries = 3;
     Duration dial_backoff = std::chrono::seconds(1);
+
+    bool operator==(const Destination&) const = default;
 };
 
 struct WhitelistRef {
     std::string file;
     RevokeMode revoke_mode = RevokeMode::immediate;
+
+    bool operator==(const WhitelistRef&) const = default;
+};
+
+// Canal d'administration (SPEC §10) : socket Unix ou named pipe.
+struct AdminConfig {
+    bool enabled = true;
+    std::optional<std::string> endpoint;  // défaut : default_admin_endpoint(instance)
+
+    bool operator==(const AdminConfig&) const = default;
 };
 
 struct Config {
@@ -78,7 +98,10 @@ struct Config {
     std::optional<std::string> source_address;  // mode client
     std::optional<Destination> destination;     // mode serveur
     std::optional<WhitelistRef> whitelist;      // mode serveur
+    AdminConfig admin;
 };
+
+bool valid_instance_name(std::string_view name);
 
 // Problème détecté dans une configuration. path suit la structure du YAML,
 // par exemple "ports.plain.listen".

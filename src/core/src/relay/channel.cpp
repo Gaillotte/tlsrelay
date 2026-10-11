@@ -737,6 +737,29 @@ void Channel::check_finished() {
     if (!closing_ && local_shutdown_ && unacked_.empty() && raw_shutdown_) stop(CloseReason::normal);
 }
 
+asio::awaitable<ChannelInfo> Channel::describe() const {
+    using std::chrono::duration_cast;
+    using std::chrono::milliseconds;
+    ChannelInfo info;
+    info.id = id_;
+    info.port = settings_.port;
+    info.state = closing_                ? "fermeture"
+                 : !opened_              ? "ouverture"
+                 : broken_since_         ? "reprise"
+                 : migrating_            ? "renégociation"
+                                         : "ouvert";
+    info.session = tunnel::to_hex(session_.data(), 4);
+    info.peer = side_ == Side::client ? raw_peer_ : "« " + peer_.name + " » " + peer_.endpoint;
+    if (transport_ && transport_->stream->context()) info.generation = transport_->stream->context()->generation().name;
+    info.transport = transport_index_;
+    const auto now = Clock::now();
+    info.age = duration_cast<milliseconds>(now - opened_at_);
+    info.idle = duration_cast<milliseconds>(now - last_activity_);
+    info.bytes_up = side_ == Side::client ? raw_in_ : raw_out_;
+    info.bytes_down = side_ == Side::client ? raw_out_ : raw_in_;
+    co_return info;
+}
+
 // ---------------------------------------------------------------------------
 // Fermeture
 
