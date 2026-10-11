@@ -31,7 +31,7 @@ jobs:
           cmake --build build
 
       - name: Boucle locale à MTU 1500 (essais pairs)
-        if: matrix.run % 2 == 0
+        if: contains(fromJSON('[2, 4, 6]'), matrix.run)
         run: sudo ip link set lo mtu 1500 && ip link show lo
 
       - name: Objectifs de performance (3 fois)
