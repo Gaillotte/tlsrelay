@@ -117,7 +117,8 @@ struct Server::Impl : std::enable_shared_from_this<Server::Impl> {
 
     // Attend la connexion d'un client sur l'instance du pipe.
     static asio::awaitable<std::error_code> connect(asio::windows::stream_handle& pipe) {
-        auto [ec] = co_await asio::async_initiate<decltype(asio::as_tuple(asio::use_awaitable)), void(std::error_code)>(
+        auto token = asio::as_tuple(asio::use_awaitable);
+        auto [ec] = co_await asio::async_initiate<decltype(token)&, void(std::error_code)>(
             [&pipe](auto handler) {
                 asio::windows::overlapped_ptr op(
                     pipe.get_executor(),
@@ -132,7 +133,7 @@ struct Server::Impl : std::enable_shared_from_this<Server::Impl> {
                     op.release();  // la fin de l'opération sera notifiée par le port de complétion
                 }
             },
-            asio::as_tuple(asio::use_awaitable));
+            token);
         co_return ec;
     }
 
