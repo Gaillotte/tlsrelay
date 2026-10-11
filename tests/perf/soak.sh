@@ -64,7 +64,9 @@ for _ in $(seq 50); do "$bin" status -c client.yaml >/dev/null 2>&1 && "$bin" st
 metric() { "$bin" metrics -c "$1.yaml" | awk -v m="$2" '$1 ~ "^"m"[{ ]" {print $2; exit}'; }
 
 # Flux continu pendant toute la durée : renégociations, coupures et rotations le traversent.
-"$kit" throughput --target "127.0.0.1:$cli" --duration "$((minutes * 60 - 30))s" --json > stream.json &
+# Flux cadencé (STREAM_RATE Mbit/s, défaut 200) : un flux saturé sur la boucle
+# locale peut se figer (limite connue, README « Performances »).
+"$kit" throughput --target "127.0.0.1:$cli" --duration "$((minutes * 60 - 30))s" --rate "${STREAM_RATE:-200}" --json > stream.json &
 stream=$!
 
 echo "temps_s,vague_ok,rss_serveur_kio,rss_client_kio,fd_serveur,fd_client,generations_serveur,generations_client,renegociations_client,coupures" > samples.csv

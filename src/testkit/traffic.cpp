@@ -128,13 +128,20 @@ asio::awaitable<void> echo_accept(tcp::acceptor& acceptor, asio::io_context& io,
 }
 
 // Écrit size octets du motif seed (ou jusqu'à deadline), en calculant l'empreinte.
+// rate_mbps > 0 : débit d'émission limité (Mbit/s).
 asio::awaitable<std::uint64_t> send_pattern(tcp::socket& s, std::uint64_t size, std::uint64_t seed,
-                                            Clock::time_point deadline, std::string& digest) {
+                                            Clock::time_point deadline, std::string& digest, double rate_mbps = 0) {
     Pattern pattern(seed);
     Digest d;
     std::vector<unsigned char> chunk(kChunk);
     std::uint64_t sent = 0;
+    asio::steady_timer pace(s.get_executor());
+    const auto start = Clock::now();
     while (sent < size && Clock::now() < deadline) {
+        if (rate_mbps > 0) {
+            pace.expires_at(start + std::chrono::microseconds(static_cast<long long>(static_cast<double>(sent) * 8 / rate_mbps)));
+            co_await pace.async_wait(use_tuple);
+        }
         const auto n = static_cast<std::size_t>(std::min<std::uint64_t>(kChunk, size - sent));
         pattern.fill(chunk.data(), n);
         d.update(chunk.data(), n);
@@ -313,7 +320,8 @@ int run_load(const tcp::endpoint& target, const LoadOptions& o) {
     return st.failed == 0 && st.ok == o.channels ? 0 : 1;
 }
 
-int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milliseconds duration, unsigned threads, bool json) {
+int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milliseconds duration, unsigned threads, bool json,
+                   double rate_mbps) {
     asio::io_context io;
     std::atomic<std::uint64_t> total{0};
     std::atomic<int> intact{0};
@@ -336,7 +344,7 @@ int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milli
                 s.set_option(tcp::no_delay(true), ignored);
                 std::string sent_digest, received_digest, error;
                 const auto result = co_await (send_pattern(s, ~std::uint64_t{0}, static_cast<std::uint64_t>(i) + 1,
-                                                           deadline, sent_digest) &&
+                                                           deadline, sent_digest, rate_mbps) &&
                                               receive_all(s, received_digest, error));
                 total += std::get<1>(result);
                 if (std::get<0>(result) == std::get<1>(result) && sent_digest == received_digest) {

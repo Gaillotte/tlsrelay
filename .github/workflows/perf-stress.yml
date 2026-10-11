@@ -1,5 +1,6 @@
 # Répétition des performances et de l'endurance pour traquer un défaut
 # intermittent : sur demande, ou à chaque push sur une branche stress/*.
+# RATE=0 et STREAM_RATE=0 dans l'environnement : flux saturés (limite connue).
 name: Stress performances
 
 on:
@@ -29,10 +30,6 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_BUILD_TESTS=OFF
           cmake --build build
-
-      - name: Boucle locale à MTU 1500 (essais pairs)
-        if: contains(fromJSON('[2, 4, 6]'), matrix.run)
-        run: sudo ip link set lo mtu 1500 && ip link show lo
 
       - name: Objectifs de performance (3 fois)
         run: for i in 1 2 3; do echo "=== passe $i"; bash tests/perf/perf.sh build 1000 || exit 1; done

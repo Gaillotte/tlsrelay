@@ -162,7 +162,7 @@ Sur les ports `tls` et `mtls`, chaque canal change de connexion TLS à l'échéa
 tlsrelay-testkit pki --out /tmp/pki                         # PKI de test (relancé : nouvelle génération)
 tlsrelay-testkit echo --listen 127.0.0.1:8080               # destination d'écho
 tlsrelay-testkit load --target 127.0.0.1:7003 --channels 5000 --bytes 1MiB --hold 10s   # empreinte SHA-256 par canal
-tlsrelay-testkit throughput --target 127.0.0.1:7003 --duration 10s
+tlsrelay-testkit throughput --target 127.0.0.1:7003 --duration 10s     # --rate 200 : débit limité (Mbit/s)
 tlsrelay-testkit latency --target 127.0.0.1:7003            # comparer avec --target 127.0.0.1:8080 (direct)
 tlsrelay-testkit proxy --listen 127.0.0.1:9100 --target 127.0.0.1:9003 --delay 20ms --cut-every 60s
 ```
@@ -177,6 +177,10 @@ Mesures (Linux, poste de développement, chaîne mTLS complète client → serve
 | Débit par canal | 100 Mbit/s | ≈ 800 Mbit/s |
 | Latence ajoutée (aller-retour) | < 1 ms | ≈ 0,35 ms |
 | Mémoire | — | ≈ 50 Kio par canal ouvert et par relais (≈ 250 Mio pour 5 000 canaux) |
+
+En CI, `perf.sh` mesure le débit cadencé à 500 Mbit/s (variable `RATE`, 0 : sans limite) et le flux continu de l'endurance tourne à 200 Mbit/s (`STREAM_RATE`).
+
+**Limite connue : flux saturé sur la boucle locale.** Un canal poussé à son maximum dans les deux sens à la fois (≈ 1 Gbit/s, relais et destination sur la même machine) peut se figer plusieurs dizaines de secondes, sans perte ni corruption de données. Le relais applique alors sa contre-pression et suspend la lecture d'une socket ; le noyau jette des segments en réception (`TCPRcvQDrop` dans `nstat`) au lieu de fermer la fenêtre à temps, et l'émetteur attend entre deux retransmissions un délai qui double à chaque essai (jusqu'à 25 s et plus). Observé sur les machines de CI GitHub, non reproduit sur un poste de développement ; l'analyse continue hors de la CI de chaque push. `tlsrelay channels` (état du contrôle de flux de chaque canal) et le workflow « Stress performances » servent au diagnostic.
 
 ### Service et administration
 

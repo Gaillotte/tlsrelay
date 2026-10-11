@@ -78,6 +78,8 @@ int main(int argc, char** argv) {
     throughput->add_option("--target", target, "Port d'entrée")->required();
     throughput->add_option("--channels", channels, "Canaux (défaut : 1)");
     throughput->add_option("--duration", seconds, "Durée (défaut : 10s)");
+    double rate_mbps = 0;
+    throughput->add_option("--rate", rate_mbps, "Débit d'émission de chaque canal, en Mbit/s (défaut : sans limite)");
 
     int count = 5000;
     std::size_t size = 64;
@@ -124,7 +126,7 @@ int main(int argc, char** argv) {
     }
     if (*throughput) {
         const auto d = duration(seconds);
-        return d ? testkit::run_throughput(*ep, channels, *d, threads, json) : 2;
+        return d ? testkit::run_throughput(*ep, channels, *d, threads, json, rate_mbps) : 2;
     }
     if (*latency) return testkit::run_latency(*ep, count, size, json);
     if (*proxy) {

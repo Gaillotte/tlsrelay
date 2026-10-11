@@ -62,8 +62,12 @@ echo "== $channels canaux simultanés"
 sampler=$!
 "$kit" load --target "127.0.0.1:$cli" --channels "$channels" --bytes 64KiB --hold 6s --json | tee load.json
 wait "$sampler"
-echo "== débit d'un canal (10 s)"
-"$kit" throughput --target "127.0.0.1:$cli" --duration 10s --json > throughput.json &
+# Débit cadencé à RATE Mbit/s (défaut 500, cinq fois l'objectif) : un flux saturé
+# sur la boucle locale peut se figer (limite connue, README « Performances ») ;
+# RATE=0 mesure le débit maximal.
+rate=${RATE:-500}
+echo "== débit d'un canal (10 s, ${rate} Mbit/s dans chaque sens ; 0 : sans limite)"
+"$kit" throughput --target "127.0.0.1:$cli" --duration 10s --rate "$rate" --json > throughput.json &
 tp=$!
 # Diagnostic d'un blocage : état du contrôle de flux des deux côtés pendant le blocage.
 for _ in $(seq 40); do kill -0 "$tp" 2>/dev/null || break; sleep 1; done

@@ -28,8 +28,10 @@ struct LoadOptions {
 // Code de sortie 0 si tous les canaux sont intègres.
 int run_load(const tcp::endpoint& target, const LoadOptions& options);
 
-// Débit soutenu pendant duration sur channels canaux.
-int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milliseconds duration, unsigned threads, bool json);
+// Débit soutenu pendant duration sur channels canaux ; rate_mbps > 0 : débit
+// d'émission de chaque canal limité (Mbit/s).
+int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milliseconds duration, unsigned threads, bool json,
+                   double rate_mbps = 0);
 
 // Aller-retour de messages de size octets, l'un après l'autre.
 int run_latency(const tcp::endpoint& target, int count, std::size_t size, bool json);
