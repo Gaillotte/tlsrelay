@@ -35,7 +35,9 @@ inline std::string read_file(const std::filesystem::path& path) {
 
 // Écrit un fichier ; secret : lisible par le seul propriétaire (Linux).
 inline void write_file(const std::filesystem::path& path, const std::string& content, bool secret = false) {
-#ifndef _WIN32
+#ifdef _WIN32
+    (void)secret;  // droits gérés par ACL (voir pki/authority.cpp)
+#else
     // Créé directement avec les bons droits : aucun instant où la clé serait lisible.
     const auto old = ::umask(secret ? 0077 : 0022);
 #endif
