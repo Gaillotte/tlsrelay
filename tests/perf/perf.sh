@@ -63,7 +63,19 @@ sampler=$!
 "$kit" load --target "127.0.0.1:$cli" --channels "$channels" --bytes 64KiB --hold 6s --json | tee load.json
 wait "$sampler"
 echo "== débit d'un canal (10 s)"
-"$kit" throughput --target "127.0.0.1:$cli" --duration 10s --json | tee throughput.json
+"$kit" throughput --target "127.0.0.1:$cli" --duration 10s --json > throughput.json &
+tp=$!
+# Diagnostic d'un blocage : état du contrôle de flux des deux côtés pendant le blocage.
+for _ in $(seq 40); do kill -0 "$tp" 2>/dev/null || break; sleep 1; done
+if kill -0 "$tp" 2>/dev/null; then
+  echo "débit : canal bloqué au-delà de 40 s, état des relais :"
+  for role in client server; do echo "-- $role"; "$bin" channels -c $role.yaml || true; done
+  for _ in 1 2 3; do sleep 5; for role in client server; do "$bin" channels -c $role.yaml | tail -n +2 || true; done; done
+  for role in client server; do echo "-- journal $role"; tail -n 30 $role.log; done
+  kill "$tp" 2>/dev/null || true
+fi
+wait "$tp" || true
+cat throughput.json
 echo "== latence (aller-retour 64 octets)"
 "$kit" latency --target "127.0.0.1:$dest" --count 5000 --json | tee direct.json
 "$kit" latency --target "127.0.0.1:$cli" --count 5000 --json | tee relay.json

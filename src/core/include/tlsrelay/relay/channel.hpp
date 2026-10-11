@@ -78,6 +78,7 @@ struct ChannelInfo {
     std::chrono::milliseconds idle{};
     std::uint64_t bytes_up = 0;
     std::uint64_t bytes_down = 0;
+    std::string flow;  // contrôle de flux : séquences, octets en attente, tâches bloquées
 };
 
 struct ChannelSettings {
@@ -267,6 +268,9 @@ private:
     Clock::time_point last_frame_;  // dernière trame reçue sur la connexion courante
     std::uint64_t ping_nonce_ = 0;
     bool reading_held_ = false;  // lecture du transport suspendue : file de livraison pleine
+    bool window_full_ = false;   // lecture de la source suspendue : tampon de reprise plein
+    bool delivering_ = false;    // écriture vers la connexion brute en cours
+    bool sending_ = false;       // envoi sur la connexion de transport en cours
     asio::cancellation_signal dial_cancel_;
 
     Clock::time_point opened_at_;

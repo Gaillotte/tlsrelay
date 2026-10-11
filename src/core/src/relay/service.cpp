@@ -1150,7 +1150,7 @@ asio::awaitable<std::string> Service::channels_text() {
         if (!info.generation.empty()) out << " génération=" << info.generation;
         out << " connexion=" << info.transport << " âge=" << format_duration(info.age)
             << " inactif=" << format_duration(info.idle) << " montant=" << info.bytes_up << "o"
-            << " descendant=" << info.bytes_down << "o\n";
+            << " descendant=" << info.bytes_down << "o " << info.flow << "\n";
     }
     co_return out.str();
 }

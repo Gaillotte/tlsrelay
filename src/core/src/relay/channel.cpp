@@ -479,7 +479,11 @@ asio::awaitable<void> Channel::sender() {
             co_await send_event_.wait();
             continue;
         }
-        if (!ec) ec = co_await t->stream->flush();
+        if (!ec) {
+            sending_ = true;
+            ec = co_await t->stream->flush();
+            sending_ = false;
+        }
         if (ec) transport_failed(t, "émission : " + ec.message());
     }
 }
@@ -489,7 +493,9 @@ asio::awaitable<void> Channel::uplink() {
     while (!closing_) {
         // Contre-pression : la source n'est plus lue tant que le tampon de reprise est plein.
         if (unacked_bytes_ >= settings_.resume_buffer) {
+            window_full_ = true;
             co_await space_event_.wait();
+            window_full_ = false;
             continue;
         }
         auto [ec, n] = co_await raw_->read_some(asio::buffer(buffer));
@@ -826,7 +832,9 @@ asio::awaitable<void> Channel::deliverer() {
             continue;
         }
         auto& next = delivery_.front();
+        delivering_ = true;
         const auto ec = co_await raw_->write(asio::buffer(next.bytes));
+        delivering_ = false;
         if (closing_) co_return;
         if (ec) {
             logging::activity().debug("canal={} erreur d'écriture vers {} : {}", id_, raw_peer_, ec.message());
@@ -900,6 +908,15 @@ asio::awaitable<ChannelInfo> Channel::describe() const {
     info.idle = duration_cast<milliseconds>(now - last_activity_);
     info.bytes_up = side_ == Side::client ? raw_in_ : raw_out_;
     info.bytes_down = side_ == Side::client ? raw_out_ : raw_in_;
+    std::string blocked;
+    if (window_full_) blocked += ",fenêtre";
+    if (sending_) blocked += ",envoi";
+    if (delivering_) blocked += ",livraison";
+    if (reading_held_) blocked += ",lecture";
+    info.flow = "émis=" + std::to_string(next_seq_ - 1) + " envoyé=" + std::to_string(sent_upto_) +
+                " non_acquitté=" + std::to_string(unacked_bytes_) + "o reçu=" + std::to_string(received_) +
+                " livré=" + std::to_string(last_rx_) + " acquitté=" + std::to_string(acked_rx_) +
+                " file=" + std::to_string(delivery_bytes_) + "o en_cours=" + (blocked.empty() ? "-" : blocked.substr(1));
     co_return info;
 }
 
