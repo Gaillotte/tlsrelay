@@ -30,7 +30,9 @@ void arm(asio::steady_timer& timer, Stream& stream, std::chrono::steady_clock::d
     });
 }
 
+// Paramètres par valeur : ils doivent vivre dans le cadre de la coroutine.
 template <class Stream>
+// cppcheck-suppress passedByValue
 asio::awaitable<void> serve_session(Stream stream, Handler& handler, std::string caller) {
     constexpr auto use_tuple = asio::as_tuple(asio::use_awaitable);
     asio::steady_timer timer(co_await asio::this_coro::executor);

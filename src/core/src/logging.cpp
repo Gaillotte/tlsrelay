@@ -39,10 +39,10 @@ std::string iso_utc(spdlog::log_clock::time_point tp) {
     gmtime_r(&t, &tm);
 #endif
     char base[32];
-    std::strftime(base, sizeof base, "%Y-%m-%dT%H:%M:%S", &tm);
+    (void)std::strftime(base, sizeof base, "%Y-%m-%dT%H:%M:%S", &tm);
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count() % 1000;
     char out[48];
-    std::snprintf(out, sizeof out, "%s.%03dZ", base, static_cast<int>(ms));
+    (void)std::snprintf(out, sizeof out, "%s.%03dZ", base, static_cast<int>(ms));
     return out;
 }
 
@@ -202,7 +202,7 @@ std::string json_escape(std::string_view text) {
             default:
                 if (c < 0x20) {
                     char buf[8];
-                    std::snprintf(buf, sizeof buf, "\\u%04x", c);
+                    (void)std::snprintf(buf, sizeof buf, "\\u%04x", c);
                     out += buf;
                 } else {
                     out += ch;

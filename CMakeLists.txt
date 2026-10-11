@@ -12,6 +12,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(TLSRELAY_BUILD_TESTS "Compiler les tests" ON)
+option(TLSRELAY_FUZZ "Compiler les cibles de fuzzing libFuzzer (clang)" OFF)
 option(TLSRELAY_WARNINGS_AS_ERRORS "Traiter les avertissements comme des erreurs" OFF)
 set(TLSRELAY_SANITIZERS "" CACHE STRING "Sanitizers à activer (ex. address,undefined), GCC/Clang uniquement")
 
@@ -21,6 +22,10 @@ include(Dependencies)
 
 add_subdirectory(src/core)
 add_subdirectory(src/app)
+
+if(TLSRELAY_FUZZ)
+    add_subdirectory(fuzz)
+endif()
 
 if(TLSRELAY_BUILD_TESTS)
     enable_testing()

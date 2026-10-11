@@ -1,7 +1,8 @@
 #pragma once
 
 // Relais TCP de test placé entre deux tlsrelay : cut() coupe brutalement
-// (RST) toutes les connexions en cours, pour simuler une panne réseau.
+// (RST) toutes les connexions en cours, freeze() les rend muettes sans les
+// fermer (lien mort sans erreur TCP), pour simuler une panne réseau.
 
 #include "support/net_helpers.hpp"
 
@@ -44,6 +45,18 @@ public:
     // Connexions acceptées depuis le démarrage.
     int connections() const { return accepted_.load(); }
 
+    // Les connexions en cours ne transmettent plus rien (données jetées), sans
+    // être fermées ; les suivantes sont relayées normalement.
+    void freeze() {
+        std::promise<void> done;
+        asio::post(io_, [&] {
+            *frozen_ = true;
+            frozen_ = std::make_shared<bool>(false);
+            done.set_value();
+        });
+        done.get_future().wait();
+    }
+
     // Coupe toutes les connexions en cours ; les suivantes sont relayées normalement.
     void cut() {
         std::promise<void> done;
@@ -71,12 +84,12 @@ private:
             out->set_option(tcp::no_delay(true), ignored);
             sockets_.push_back(in);
             sockets_.push_back(out);
-            asio::co_spawn(io_, pump(in, out), asio::detached);
-            asio::co_spawn(io_, pump(out, in), asio::detached);
+            asio::co_spawn(io_, pump(in, out, frozen_), asio::detached);
+            asio::co_spawn(io_, pump(out, in, frozen_), asio::detached);
         }
     }
 
-    static asio::awaitable<void> pump(Socket from, Socket to) {
+    static asio::awaitable<void> pump(Socket from, Socket to, std::shared_ptr<bool> frozen) {
         std::array<char, 16 * 1024> buffer;
         std::error_code ignored;
         for (;;) {
@@ -86,6 +99,7 @@ private:
                 else to->close(ignored);
                 co_return;
             }
+            if (*frozen) continue;  // lien muet : les données sont perdues
             auto [wec, written] = co_await asio::async_write(*to, asio::buffer(buffer.data(), n), use_tuple);
             (void)written;
             if (wec) {
@@ -108,6 +122,7 @@ private:
     tcp::acceptor acceptor_;
     std::uint16_t target_;
     std::vector<Socket> sockets_;  // accédé uniquement sur le thread de io_
+    std::shared_ptr<bool> frozen_ = std::make_shared<bool>(false);  // connexions courantes (thread de io_)
     std::atomic<int> accepted_{0};
     std::thread thread_;
 };

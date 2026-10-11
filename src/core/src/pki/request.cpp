@@ -85,7 +85,7 @@ std::optional<SubjectAltNames> parse_sans(const std::vector<std::string>& items,
             start = end == std::string::npos ? raw.size() + 1 : end + 1;
             if (item.empty()) continue;
             std::string kind;
-            if (const auto colon = item.find(':'); colon != std::string::npos && colon <= 3) {
+            if (const auto colon = item.find(':'); colon <= 3) {
                 kind = item.substr(0, colon);
                 std::transform(kind.begin(), kind.end(), kind.begin(), [](unsigned char c) { return std::tolower(c); });
                 if (kind == "dns" || kind == "ip") item = item.substr(colon + 1);

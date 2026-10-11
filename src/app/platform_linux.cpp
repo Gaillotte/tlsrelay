@@ -33,6 +33,7 @@ std::string unit(const std::string& instance) { return "tlsrelay@" + instance + 
 // Exécute une commande sans interpréteur de commandes ; retourne son code de sortie.
 int run(const std::vector<std::string>& args) {
     std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
     for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
     argv.push_back(nullptr);
     const pid_t pid = ::fork();

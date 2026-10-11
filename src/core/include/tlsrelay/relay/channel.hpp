@@ -85,6 +85,7 @@ struct ChannelSettings {
     PortKind port = PortKind::plain;
     Duration idle_timeout{};
     Duration handshake_timeout{};
+    Duration keepalive_interval{};  // 0 : pas de PING
     Duration session_lifetime{};
     double session_jitter = 0.0;
     Duration renegotiation_grace{};
@@ -173,6 +174,7 @@ private:
     asio::awaitable<void> ack_loop();
     asio::awaitable<void> watchdog();
     asio::awaitable<void> lifetime();
+    asio::awaitable<void> keepalive();
     asio::awaitable<void> migrate();
     asio::awaitable<void> goodbye(std::shared_ptr<Transport> transport, std::string frame);
     asio::awaitable<void> retire(std::shared_ptr<Transport> transport);
@@ -245,6 +247,10 @@ private:
     asio::steady_timer ack_timer_;
     asio::steady_timer lifetime_timer_;
     asio::steady_timer retry_timer_;
+    asio::steady_timer keepalive_timer_;
+    Clock::time_point last_frame_;  // dernière trame reçue sur la connexion courante
+    std::uint64_t ping_nonce_ = 0;
+    bool delivering_ = false;  // écriture vers la connexion brute en cours (contre-pression de l'application)
     asio::cancellation_signal dial_cancel_;
 
     Clock::time_point opened_at_;

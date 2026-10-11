@@ -44,7 +44,7 @@ constexpr auto use_tuple = asio::as_tuple(asio::use_awaitable);
 // Gestionnaire de fin des coroutines détachées : une exception non prévue est
 // journalisée au lieu d'être ignorée.
 auto log_exceptions(const char* what) {
-    return [what](std::exception_ptr e) {
+    return [what](const std::exception_ptr& e) {
         if (!e) return;
         try {
             std::rethrow_exception(e);
@@ -61,7 +61,9 @@ asio::awaitable<void> reject(std::shared_ptr<Stream> stream, std::string frame) 
     guard.async_wait([stream](std::error_code ec) {
         if (!ec) stream->close();
     });
-    stream->queue(asio::buffer(frame));
+    if (const auto ec = stream->queue(asio::buffer(frame))) {
+        logging::activity().debug("réponse de refus non envoyée : {}", ec.message());
+    }
     co_await stream->shutdown_send();
     guard.cancel();
     stream->close();
@@ -77,7 +79,7 @@ using exclusive_address_use = asio::detail::socket_option::boolean<SOL_SOCKET, S
 
 Service::Service(Config config, ServiceOptions options)
     : config_(std::move(config)),
-      options_(options),
+      options_(std::move(options)),
       control_(asio::make_strand(io_)),
       signals_(control_),
       watch_timer_(control_) {
@@ -593,7 +595,8 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
             std::lock_guard lock(pki_mutex_);
             context = port.kind == PortKind::mtls ? contexts_.mtls : contexts_.tls;
         }
-        stream = context ? std::make_shared<Stream>(std::move(socket), context) : std::make_shared<Stream>(std::move(socket));
+        if (context) stream = std::make_shared<Stream>(std::move(socket), context);
+        else stream = std::make_shared<Stream>(std::move(socket));
     } catch (const std::exception& e) {
         // Par exemple, session TLS impossible à créer : on refuse cette connexion seulement.
         --port.handshakes;
@@ -831,6 +834,7 @@ ChannelSettings Service::settings_for(const Port& port) const {
     s.port = port.kind;
     s.idle_timeout = l.idle_timeout;
     s.handshake_timeout = l.handshake_timeout;
+    s.keepalive_interval = l.keepalive_interval;
     s.session_lifetime = l.session_lifetime;
     s.session_jitter = l.session_jitter;
     s.renegotiation_grace = l.renegotiation_grace;
@@ -910,7 +914,7 @@ std::string iso_time(std::chrono::system_clock::time_point tp) {
     gmtime_r(&t, &tm);
 #endif
     char out[32];
-    std::strftime(out, sizeof out, "%Y-%m-%dT%H:%M:%SZ", &tm);
+    (void)std::strftime(out, sizeof out, "%Y-%m-%dT%H:%M:%SZ", &tm);
     return out;
 }
 
@@ -919,7 +923,7 @@ std::string format_seconds(std::chrono::steady_clock::duration d) {
     const auto days = total / 86400;
     total %= 86400;
     char out[48];
-    std::snprintf(out, sizeof out, "%lldj %02lld:%02lld:%02lld", static_cast<long long>(days),
+    (void)std::snprintf(out, sizeof out, "%lldj %02lld:%02lld:%02lld", static_cast<long long>(days),
                   static_cast<long long>(total / 3600), static_cast<long long>(total / 60 % 60),
                   static_cast<long long>(total % 60));
     return out;

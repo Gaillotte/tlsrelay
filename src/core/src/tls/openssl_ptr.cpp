@@ -44,7 +44,7 @@ int hex_value(char c) {
     return -1;
 }
 
-std::string trim(std::string s) {
+std::string trim(const std::string& s) {
     const auto first = s.find_first_not_of(' ');
     if (first == std::string::npos) return {};
     return s.substr(first, s.find_last_not_of(' ') - first + 1);
@@ -140,7 +140,7 @@ std::string not_after_of(const X509* cert) {
     std::tm tm{};
     if (ASN1_TIME_to_tm(X509_get0_notAfter(cert), &tm) != 1) return "?";
     char buffer[32];
-    std::strftime(buffer, sizeof buffer, "%Y-%m-%d %H:%M:%SZ", &tm);
+    (void)std::strftime(buffer, sizeof buffer, "%Y-%m-%d %H:%M:%SZ", &tm);
     return buffer;
 }
 

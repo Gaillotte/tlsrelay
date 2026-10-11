@@ -230,7 +230,7 @@ void Decoder::feed(const std::uint8_t* data, std::size_t size) {
     if (offset_ > 0 && offset_ == buffer_.size()) {
         buffer_.clear();
         offset_ = 0;
-    } else if (offset_ > 64 * 1024) {
+    } else if (offset_ > 64ULL * 1024) {
         buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(offset_));
         offset_ = 0;
     }

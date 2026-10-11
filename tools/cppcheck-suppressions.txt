@@ -1,0 +1,4 @@
+missingReturn
+missingIncludeSystem
+*:/usr/*
+*:*/vcpkg_installed/*

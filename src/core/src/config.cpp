@@ -98,7 +98,7 @@ private:
     }
 
     std::optional<YAML::Node> section(const YAML::Node& map, std::string_view key, const std::string& path) {
-        const YAML::Node node = map[std::string(key)];
+        YAML::Node node = map[std::string(key)];
         if (!node.IsDefined()) return std::nullopt;
         if (!is_map(node, join(path, key))) return std::nullopt;
         return node;
@@ -207,13 +207,15 @@ private:
     Limits parse_limits(const YAML::Node& node, const std::string& path) {
         Limits l;
         check_keys(node, path, {"idle_timeout", "session_lifetime", "session_jitter", "renegotiation_grace",
-                                "resume_buffer", "handshake_timeout", "max_channels", "shutdown_timeout"});
+                                "resume_buffer", "handshake_timeout", "keepalive_interval", "max_channels",
+                                "shutdown_timeout"});
         read_duration(node, "idle_timeout", path, l.idle_timeout);
         read_duration(node, "session_lifetime", path, l.session_lifetime);
         read_percent(node, "session_jitter", path, l.session_jitter);
         read_duration(node, "renegotiation_grace", path, l.renegotiation_grace);
         read_size(node, "resume_buffer", path, l.resume_buffer);
         read_duration(node, "handshake_timeout", path, l.handshake_timeout);
+        read_duration(node, "keepalive_interval", path, l.keepalive_interval);
         read_uint(node, "max_channels", path, l.max_channels);
         read_duration(node, "shutdown_timeout", path, l.shutdown_timeout);
         return l;
@@ -359,6 +361,9 @@ void validate(const Config& cfg, std::vector<Issue>& errors, std::vector<Issue>&
     if (l.session_jitter > 0.5) err("limits.session_jitter", "ne doit pas dépasser 50%");
     if (l.resume_buffer < (64ULL << 10)) err("limits.resume_buffer", "doit être au moins 64KiB");
     if (l.handshake_timeout.count() <= 0) err("limits.handshake_timeout", "doit être supérieur à 0");
+    if (l.keepalive_interval.count() != 0 && l.keepalive_interval < std::chrono::seconds(1)) {
+        err("limits.keepalive_interval", "doit valoir 0 (désactivé) ou au moins 1s");
+    }
     if (l.max_channels < 1 || l.max_channels > 100000) err("limits.max_channels", "doit être compris entre 1 et 100000");
     if (l.shutdown_timeout.count() < 0) err("limits.shutdown_timeout", "ne doit pas être négatif");
 

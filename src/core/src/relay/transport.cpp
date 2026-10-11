@@ -15,7 +15,7 @@ class Deadline {
 public:
     // Le gestionnaire garde expired et le flux en vie : il peut s'exécuter
     // après la fin de l'opération si l'échéance tombe au même moment.
-    Deadline(const asio::any_io_executor& ex, std::shared_ptr<bool> expired, std::shared_ptr<Stream> stream,
+    Deadline(const asio::any_io_executor& ex, const std::shared_ptr<bool>& expired, const std::shared_ptr<Stream>& stream,
              Duration timeout)
         : timer_(ex) {
         timer_.expires_after(timeout);

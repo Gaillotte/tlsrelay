@@ -36,7 +36,8 @@ Principales caractéristiques :
 | 5 | Protocole de tunnel `tlsrelay/1` (trames, acquittements, contre-pression, demi-fermeture), renégociation transparente à l'échéance de `session_lifetime`, reprise de session après coupure | Terminée |
 | 6 | Cycle de vie : services systemd et Windows (boot, start, stop, restart, kill), instances nommées, canal d'administration, métriques Prometheus, journalisation à chaud | Terminée |
 | 7 | PKI en ligne de commande : `pki gen-csr`, `pki install`, mini-AC (`ca init`, `ca sign`, `ca list`) | Terminée |
-| 8 | Durcissement (fuzzing, PING périodique, OpenSSL 3.5 sous Linux) | À venir |
+| 8 | Durcissement : PING périodique (lien muet), fuzzing libFuzzer (6 cibles, nuit de 1 h), clang-tidy et cppcheck sans alerte, scan TLS (sslyze), OpenSSL 3.5 sous Linux | Terminée |
+| 9 | Kit de test (charge, performances) | À venir |
 
 Les trois ports sont disponibles. Le client et le serveur dialoguent avec le protocole de tunnel (SPEC §4) : sur les ports `tls` et `mtls`, le client renégocie la session à l'échéance de `session_lifetime` (nouvelle connexion, handshake complet avec la génération PKI courante) sans que l'application ne voie de coupure, et reprend la session si la connexion tombe. Le serveur n'accepte que des tlsrelay clients : une application ne peut pas s'y connecter directement.
 
@@ -60,6 +61,16 @@ ctest --preset linux-release
 ```
 
 Avec AddressSanitizer et UBSan (Clang, paquet `libclang-rt-18-dev`) : préréglage `linux-asan`.
+
+Durcissement (Linux) :
+
+```sh
+tools/run-clang-tidy.sh build/linux-release          # analyse statique (paquet clang-tidy-18)
+tools/run-cppcheck.sh build/linux-release            # analyse statique (paquet cppcheck)
+cmake --preset linux-fuzz && cmake --build --preset linux-fuzz
+tools/run-fuzz.sh build/linux-fuzz 60                # 60 s par cible libFuzzer
+tests/lifecycle/tls-scan.sh build/linux-release/src/app/tlsrelay   # configuration TLS (sslyze)
+```
 
 ### Windows (x64)
 

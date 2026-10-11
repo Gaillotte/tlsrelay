@@ -186,7 +186,7 @@ std::string now_text() {
     gmtime_r(&t, &tm);
 #endif
     char buffer[32];
-    std::strftime(buffer, sizeof buffer, "%Y-%m-%d %H:%M:%SZ", &tm);
+    (void)std::strftime(buffer, sizeof buffer, "%Y-%m-%d %H:%M:%SZ", &tm);
     return buffer;
 }
 
@@ -263,16 +263,17 @@ std::vector<IndexEntry> list_issued(const fs::path& dir) {
     return entries;
 }
 
-IssuedCertificate sign_request(const fs::path& dir, const std::string& passphrase, const SignRequest& request) {
-    // Demande : signature valide (preuve de possession de la clé), clé P-256.
-    tls::BioPtr bio(BIO_new_mem_buf(request.csr_pem.data(), static_cast<int>(request.csr_pem.size())));
-    std::unique_ptr<X509_REQ, decltype(&X509_REQ_free)> req(PEM_read_bio_X509_REQ(bio.get(), nullptr, nullptr, nullptr),
-                                                            X509_REQ_free);
+namespace {
+
+using RequestPtr = std::unique_ptr<X509_REQ, decltype(&X509_REQ_free)>;
+
+RequestPtr parse_request(const std::string& csr_pem) {
+    tls::BioPtr bio(BIO_new_mem_buf(csr_pem.data(), static_cast<int>(csr_pem.size())));
+    RequestPtr req(PEM_read_bio_X509_REQ(bio.get(), nullptr, nullptr, nullptr), X509_REQ_free);
     if (!req) fail("demande de signature illisible");
+    // Demande : signature valide (preuve de possession de la clé), clé P-256.
     EVP_PKEY* public_key = X509_REQ_get0_pubkey(req.get());
-    if (!public_key || X509_REQ_verify(req.get(), public_key) != 1) {
-        fail("signature de la demande invalide");
-    }
+    if (!public_key || X509_REQ_verify(req.get(), public_key) != 1) fail("signature de la demande invalide");
     char group[64] = {};
     std::size_t group_len = 0;
     if (EVP_PKEY_get_base_id(public_key) != EVP_PKEY_EC ||
@@ -281,10 +282,36 @@ IssuedCertificate sign_request(const fs::path& dir, const std::string& passphras
         tls::take_openssl_errors();
         throw std::runtime_error("clé refusée : ECDSA P-256 attendue (politique de l'AC)");
     }
-    const X509_NAME* subject = X509_REQ_get_subject_name(req.get());
-    if (X509_NAME_get_index_by_NID(const_cast<X509_NAME*>(subject), NID_commonName, -1) < 0) {
+    if (X509_NAME_get_index_by_NID(X509_REQ_get_subject_name(req.get()), NID_commonName, -1) < 0) {
         throw std::runtime_error("sujet refusé : CN obligatoire");
     }
+    return req;
+}
+
+std::vector<std::string> requested_extensions(X509_REQ* req) {
+    std::vector<std::string> names;
+    if (STACK_OF(X509_EXTENSION)* exts = X509_REQ_get_extensions(req)) {
+        for (int i = 0; i < sk_X509_EXTENSION_num(exts); ++i) {
+            const auto nid = OBJ_obj2nid(X509_EXTENSION_get_object(sk_X509_EXTENSION_value(exts, i)));
+            names.push_back(nid == NID_undef ? "?" : OBJ_nid2sn(nid));
+        }
+        sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+    }
+    tls::take_openssl_errors();
+    return names;
+}
+
+}  // namespace
+
+RequestInfo inspect_request(const std::string& csr_pem) {
+    auto req = parse_request(csr_pem);
+    return {tls::name_to_string(X509_REQ_get_subject_name(req.get())), requested_extensions(req.get())};
+}
+
+IssuedCertificate sign_request(const fs::path& dir, const std::string& passphrase, const SignRequest& request) {
+    auto req = parse_request(request.csr_pem);
+    EVP_PKEY* public_key = X509_REQ_get0_pubkey(req.get());
+    const X509_NAME* subject = X509_REQ_get_subject_name(req.get());
     if (request.role == Role::server && request.sans.empty()) {
         throw std::runtime_error("certificat serveur : au moins un SAN (--san) est obligatoire");
     }
@@ -313,13 +340,7 @@ IssuedCertificate sign_request(const fs::path& dir, const std::string& passphras
 
     // Extensions demandées : ignorées, la politique de l'AC s'applique.
     IssuedCertificate issued;
-    if (STACK_OF(X509_EXTENSION)* exts = X509_REQ_get_extensions(req.get())) {
-        for (int i = 0; i < sk_X509_EXTENSION_num(exts); ++i) {
-            const auto nid = OBJ_obj2nid(X509_EXTENSION_get_object(sk_X509_EXTENSION_value(exts, i)));
-            issued.ignored_extensions.push_back(nid == NID_undef ? "?" : OBJ_nid2sn(nid));
-        }
-        sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
-    }
+    issued.ignored_extensions = requested_extensions(req.get());
 
     const auto& ca_files = request.role == Role::server ? kServers : kClients;
     const auto& peer_files = request.role == Role::server ? kClients : kServers;

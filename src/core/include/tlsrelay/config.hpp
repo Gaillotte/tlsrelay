@@ -50,6 +50,9 @@ struct Limits {
     Duration renegotiation_grace = std::chrono::seconds(30);
     std::uint64_t resume_buffer = 4ULL << 20;
     Duration handshake_timeout = std::chrono::seconds(10);
+    // PING si rien n'est reçu pendant cet intervalle ; transport déclaré mort
+    // après 3 intervalles sans aucune trame. 0 : désactivé.
+    Duration keepalive_interval = std::chrono::seconds(15);
     std::uint32_t max_channels = 5000;
     Duration shutdown_timeout = std::chrono::seconds(30);
 

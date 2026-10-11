@@ -1,0 +1,2 @@
+peers:
+  - { name: a, ip: 10.0.0.0/8, ports: [mtls], subject: "CN=a,O=b" }

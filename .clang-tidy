@@ -1,0 +1,20 @@
+# Analyse statique (PLAN §5) : défauts probables, sécurité, concurrence,
+# analyseur de chemins de clang. Les règles retenues sont bloquantes en CI.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-unchecked-optional-access,
+  cert-*,
+  -cert-err58-cpp,
+  clang-analyzer-*,
+  -clang-analyzer-optin.cplusplus.VirtualCall,
+  concurrency-*,
+  -concurrency-mt-unsafe,
+  performance-*,
+  -performance-enum-size,
+  misc-redundant-expression,
+  misc-unused-using-decls
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/src/core/(include|src)/.*'

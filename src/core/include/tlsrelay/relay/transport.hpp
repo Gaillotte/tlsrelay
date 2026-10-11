@@ -18,7 +18,7 @@ namespace tlsrelay::relay {
 // Connexion de transport entre deux tlsrelay : un flux (clair ou TLS) et le
 // décodeur de trames, qui peut contenir des octets reçus mais pas encore lus.
 struct Transport {
-    explicit Transport(std::shared_ptr<Stream> s) : stream(std::move(s)), buffer(16 * 1024) {}
+    explicit Transport(std::shared_ptr<Stream> s) : stream(std::move(s)), buffer(16ULL * 1024) {}
 
     std::shared_ptr<Stream> stream;
     tunnel::Decoder decoder;

@@ -51,6 +51,15 @@ struct IssuedCertificate {
     std::string issuer_pem;  // AC attendue chez les pairs (l'autre intermédiaire)
 };
 
+// Contrôle d'une demande de signature, sans la signer : lisible, signature
+// valide (preuve de possession), clé ECDSA P-256, sujet avec CN. Lève
+// std::runtime_error en cas de refus.
+struct RequestInfo {
+    std::string subject;
+    std::vector<std::string> requested_extensions;
+};
+RequestInfo inspect_request(const std::string& csr_pem);
+
 // Signe une demande. Refuse une clé autre que P-256, une demande dont la
 // signature est invalide, un sujet sans CN ou déjà attribué (sauf renew), un
 // serveur sans SAN, une phrase de passe incorrecte. Lève std::runtime_error.

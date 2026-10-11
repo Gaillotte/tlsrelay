@@ -54,6 +54,112 @@ jobs:
         if: matrix.name == 'GCC Release'
         run: sudo bash tests/lifecycle/systemd.sh build/src/app/tlsrelay
 
+      - name: Configuration TLS vue de l'extérieur (sslyze)
+        if: matrix.name == 'GCC Release'
+        run: |
+          python3 -m venv /tmp/sslyze
+          /tmp/sslyze/bin/pip install -q sslyze
+          PATH="/tmp/sslyze/bin:$PATH" bash tests/lifecycle/tls-scan.sh build/src/app/tlsrelay
+
+  openssl35:
+    name: Linux OpenSSL 3.5 LTS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      OPENSSL_VERSION: 3.5.9
+      OPENSSL_SHA512: c4c8136fd2c98d13bb85a57bfb0def25c906f47f1fe97675cd114594944eab957b5b81a3e0f48826e1a0f093afff5e83766b539d49768f6db68310fd678d7de6
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libasio-dev libyaml-cpp-dev \
+            libspdlog-dev libcli11-dev libgtest-dev
+
+      - name: Cache OpenSSL
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/openssl
+          key: openssl-${{ env.OPENSSL_VERSION }}-ubuntu-24.04
+
+      - name: OpenSSL ${{ env.OPENSSL_VERSION }} (archive officielle vérifiée)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSLO "https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz"
+          echo "$OPENSSL_SHA512  openssl-$OPENSSL_VERSION.tar.gz" | sha512sum -c -
+          tar xzf "openssl-$OPENSSL_VERSION.tar.gz"
+          cd "openssl-$OPENSSL_VERSION"
+          ./Configure --prefix="$HOME/openssl" --libdir=lib shared no-tests
+          make -j"$(nproc)" >/dev/null
+          make install_sw >/dev/null
+
+      - name: Configuration et compilation
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_WARNINGS_AS_ERRORS=ON \
+            -DOPENSSL_ROOT_DIR="$HOME/openssl"
+          cmake --build build
+
+      - name: Tests
+        working-directory: build
+        env:
+          LD_LIBRARY_PATH: /home/runner/openssl/lib
+        run: |
+          ./src/app/tlsrelay version | tee version.txt
+          grep -q "OpenSSL 3\.5\." version.txt
+          ctest --output-on-failure -j 2
+
+  analysis:
+    name: Analyse statique (clang-tidy, cppcheck)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
+            libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev clang-tidy-18 cppcheck
+
+      - name: Base de compilation
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: clang-tidy
+        run: tools/run-clang-tidy.sh build
+
+      - name: cppcheck
+        run: tools/run-cppcheck.sh build
+
+  fuzz:
+    name: Fuzzing (60 s par cible)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
+            libyaml-cpp-dev libspdlog-dev libcli11-dev libclang-rt-18-dev
+
+      - name: Compilation
+        run: |
+          cmake --preset linux-fuzz -DTLSRELAY_WARNINGS_AS_ERRORS=ON
+          cmake --build --preset linux-fuzz
+
+      - name: Fuzzing
+        run: tools/run-fuzz.sh build/linux-fuzz 60
+
+      - name: Entrées qui ont fait échouer une cible
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: build/fuzz-artifacts/
+
   windows:
     name: Windows MSVC Release
     runs-on: windows-2022

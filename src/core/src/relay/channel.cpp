@@ -26,9 +26,9 @@ using tunnel::CloseCode;
 using tunnel::FrameType;
 constexpr auto use_tuple = asio::as_tuple(asio::use_awaitable);
 
-constexpr std::uint64_t kAckBytes = 64 * 1024;         // ACK immédiat au-delà (SPEC §4.4)
+constexpr std::uint64_t kAckBytes = 64ULL * 1024;        // ACK immédiat au-delà (SPEC §4.4)
 constexpr auto kAckDelay = 100ms;                      // sinon, ACK après ce délai
-constexpr std::size_t kFlushBytes = 256 * 1024;        // DATA écrites avant de rendre la main
+constexpr std::size_t kFlushBytes = 256ULL * 1024;       // DATA écrites avant de rendre la main
 constexpr auto kGoodbyeTimeout = 1s;                   // envoi de la dernière trame
 constexpr auto kRetryFirst = 250ms;                    // renégociation : premier délai entre essais
 constexpr auto kRetryMax = 5s;
@@ -67,7 +67,8 @@ double random_factor(double jitter) {
 }
 
 Duration scale(Duration d, double factor) {
-    return std::chrono::duration_cast<Duration>(std::chrono::duration<double, Duration::period>(d.count() * factor));
+    return std::chrono::duration_cast<Duration>(
+        std::chrono::duration<double, Duration::period>(static_cast<double>(d.count()) * factor));
 }
 
 }  // namespace
@@ -129,6 +130,7 @@ Channel::Channel(std::uint64_t id, asio::any_io_executor strand, ChannelSettings
       ack_timer_(executor_),
       lifetime_timer_(executor_),
       retry_timer_(executor_),
+      keepalive_timer_(executor_),
       opened_at_(Clock::now()),
       last_activity_(opened_at_) {}
 
@@ -154,7 +156,7 @@ void Channel::start_server(std::shared_ptr<Transport> transport, const tunnel::S
 void Channel::spawn(asio::awaitable<void> task) {
     ++tasks_;
     asio::co_spawn(executor_, std::move(task),
-                   asio::bind_executor(executor_, [self = shared_from_this()](std::exception_ptr e) {
+                   asio::bind_executor(executor_, [self = shared_from_this()](const std::exception_ptr& e) {
                        if (e) {
                            try {
                                std::rethrow_exception(e);
@@ -201,6 +203,7 @@ asio::awaitable<void> Channel::run_client() {
     spawn(downlink());
     spawn(ack_loop());
     spawn(lifetime());
+    spawn(keepalive());
 }
 
 asio::awaitable<void> Channel::run_server() {
@@ -230,6 +233,7 @@ asio::awaitable<void> Channel::run_server() {
     spawn(uplink());
     spawn(ack_loop());
     spawn(lifetime());
+    spawn(keepalive());
 }
 
 asio::awaitable<std::shared_ptr<Transport>> Channel::connect_transport(std::string& failure, CloseReason& reason) {
@@ -283,6 +287,7 @@ bool Channel::install_transport(std::shared_ptr<Transport> transport) {
     transport_ = std::move(transport);
     ++transport_index_;
     transport_since_ = Clock::now();
+    last_frame_ = transport_since_;
     transport_lifetime_ = next_lifetime();
     broken_since_.reset();
     if (resumable()) {
@@ -467,6 +472,7 @@ asio::awaitable<void> Channel::downlink() {
             transport_failed(t, r.error == asio::error::eof ? "fermée par le pair" : r.error.message());
             continue;
         }
+        last_frame_ = Clock::now();
         if (!co_await handle(*r.frame)) co_return;
     }
 }
@@ -527,6 +533,29 @@ asio::awaitable<void> Channel::lifetime() {
         }
         lifetime_timer_.expires_at(deadline.value_or(asio::steady_timer::time_point::max()));
         co_await lifetime_timer_.async_wait(use_tuple);
+    }
+}
+
+// Détection d'un transport mort sans erreur TCP (SPEC §4.2) : PING quand rien
+// n'a été reçu depuis un intervalle ; au bout de 3 intervalles de silence, la
+// connexion est abandonnée (reprise de session sur les ports TLS).
+asio::awaitable<void> Channel::keepalive() {
+    const auto interval = settings_.keepalive_interval;
+    if (interval <= Duration::zero()) co_return;
+    while (!closing_) {
+        keepalive_timer_.expires_after(interval);
+        co_await keepalive_timer_.async_wait(use_tuple);
+        if (closing_) co_return;
+        auto t = transport_;
+        // Pendant une livraison bloquée par l'application, le transport n'est pas lu : pas de verdict.
+        if (!t || t->broken || !opened_ || delivering_) continue;
+        const auto silence = Clock::now() - last_frame_;
+        if (silence >= 3 * interval) {
+            transport_failed(t, "aucune trame reçue depuis " +
+                                    format_duration(std::chrono::duration_cast<Duration>(silence)));
+        } else if (silence >= interval) {
+            send_control(tunnel::encode_ping(++ping_nonce_));
+        }
     }
 }
 
@@ -688,7 +717,10 @@ asio::awaitable<bool> Channel::handle_data(const tunnel::Frame& f) {
                        "DATA seq=" + std::to_string(d.seq) + " au lieu de " + std::to_string(last_rx_ + 1));
         co_return false;
     }
+    delivering_ = true;
     const auto ec = co_await raw_->write(asio::buffer(d.bytes, d.size));
+    delivering_ = false;
+    last_frame_ = Clock::now();  // le silence pendant la livraison ne compte pas
     if (closing_) co_return false;
     if (ec) {
         logging::activity().debug("canal={} erreur d'écriture vers {} : {}", id_, raw_peer_, ec.message());
@@ -807,6 +839,7 @@ void Channel::stop(CloseReason reason, std::optional<std::string> last_frame) {
     ack_timer_.cancel();
     lifetime_timer_.cancel();
     retry_timer_.cancel();
+    keepalive_timer_.cancel();
     send_event_.notify();
     space_event_.notify();
     transport_event_.notify();
@@ -826,13 +859,18 @@ void Channel::stop(CloseReason reason, std::optional<std::string> last_frame) {
     if (tasks_ == 0) finish();
 }
 
+// cppcheck-suppress passedByValue ; coroutine : la trame doit vivre dans son cadre
 asio::awaitable<void> Channel::goodbye(std::shared_ptr<Transport> t, std::string frame) {
     // Trames de contrôle en attente (ACK...), puis la dernière trame.
     std::string out;
     for (const auto& c : control_) out += c;
     control_.clear();
     out += frame;
-    if (!out.empty()) t->stream->queue(asio::buffer(out));
+    if (!out.empty()) {
+        if (const auto ec = t->stream->queue(asio::buffer(out))) {
+            logging::activity().debug("canal={} dernière trame non envoyée : {}", id_, ec.message());
+        }
+    }
     co_await retire(std::move(t));
 }
 

@@ -363,3 +363,61 @@ TEST_F(TunnelTest, SmallResumeBufferAppliesBackpressureWithoutLoss) {
     ASSERT_EQ(received.size(), sent.size());
     EXPECT_EQ(sha256(received), sha256(sent));
 }
+
+TEST_F(TunnelTest, SilentTransportIsDetectedByKeepaliveAndResumed) {
+    EchoServer echo;
+    auto server_cfg = server_config(echo.port(), PortKind::tls, 1h, 5s);
+    server_cfg.limits.keepalive_interval = 200ms;
+    RunningService server(std::move(server_cfg));
+    CutProxy proxy(server.port(PortKind::tls));
+    auto client_cfg = client_config(proxy.port(), PortKind::tls, 1h, 5s);
+    client_cfg.limits.keepalive_interval = 200ms;
+    RunningService client(std::move(client_cfg));
+
+    TestClient app(client.port(PortKind::tls));
+    ASSERT_TRUE(works(app, "avant"));
+    proxy.freeze();  // plus rien ne passe, sans aucune erreur TCP
+    const auto start = Clock::now();
+    EXPECT_TRUE(works(app, "après le gel du lien"));
+    EXPECT_GE(Clock::now() - start, 400ms);  // détection : 3 intervalles de silence
+    EXPECT_EQ(client.stats().renegotiations.load(), 1u);
+    EXPECT_EQ(proxy.connections(), 2);
+    EXPECT_EQ(echo.accepted(), 1);
+}
+
+TEST_F(TunnelTest, SilentPlainTransportClosesChannel) {
+    EchoServer echo;
+    auto server_cfg = server_config(echo.port(), PortKind::plain);
+    server_cfg.credentials.reset();
+    server_cfg.limits.keepalive_interval = 200ms;
+    RunningService server(std::move(server_cfg));
+    CutProxy proxy(server.port(PortKind::plain));
+    auto client_cfg = client_config(proxy.port(), PortKind::plain);
+    client_cfg.limits.keepalive_interval = 200ms;
+    RunningService client(std::move(client_cfg));
+
+    TestClient app(client.port(PortKind::plain));
+    ASSERT_TRUE(works(app, "clair"));
+    proxy.freeze();
+    EXPECT_TRUE(app.wait_closed(3s));
+    EXPECT_TRUE(eventually([&] { return server.stats().channels_closed.load() == 1; }));
+}
+
+TEST_F(TunnelTest, KeepaliveToleratesApplicationNotReading) {
+    EchoServer echo;
+    auto server_cfg = server_config(echo.port(), PortKind::tls, 1h, 5s);
+    server_cfg.limits.keepalive_interval = 200ms;
+    RunningService server(std::move(server_cfg));
+    auto client_cfg = client_config(server.port(PortKind::tls), PortKind::tls, 1h, 5s);
+    client_cfg.limits.keepalive_interval = 200ms;
+    RunningService client(std::move(client_cfg));
+
+    TestClient app(client.port(PortKind::tls));
+    const auto data = make_random_data(2 << 20, 11);
+    app.write(data);
+    std::this_thread::sleep_for(1500ms);  // l'application ne lit pas : contre-pression jusqu'à la destination
+    const auto received = app.read_exactly(data.size(), 10s);
+    EXPECT_EQ(sha256(received), sha256(data));
+    EXPECT_EQ(client.stats().renegotiations.load(), 0u);  // aucune fausse détection
+    EXPECT_EQ(server.stats().resume_failures.load(), 0u);
+}

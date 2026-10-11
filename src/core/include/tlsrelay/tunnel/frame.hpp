@@ -23,7 +23,7 @@ namespace tlsrelay::tunnel {
 
 inline constexpr std::uint16_t kVersion = 1;
 inline constexpr std::size_t kHeaderSize = 8;
-inline constexpr std::size_t kMaxData = 16 * 1024;           // données par trame DATA
+inline constexpr std::size_t kMaxData = 16ULL * 1024;          // données par trame DATA
 inline constexpr std::size_t kMaxPayload = kMaxData + 64;    // charge utile maximale
 inline constexpr std::size_t kMaxMessage = 256;              // message des trames OPEN_FAIL et CLOSE
 

@@ -26,6 +26,19 @@
       }
     },
     {
+      "name": "linux-fuzz",
+      "displayName": "Linux fuzzing libFuzzer (clang, ASan/UBSan)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "TLSRELAY_SANITIZERS": "address,undefined,fuzzer-no-link",
+        "TLSRELAY_FUZZ": "ON",
+        "TLSRELAY_BUILD_TESTS": "OFF"
+      }
+    },
+    {
       "name": "windows-msvc",
       "displayName": "Windows x64 (MSVC + vcpkg)",
       "generator": "Visual Studio 17 2022",
@@ -40,6 +53,7 @@
     { "name": "linux-release", "configurePreset": "linux-release" },
     { "name": "linux-debug", "configurePreset": "linux-debug" },
     { "name": "linux-asan", "configurePreset": "linux-asan" },
+    { "name": "linux-fuzz", "configurePreset": "linux-fuzz" },
     { "name": "windows-release", "configurePreset": "windows-msvc", "configuration": "Release" }
   ],
   "testPresets": [

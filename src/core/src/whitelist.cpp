@@ -144,7 +144,11 @@ LoadResult Whitelist::load_string(std::string_view yaml) {
         }
         for (const auto& item : node) {
             const auto key = item.first.as<std::string>("");
-            if (key != "name" && key != "ip" && key != "ports" && key != "subject") err(path + "." + key, "clé inconnue");
+            if (key != "name" && key != "ip" && key != "ports" && key != "subject") {
+                std::string where = path;
+                where.append(".").append(key);
+                err(where, "clé inconnue");
+            }
         }
         auto scalar = [&](const char* key) -> std::optional<std::string> {
             const YAML::Node v = node[key];
