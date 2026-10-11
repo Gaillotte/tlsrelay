@@ -42,6 +42,22 @@ std::optional<std::string> prompt(const char* text) {
     return line;
 }
 
+std::optional<std::string> environment(const char* name) {
+#ifdef _WIN32
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || !value) return std::nullopt;
+    std::string result(value);
+    std::free(value);
+#else
+    const char* value = std::getenv(name);
+    if (!value) return std::nullopt;
+    std::string result(value);
+#endif
+    if (result.empty()) return std::nullopt;
+    return result;
+}
+
 }  // namespace
 
 std::optional<std::string> read_passphrase(const std::string& file, bool confirm) {
@@ -55,7 +71,7 @@ std::optional<std::string> read_passphrase(const std::string& file, bool confirm
         if (!line.empty() && line.back() == '\r') line.pop_back();
         return line;
     }
-    if (const char* env = std::getenv("TLSRELAY_CA_PASSPHRASE"); env && *env) return std::string(env);
+    if (auto env = environment("TLSRELAY_CA_PASSPHRASE")) return env;
     auto first = prompt("Phrase de passe de l'AC : ");
     if (!first) return std::nullopt;
     if (confirm) {
