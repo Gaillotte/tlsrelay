@@ -91,7 +91,10 @@ asio::awaitable<std::pair<std::error_code, std::size_t>> Stream::read_some(asio:
         const int ret = SSL_read_ex(ssl_.get(), buffer.data(), buffer.size(), &n);
         const int err = ret == 1 ? SSL_ERROR_NONE : SSL_get_error(ssl_.get(), ret);
         // La lecture peut produire des messages à envoyer (messages post-handshake).
-        if (BIO_ctrl_pending(network_out_) > 0) {
+        // Si un envoi est déjà en cours, il les emportera : la lecture ne doit
+        // jamais attendre l'écriture (un pair qui ne lit plus bloquerait sinon
+        // aussi la réception de ses propres trames).
+        if (BIO_ctrl_pending(network_out_) > 0 && !flushing_) {
             if (auto ec = co_await flush()) co_return std::pair{ec, std::size_t{0}};
         }
         if (err == SSL_ERROR_NONE) co_return std::pair{std::error_code{}, n};

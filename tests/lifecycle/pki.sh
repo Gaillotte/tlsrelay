@@ -90,13 +90,15 @@ python3 "$here/exchange.py" "$cli" || fail "échange après renouvellement"
 grep -c "remplacé" list.txt | grep -q 1 || fail "inventaire"
 
 echo "== refus de la politique de l'AC"
-openssl req -new -newkey rsa:2048 -nodes -keyout rsa.key -subj "/CN=rsa.essai" -out rsa.csr 2>/dev/null
+openssl req -new -newkey rsa:2048 -nodes -keyout rsa.key -subj "/CN=rsa.essai" -out rsa.csr 2>req.err \
+  || fail "openssl req (RSA) : $(cat req.err)"
 if "$bin" ca sign --dir ac --role client --csr rsa.csr --out kit-rsa --passphrase-file pass.txt 2>err.txt; then
   fail "clé RSA acceptée"
 fi
 grep -q "P-256" err.txt || fail "message de refus RSA"
 echo "mauvaise phrase de passe" > bad.txt
-openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout x.key -subj "/CN=x.essai" -out x.csr 2>/dev/null
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout x.key -subj "/CN=x.essai" -out x.csr \
+  2>req.err || fail "openssl req (P-256) : $(cat req.err)"
 if "$bin" ca sign --dir ac --role client --csr x.csr --out kit-x --passphrase-file bad.txt 2>err.txt; then
   fail "mauvaise phrase de passe acceptée"
 fi
