@@ -424,6 +424,20 @@ TEST_F(TunnelTest, KeepaliveToleratesApplicationNotReading) {
     EXPECT_EQ(server.stats().resume_failures.load(), 0u);
 }
 
+TEST_F(TunnelTest, TransportLossDuringHandshakeReopensTunnel) {
+    EchoServer echo;
+    RunningService server(server_config(echo.port(), PortKind::mtls));
+    CutProxy proxy(server.port(PortKind::mtls));
+    proxy.reset_next(2);  // deux connexions coupées pendant le handshake
+    RunningService client(client_config(proxy.port(), PortKind::mtls));
+
+    TestClient app(client.port(PortKind::mtls));
+    app.write("bonjour");
+    EXPECT_EQ(app.read_exactly(7, 5s), "bonjour");
+    EXPECT_EQ(proxy.connections(), 3);
+    EXPECT_EQ(echo.accepted(), 1);
+}
+
 TEST_F(TunnelTest, TransportLossBeforeOpenOkReopensTunnel) {
     // Le serveur cherche encore à joindre la destination quand le lien est coupé.
     ReservedPort reserved;

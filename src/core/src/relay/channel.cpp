@@ -192,10 +192,24 @@ asio::awaitable<void> Channel::run_client() {
     CloseReason failure_reason = CloseReason::dial_failed;
     auto transport = co_await connect_transport(failure, failure_reason);
     if (closing_) co_return;
-    if (!transport) {
+    if (!transport && failure_reason != CloseReason::io_error) {
         logging::activity().info("canal={} tunnel vers {} impossible : {}", id_, settings_.dial.target.to_string(),
                                  failure);
         stop(failure_reason);
+        co_return;
+    }
+    if (!transport) {
+        // Connexion perdue pendant le handshake : même règle qu'une perte avant
+        // OPEN_OK, la file d'émission attend.
+        ++open_attempts_;
+        logging::activity().info("canal={} tunnel vers {} impossible ({}) : nouvel essai {}/{}", id_,
+                                 settings_.dial.target.to_string(), failure, open_attempts_, kOpenAttempts);
+        spawn(reopen());
+        spawn(sender());
+        spawn(downlink());
+        spawn(ack_loop());
+        spawn(lifetime());
+        spawn(keepalive());
         co_return;
     }
     if (!install_transport(transport)) co_return;
@@ -219,8 +233,10 @@ asio::awaitable<void> Channel::reopen() {
     auto transport = co_await connect_transport(failure, failure_reason);
     if (closing_) co_return;
     if (!transport) {
-        if (open_attempts_ < kOpenAttempts) {
+        if (failure_reason == CloseReason::io_error && open_attempts_ < kOpenAttempts) {
             ++open_attempts_;
+            logging::activity().info("canal={} tunnel vers {} impossible ({}) : nouvel essai {}/{}", id_,
+                                     settings_.dial.target.to_string(), failure, open_attempts_, kOpenAttempts);
             spawn(reopen());
             co_return;
         }
@@ -301,7 +317,7 @@ asio::awaitable<std::shared_ptr<Transport>> Channel::connect_transport(std::stri
         }
         if (!failure.empty()) {
             ++stats_.tls_handshake_failures;
-            reason = CloseReason::tls_failed;
+            reason = stream->handshake_interrupted() ? CloseReason::io_error : CloseReason::tls_failed;
             failure = "handshake TLS refusé : " + failure;
             stream->close();
             co_return nullptr;

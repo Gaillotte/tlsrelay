@@ -67,6 +67,10 @@ public:
         done.get_future().wait();
     }
 
+    // Les n prochaines connexions sont coupées (RST) à réception de leurs
+    // premiers octets (ClientHello) : panne pendant le handshake.
+    void reset_next(int n) { reset_next_ = n; }
+
 private:
     using Socket = std::shared_ptr<tcp::socket>;
 
@@ -75,6 +79,15 @@ private:
             auto [ec, socket] = co_await acceptor_.async_accept(use_tuple);
             if (ec) co_return;
             ++accepted_;
+            if (reset_next_ > 0) {
+                --reset_next_;
+                std::array<char, 512> hello;
+                co_await socket.async_read_some(asio::buffer(hello), use_tuple);
+                std::error_code ignored;
+                socket.set_option(asio::socket_base::linger(true, 0), ignored);
+                socket.close(ignored);
+                continue;
+            }
             auto in = std::make_shared<tcp::socket>(std::move(socket));
             auto out = std::make_shared<tcp::socket>(io_);
             auto [cec] = co_await out->async_connect(tcp::endpoint(loopback(), target_), use_tuple);
@@ -124,6 +137,7 @@ private:
     std::vector<Socket> sockets_;  // accédé uniquement sur le thread de io_
     std::shared_ptr<bool> frozen_ = std::make_shared<bool>(false);  // connexions courantes (thread de io_)
     std::atomic<int> accepted_{0};
+    std::atomic<int> reset_next_{0};
     std::thread thread_;
 };
 

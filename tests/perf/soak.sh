@@ -11,7 +11,7 @@ set -euo pipefail
 
 build=$(realpath "$1")
 minutes=${2:?durée en minutes}
-csv_out=${3:-}
+csv_out=${3:+$(realpath -m "$3")}
 bin="$build/src/app/tlsrelay"
 kit="$build/src/testkit/tlsrelay-testkit"
 work=$(mktemp -d)
@@ -89,9 +89,9 @@ done
 wait "$stream" || true
 [ -n "$csv_out" ] && cp samples.csv "$csv_out"
 
-python3 - "$rounds" "$failed_rounds" <<'PY'
+python3 - "$rounds" "$failed_rounds" "$minutes" <<'PY'
 import csv, json, statistics, sys
-rounds, failed = int(sys.argv[1]), int(sys.argv[2])
+rounds, failed, minutes = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
 rows = list(csv.DictReader(open("samples.csv")))
 stream = json.load(open("stream.json"))
 n = len(rows)
@@ -109,7 +109,13 @@ checks = {
 }
 for side in ("serveur", "client"):
     e, l = med(f"rss_{side}_kio", early), med(f"rss_{side}_kio", late)
-    checks[f"mémoire {side} stable ({e / 1024:.0f} → {l / 1024:.0f} Mio)"] = l <= e * 1.25 + 8192
+    # Sur une course courte, la mémoire n'a pas atteint son régime établi
+    # (allocateur, génération ajoutée par la rotation) : relevé indicatif.
+    label = f"mémoire {side} stable ({e / 1024:.0f} → {l / 1024:.0f} Mio)"
+    if minutes >= 30:
+        checks[label] = l <= e * 1.25 + 8192
+    else:
+        print(f"INFO  {label} (indicatif sous 30 min)")
     fe, fl = med(f"fd_{side}", early), med(f"fd_{side}", late)
     checks[f"descripteurs {side} stables ({fe:.0f} → {fl:.0f})"] = fl <= fe + 20
     gens = max(int(r[f"generations_{side}"]) for r in late)

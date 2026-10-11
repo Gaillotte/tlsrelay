@@ -131,7 +131,7 @@ Pendant toute la renégociation, les données continuent de circuler sur l'ancie
 - Le serveur ferme la session (application et destination comprises), avec `CLOSE(LIFETIME_EXCEEDED)`, si aucun `RESUME` valide n'a eu lieu à `session_lifetime × (1 + session_jitter) + renegotiation_grace` depuis l'établissement de la connexion courante.
 - On ne revient jamais à une connexion de transport plus ancienne.
 
-**Reprise après coupure** (toujours active sur les ports 2 et 3) : si la connexion de transport tombe avant l'échéance, le client applique la même procédure, dans la limite de `renegotiation_grace` ; le serveur garde la session (et la connexion à la destination) pendant ce même délai, puis la ferme. Une coupure avant `OPEN_OK` ne perd rien : le client n'a encore envoyé aucune donnée de l'application ; il rouvre le tunnel sur une nouvelle connexion, avec une nouvelle session (3 essais au plus), puis ferme le canal en cas d'échec.
+**Reprise après coupure** (toujours active sur les ports 2 et 3) : si la connexion de transport tombe avant l'échéance, le client applique la même procédure, dans la limite de `renegotiation_grace` ; le serveur garde la session (et la connexion à la destination) pendant ce même délai, puis la ferme. Une coupure avant `OPEN_OK`, y compris pendant le handshake TLS, ne perd rien : le client n'a encore envoyé aucune donnée de l'application ; il rouvre le tunnel sur une nouvelle connexion, avec une nouvelle session (3 essais au plus), puis ferme le canal en cas d'échec. Un refus (certificat, liste blanche) ou une destination injoignable n'est pas retenté.
 
 **Port 1** : pas de `session_lifetime` ni de reprise (le jeton ne peut pas être protégé sans TLS). Seul `idle_timeout` s'applique.
 

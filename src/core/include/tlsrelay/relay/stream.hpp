@@ -73,6 +73,8 @@ public:
     // Certificat présenté par le pair (nullptr en clair ou s'il n'en a pas présenté).
     X509* peer_certificate() const;
     const std::string& failure_reason() const { return failure_reason_; }
+    // Le handshake a échoué parce que la connexion a été perdue (et non refusé).
+    bool handshake_interrupted() const { return handshake_interrupted_; }
 
 private:
     asio::awaitable<std::error_code> fill();
@@ -89,6 +91,7 @@ private:
     bool flushing_ = false;
     asio::steady_timer flush_done_;
     std::string failure_reason_;
+    bool handshake_interrupted_ = false;
 };
 
 }  // namespace tlsrelay::relay

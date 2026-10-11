@@ -9,7 +9,7 @@ set -euo pipefail
 
 build=$(realpath "$1")
 channels=${2:-5000}
-report=${3:-}
+report=${3:+$(realpath -m "$3")}
 bin="$build/src/app/tlsrelay"
 kit="$build/src/testkit/tlsrelay-testkit"
 work=$(mktemp -d)

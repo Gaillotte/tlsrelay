@@ -58,6 +58,7 @@ asio::awaitable<std::error_code> Stream::handshake() {
         if (err == SSL_ERROR_WANT_READ) {
             if (flush_ec) co_return flush_ec;
             if (auto ec = co_await fill()) {
+                handshake_interrupted_ = true;
                 failure_reason_ = ec == asio::error::eof ? "connexion fermée par le pair pendant le handshake"
                                                           : "erreur réseau pendant le handshake : " + ec.message();
                 co_return ec;
