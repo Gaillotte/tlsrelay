@@ -13,6 +13,7 @@ struct Stats {
     std::atomic<std::uint64_t> channels_idle_closed{0};  // fermés par idle_timeout
     std::atomic<std::uint64_t> dial_attempt_failures{0}; // essais de connexion sortante échoués
     std::atomic<std::uint64_t> dial_failures{0};         // canaux abandonnés après tous les essais
+    std::atomic<std::uint64_t> tls_handshake_failures{0}; // handshakes TLS refusés ou expirés
     std::atomic<std::uint64_t> bytes_upstream{0};        // application -> destination
     std::atomic<std::uint64_t> bytes_downstream{0};      // destination -> application
 };

@@ -3,12 +3,18 @@ add_executable(tlsrelay_tests
     test_endpoint.cpp
     test_config.cpp
     test_logging.cpp
-    test_relay.cpp)
+    test_relay.cpp
+    test_pki.cpp
+    test_tls.cpp
+    support/test_pki.cpp)
 
 target_link_libraries(tlsrelay_tests PRIVATE
     tlsrelay::core tlsrelay::options
+    OpenSSL::SSL
     OpenSSL::Crypto
     GTest::gtest GTest::gtest_main)
+
+target_include_directories(tlsrelay_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 target_compile_definitions(tlsrelay_tests PRIVATE
     TLSRELAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")

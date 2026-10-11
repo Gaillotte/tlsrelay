@@ -3,7 +3,10 @@
 #include "tlsrelay/config.hpp"
 #include "tlsrelay/relay/dial.hpp"
 #include "tlsrelay/relay/stats.hpp"
+#include "tlsrelay/relay/stream.hpp"
+#include "tlsrelay/tls/context.hpp"
 
+#include <asio/any_io_executor.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/cancellation_signal.hpp>
 #include <asio/ip/tcp.hpp>
@@ -14,11 +17,12 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace tlsrelay::relay {
 
-enum class CloseReason { normal, idle_timeout, shutdown, dial_failed, io_error };
+enum class CloseReason { normal, idle_timeout, shutdown, dial_failed, tls_failed, io_error };
 
 std::string_view to_string(CloseReason r);
 
@@ -26,6 +30,10 @@ struct ChannelSettings {
     PortKind port = PortKind::plain;
     Duration idle_timeout{};
     DialOptions dial;
+    Duration handshake_timeout{};
+    std::shared_ptr<const tls::Context> inbound_tls;   // mode serveur : TLS sur la connexion entrante
+    std::shared_ptr<const tls::Context> outbound_tls;  // mode client : TLS sur la connexion sortante
+    std::string server_name;                           // mode client : nom vérifié dans le certificat du serveur
 };
 
 // Un canal relaie une connexion entrante vers une connexion sortante, dans les
@@ -50,16 +58,18 @@ private:
     using Clock = std::chrono::steady_clock;
 
     asio::awaitable<void> run();
-    asio::awaitable<void> pump(asio::ip::tcp::socket& from, asio::ip::tcp::socket& to, std::uint64_t& bytes);
+    asio::awaitable<bool> secure(Stream& stream, std::string_view side);
+    asio::awaitable<void> pump(Stream& from, Stream& to, std::uint64_t& bytes);
     asio::awaitable<void> watchdog();
     void fail(CloseReason reason, const std::error_code& ec);
-    void close_sockets();
+    void close_streams();
     void finish();
 
     const std::uint64_t id_;
-    asio::ip::tcp::socket inbound_;
-    std::optional<asio::ip::tcp::socket> outbound_;
+    asio::any_io_executor executor_;
     ChannelSettings settings_;
+    std::unique_ptr<Stream> inbound_;
+    std::unique_ptr<Stream> outbound_;
     Stats& stats_;
     ClosedCallback on_closed_;
 

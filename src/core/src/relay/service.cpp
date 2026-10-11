@@ -1,6 +1,7 @@
 #include "tlsrelay/relay/service.hpp"
 
 #include "tlsrelay/logging.hpp"
+#include "tlsrelay/pki/generation.hpp"
 
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
@@ -43,9 +44,8 @@ using exclusive_address_use = asio::detail::socket_option::boolean<SOL_SOCKET, S
 Service::Service(Config config, ServiceOptions options)
     : config_(std::move(config)), options_(options), control_(asio::make_strand(io_)), signals_(control_) {
     for (const auto& [kind, port] : config_.ports) {
-        if (kind != PortKind::plain) {
-            throw std::runtime_error("le port " + std::string(to_string(kind)) +
-                                     " n'est pas encore disponible dans cette version");
+        if (kind == PortKind::mtls) {
+            throw std::runtime_error("le port mtls n'est pas encore disponible dans cette version");
         }
         if (config_.mode == Mode::client && !port.upstream) {
             throw std::invalid_argument("ports." + std::string(to_string(kind)) + ".upstream manquant");
@@ -53,6 +53,7 @@ Service::Service(Config config, ServiceOptions options)
     }
     if (config_.mode == Mode::server && !config_.destination) throw std::invalid_argument("destination manquante");
     if (config_.source_address) source_address_ = asio::ip::make_address(*config_.source_address);
+    load_pki();
 
     for (const auto& [kind, port_config] : config_.ports) {
         auto& port = ports_.emplace_back(kind, port_config, tcp::acceptor(asio::make_strand(io_)));
@@ -86,6 +87,30 @@ Service::Service(Config config, ServiceOptions options)
 }
 
 Service::~Service() = default;
+
+void Service::load_pki() {
+    const auto requirements = pki::requirements_for(config_);
+    if (!requirements) return;
+    if (!config_.credentials) throw std::runtime_error("credentials.pki_root manquant");
+
+    const auto result = pki::load_current_generation(config_.credentials->pki_root, *requirements);
+    for (const auto& w : result.warnings) logging::config().warn("PKI : {} : {}", w.path, w.message);
+    if (!result.generation) {
+        std::string message = "PKI invalide dans " + config_.credentials->pki_root;
+        for (const auto& e : result.errors) message += "\n  " + e.path + " : " + e.message;
+        throw std::runtime_error(message);
+    }
+    const auto& gen = *result.generation;
+    tls_context_ = config_.mode == Mode::server ? tls::Context::make_server(result.generation)
+                                                : tls::Context::make_client(result.generation);
+    if (gen.cert) {
+        logging::config().info("PKI : génération {} chargée, certificat {} valable jusqu'au {}", gen.name,
+                               tls::subject_of(gen.cert.get()), tls::not_after_of(gen.cert.get()));
+    } else {
+        logging::config().info("PKI : génération {} chargée, AC attendue du serveur : {}", gen.name,
+                               tls::subject_of(gen.trust_issuer.get()));
+    }
+}
 
 int Service::run() {
     for (auto& port : ports_) {
@@ -166,8 +191,16 @@ asio::awaitable<void> Service::accept_loop(Port& port) {
         // Compté avant d'être enregistré : drain() ne peut pas manquer ce canal.
         ++port.active;
         const auto id = next_id_++;
-        auto channel = std::make_shared<Channel>(id, std::move(socket), settings_for(port), stats_,
-                                                 [this, &port](std::uint64_t cid) { on_channel_closed(port, cid); });
+        std::shared_ptr<Channel> channel;
+        try {
+            channel = std::make_shared<Channel>(id, std::move(socket), settings_for(port), stats_,
+                                                [this, &port](std::uint64_t cid) { on_channel_closed(port, cid); });
+        } catch (const std::exception& e) {
+            // Par exemple, session TLS impossible à créer : on refuse cette connexion seulement.
+            --port.active;
+            logging::activity().error("port={} connexion refusée : {}", to_string(port.kind), e.what());
+            continue;
+        }
         {
             std::lock_guard lock(channels_mutex_);
             channels_.emplace(id, channel);
@@ -240,12 +273,19 @@ ChannelSettings Service::settings_for(const Port& port) const {
     ChannelSettings s;
     s.port = port.kind;
     s.idle_timeout = config_.limits.idle_timeout;
+    s.handshake_timeout = config_.limits.handshake_timeout;
+    const bool tls = port.kind != PortKind::plain;
     if (config_.mode == Mode::client) {
         s.dial.target = *port.config.upstream;
         s.dial.source = source_address_;
         s.dial.timeout = config_.limits.handshake_timeout;
         s.dial.attempts = 1;
+        if (tls) {
+            s.outbound_tls = tls_context_;
+            s.server_name = port.config.server_name.value_or(port.config.upstream->host);
+        }
     } else {
+        if (tls) s.inbound_tls = tls_context_;
         const auto& d = *config_.destination;
         s.dial.target = d.endpoint;
         s.dial.timeout = d.dial_timeout;

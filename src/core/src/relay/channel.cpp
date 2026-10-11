@@ -10,9 +10,9 @@
 #include <asio/post.hpp>
 #include <asio/this_coro.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/write.hpp>
 
 #include <array>
+#include <variant>
 
 namespace tlsrelay::relay {
 namespace {
@@ -37,6 +37,7 @@ std::string_view to_string(CloseReason r) {
         case CloseReason::idle_timeout: return "inactivite";
         case CloseReason::shutdown: return "arret";
         case CloseReason::dial_failed: return "destination_injoignable";
+        case CloseReason::tls_failed: return "tls_refuse";
         case CloseReason::io_error: return "erreur_reseau";
     }
     return "?";
@@ -44,70 +45,108 @@ std::string_view to_string(CloseReason r) {
 
 Channel::Channel(std::uint64_t id, tcp::socket inbound, ChannelSettings settings, Stats& stats, ClosedCallback on_closed)
     : id_(id),
-      inbound_(std::move(inbound)),
+      executor_(inbound.get_executor()),
       settings_(std::move(settings)),
       stats_(stats),
       on_closed_(std::move(on_closed)),
-      idle_timer_(inbound_.get_executor()) {}
+      idle_timer_(executor_) {
+    peer_ = describe_peer(inbound);
+    inbound_ = settings_.inbound_tls ? std::make_unique<Stream>(std::move(inbound), settings_.inbound_tls)
+                                     : std::make_unique<Stream>(std::move(inbound));
+}
 
 void Channel::start() {
-    asio::co_spawn(inbound_.get_executor(), [self = shared_from_this()] { return self->run(); }, asio::detached);
+    asio::co_spawn(executor_, [self = shared_from_this()] { return self->run(); }, asio::detached);
 }
 
 void Channel::abort(CloseReason reason) {
-    asio::post(inbound_.get_executor(), [self = shared_from_this(), reason] {
+    asio::post(executor_, [self = shared_from_this(), reason] {
         if (!self->reason_) self->reason_ = reason;
         self->dial_cancel_.emit(asio::cancellation_type::terminal);
         self->idle_timer_.cancel();
-        self->close_sockets();
+        self->close_streams();
     });
 }
 
 asio::awaitable<void> Channel::run() {
     opened_at_ = Clock::now();
-    peer_ = describe_peer(inbound_);
     ++stats_.channels_opened;
     logging::activity().debug("canal={} ouvert port={} pair={} cible={}", id_, to_string(settings_.port), peer_,
                               settings_.dial.target.to_string());
 
+    std::error_code ignored;
+    inbound_->socket().set_option(tcp::no_delay(true), ignored);
+
+    // Mode serveur : le pair doit s'authentifier avant toute connexion à la destination.
+    if (inbound_->is_tls() && !co_await secure(*inbound_, "entrant")) {
+        close_streams();
+        finish();
+        co_return;
+    }
+
     auto outbound = co_await asio::co_spawn(
-        inbound_.get_executor(), dial(settings_.dial, id_, stats_),
+        executor_, dial(settings_.dial, id_, stats_),
         asio::bind_cancellation_slot(dial_cancel_.slot(), asio::use_awaitable));
 
-    if (reason_) {  // abandon pendant la connexion sortante
-        close_sockets();
+    if (reason_ || !outbound) {
+        if (!reason_) reason_ = CloseReason::dial_failed;
+        close_streams();
         finish();
         co_return;
     }
-    if (!outbound) {
-        reason_ = CloseReason::dial_failed;
-        close_sockets();
-        finish();
-        co_return;
-    }
-    outbound_.emplace(std::move(*outbound));
     // Relais : chaque bloc est transmis sans attendre (pas d'algorithme de Nagle).
-    std::error_code ignored;
-    inbound_.set_option(tcp::no_delay(true), ignored);
-    outbound_->set_option(tcp::no_delay(true), ignored);
-    last_activity_ = Clock::now();
+    outbound->set_option(tcp::no_delay(true), ignored);
+    outbound_ = settings_.outbound_tls
+                    ? std::make_unique<Stream>(std::move(*outbound), settings_.outbound_tls, settings_.server_name)
+                    : std::make_unique<Stream>(std::move(*outbound));
 
-    co_await ((pump(inbound_, *outbound_, bytes_up_) && pump(*outbound_, inbound_, bytes_down_)) || watchdog());
+    // Mode client : vérification du serveur tlsrelay.
+    if (outbound_->is_tls() && !co_await secure(*outbound_, "sortant")) {
+        close_streams();
+        finish();
+        co_return;
+    }
+
+    last_activity_ = Clock::now();
+    co_await ((pump(*inbound_, *outbound_, bytes_up_) && pump(*outbound_, *inbound_, bytes_down_)) || watchdog());
 
     if (!reason_) reason_ = CloseReason::normal;
-    close_sockets();
+    close_streams();
     finish();
 }
 
-asio::awaitable<void> Channel::pump(tcp::socket& from, tcp::socket& to, std::uint64_t& bytes) {
+asio::awaitable<bool> Channel::secure(Stream& stream, std::string_view side) {
+    asio::steady_timer timer(executor_);
+    timer.expires_after(settings_.handshake_timeout);
+    auto result = co_await (stream.handshake() || timer.async_wait(use_tuple));
+
+    if (reason_) co_return false;  // abandon pendant le handshake
+    std::string failure;
+    if (result.index() == 1) {
+        failure = "délai de handshake dépassé (" + format_duration(settings_.handshake_timeout) + ")";
+    } else if (const auto ec = std::get<0>(result)) {
+        failure = stream.failure_reason().empty() ? ec.message() : stream.failure_reason();
+    }
+    if (!failure.empty()) {
+        reason_ = CloseReason::tls_failed;
+        ++stats_.tls_handshake_failures;
+        logging::activity().info("canal={} handshake TLS {} refusé pair={} : {}", id_, side, peer_, failure);
+        co_return false;
+    }
+    const auto subject = stream.peer_subject();
+    logging::activity().debug("canal={} TLS {} établi : {}, certificat du pair : {}", id_, side,
+                              stream.session_description(), subject.empty() ? "aucun" : subject);
+    co_return true;
+}
+
+asio::awaitable<void> Channel::pump(Stream& from, Stream& to, std::uint64_t& bytes) {
     std::array<char, kBufferSize> buffer;
     for (;;) {
-        auto [rec, n] = co_await from.async_read_some(asio::buffer(buffer), use_tuple);
+        auto [rec, n] = co_await from.read_some(asio::buffer(buffer));
         if (rec) {
             if (rec == asio::error::eof) {
                 // Fin de ce sens : on la propage, l'autre sens continue.
-                std::error_code ignored;
-                to.shutdown(tcp::socket::shutdown_send, ignored);
+                co_await to.shutdown_send();
             } else {
                 fail(CloseReason::io_error, rec);
             }
@@ -116,9 +155,7 @@ asio::awaitable<void> Channel::pump(tcp::socket& from, tcp::socket& to, std::uin
         last_activity_ = Clock::now();
         bytes += n;
 
-        auto [wec, written] = co_await asio::async_write(to, asio::buffer(buffer.data(), n), use_tuple);
-        (void)written;
-        if (wec) {
+        if (auto wec = co_await to.write(asio::buffer(buffer.data(), n))) {
             fail(CloseReason::io_error, wec);
             co_return;
         }
@@ -131,8 +168,8 @@ asio::awaitable<void> Channel::watchdog() {
         const auto deadline = last_activity_ + settings_.idle_timeout;
         if (Clock::now() >= deadline) {
             if (!reason_) reason_ = CloseReason::idle_timeout;
-            // Fermer les sockets termine les deux sens sans dépendre de l'annulation.
-            close_sockets();
+            // Fermer les flux termine les deux sens sans dépendre de l'annulation.
+            close_streams();
             co_return;
         }
         idle_timer_.expires_at(deadline);
@@ -148,13 +185,12 @@ void Channel::fail(CloseReason reason, const std::error_code& ec) {
         logging::activity().debug("canal={} erreur réseau : {}", id_, ec.message());
     }
     // Une erreur dans un sens termine aussi l'autre.
-    close_sockets();
+    close_streams();
 }
 
-void Channel::close_sockets() {
-    std::error_code ignored;
-    inbound_.close(ignored);
-    if (outbound_) outbound_->close(ignored);
+void Channel::close_streams() {
+    inbound_->close();
+    if (outbound_) outbound_->close();
 }
 
 void Channel::finish() {

@@ -3,6 +3,7 @@
 #include "tlsrelay/config.hpp"
 #include "tlsrelay/relay/channel.hpp"
 #include "tlsrelay/relay/stats.hpp"
+#include "tlsrelay/tls/context.hpp"
 
 #include <asio/awaitable.hpp>
 #include <asio/io_context.hpp>
@@ -30,9 +31,10 @@ struct ServiceOptions {
 // (mode client : vers l'upstream du port ; mode serveur : vers la destination).
 class Service {
 public:
-    // Ouvre les ports d'écoute. Lève std::system_error si un port ne peut pas
-    // être ouvert, std::runtime_error si la configuration demande une
-    // fonctionnalité absente de cette version.
+    // Charge la PKI si un port TLS est configuré, puis ouvre les ports d'écoute.
+    // Lève std::system_error si un port ne peut pas être ouvert,
+    // std::runtime_error si la PKI est invalide ou si la configuration demande
+    // une fonctionnalité absente de cette version.
     explicit Service(Config config, ServiceOptions options = {});
     ~Service();
 
@@ -64,6 +66,7 @@ private:
         std::atomic<std::size_t> active{0};
     };
 
+    void load_pki();
     asio::awaitable<void> accept_loop(Port& port);
     asio::awaitable<void> drain(Duration timeout);
     asio::awaitable<void> wait_signals();
@@ -79,6 +82,7 @@ private:
     asio::signal_set signals_;
     bool signals_done_ = false;  // accédé uniquement sur control_
     std::optional<asio::ip::address> source_address_;
+    std::shared_ptr<const tls::Context> tls_context_;  // génération PKI courante
 
     mutable std::mutex channels_mutex_;
     std::unordered_map<std::uint64_t, std::weak_ptr<Channel>> channels_;

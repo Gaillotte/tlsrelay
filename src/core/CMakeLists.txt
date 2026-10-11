@@ -6,6 +6,10 @@ add_library(tlsrelay_core STATIC
     src/config.cpp
     src/logging.cpp
     src/openssl_info.cpp
+    src/tls/openssl_ptr.cpp
+    src/tls/context.cpp
+    src/pki/generation.cpp
+    src/relay/stream.cpp
     src/relay/dial.cpp
     src/relay/channel.cpp
     src/relay/service.cpp)
@@ -21,6 +25,7 @@ target_link_libraries(tlsrelay_core
     PUBLIC
         asio::asio
         spdlog::spdlog
+        OpenSSL::SSL
         OpenSSL::Crypto
     PRIVATE
         tlsrelay::options

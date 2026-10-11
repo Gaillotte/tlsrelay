@@ -30,9 +30,10 @@ Principales caractéristiques :
 |---|---|---|
 | 0 | Spécification | Terminée |
 | 1 | Socle : CMake/vcpkg, configuration et validation, logs et mode verbose, relais en clair, multi-canaux, `idle_timeout`, essais vers la destination, arrêt propre | Terminée |
-| 2 | TLS 1.3 | À venir |
+| 2 | TLS 1.3 sur OpenSSL : port `tls`, ALPN `tlsrelay/1`, vérification du nom et de l'AC émettrice du serveur, chargement et contrôle de la PKI | Terminée |
+| 3 | mTLS et liste blanche | À venir |
 
-Dans cette version, seul le port `plain` est disponible ; les ports `tls` et `mtls` sont acceptés par la validation mais refusés au démarrage. Le protocole de tunnel arrive en phase 5 : d'ici là, le client et le serveur se relaient un flux TCP brut.
+Dans cette version, les ports `plain` et `tls` sont disponibles ; le port `mtls` est accepté par la validation mais refusé au démarrage. Le protocole de tunnel arrive en phase 5 : d'ici là, le client et le serveur se relaient un flux TCP brut (chiffré en TLS sur le port `tls`).
 
 ## Compilation
 
@@ -71,6 +72,23 @@ tlsrelay run -c examples/server.yaml            # serveur, au premier plan
 tlsrelay run -c examples/client.yaml -v         # client, mode verbose (-vv : trace)
 tlsrelay version                                # versions de tlsrelay et d'OpenSSL
 ```
+
+### Essai en TLS
+
+La PKI est lue dans le répertoire `credentials.pki_root` (format décrit dans [SPEC §7.2](docs/SPEC.md)). Pour un essai, `tools/make-test-pki.sh` crée une PKI de test (racine, AC Serveurs, AC Clients, certificats) et les deux répertoires prêts à l'emploi :
+
+```sh
+tools/make-test-pki.sh /tmp/pki-test          # nécessite la commande openssl
+```
+
+```yaml
+# serveur                                   # client
+credentials: { pki_root: /tmp/pki-test/serveur }   credentials: { pki_root: /tmp/pki-test/client }
+ports:                                      ports:
+  tls: { listen: "0.0.0.0:9002" }             tls: { listen: "127.0.0.1:7002", upstream: "relais:9002", server_name: relay.test }
+```
+
+Les clés produites par ce script ne sont pas chiffrées : il est réservé aux essais.
 
 - Ctrl+C (ou `SIGTERM`) : arrêt propre, avec drain des canaux pendant `limits.shutdown_timeout` ; un second Ctrl+C force l'arrêt immédiat.
 - Codes de sortie : 0 (succès), 1 (erreur d'exécution), 2 (configuration invalide).
