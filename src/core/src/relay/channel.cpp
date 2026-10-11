@@ -835,9 +835,22 @@ asio::awaitable<void> Channel::deliverer() {
             co_await delivery_event_.wait();
             continue;
         }
-        auto& next = delivery_.front();
+        // Les DATA en attente partent en une seule écriture (kFlushBytes au plus) :
+        // des segments pleins plutôt qu'un petit segment par trame. Une destination
+        // qui ne lit plus épuiserait sinon son tampon de réception (coût mémoire
+        // de chaque segment) avant que sa fenêtre ne se ferme : le noyau jette
+        // alors des segments et la connexion s'enlise en retransmissions.
+        std::size_t count = 0;
+        std::size_t size = 0;
+        std::error_code ec;
+        while (!ec && count < delivery_.size() &&
+               (count == 0 || size + delivery_[count].bytes.size() <= kFlushBytes)) {
+            ec = raw_->queue(asio::buffer(delivery_[count].bytes));
+            size += delivery_[count].bytes.size();
+            ++count;
+        }
         delivering_ = true;
-        const auto ec = co_await raw_->write(asio::buffer(next.bytes));
+        if (!ec) ec = co_await raw_->flush();
         delivering_ = false;
         if (closing_) co_return;
         if (ec) {
@@ -845,9 +858,8 @@ asio::awaitable<void> Channel::deliverer() {
             stop(CloseReason::io_error);
             co_return;
         }
-        const auto seq = next.seq;
-        const auto size = next.bytes.size();
-        delivery_.pop_front();
+        const auto seq = delivery_[count - 1].seq;
+        delivery_.erase(delivery_.begin(), delivery_.begin() + static_cast<std::ptrdiff_t>(count));
         delivery_bytes_ -= size;
         drained_event_.notify();
         last_rx_ = seq;
