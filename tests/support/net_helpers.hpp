@@ -76,8 +76,14 @@ private:
 // d'émission quand le flux entrant se termine.
 class EchoServer {
 public:
-    EchoServer() : acceptor_(io_) {
+    // socket_buffer : tampons noyau réduits (octets) des connexions acceptées,
+    // pour une destination qui se bloque vite (elle ne lit que si elle peut écrire).
+    explicit EchoServer(int socket_buffer = 0) : acceptor_(io_) {
         acceptor_.open(tcp::v4());
+        if (socket_buffer > 0) {
+            acceptor_.set_option(asio::socket_base::receive_buffer_size(socket_buffer));
+            acceptor_.set_option(asio::socket_base::send_buffer_size(socket_buffer));
+        }
         acceptor_.bind(tcp::endpoint(loopback(), 0));
         start();
     }

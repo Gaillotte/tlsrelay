@@ -175,6 +175,7 @@ private:
     asio::awaitable<void> uplink();
     asio::awaitable<void> downlink();
     asio::awaitable<void> ack_loop();
+    asio::awaitable<void> deliverer();
     asio::awaitable<void> watchdog();
     asio::awaitable<void> lifetime();
     asio::awaitable<void> keepalive();
@@ -237,8 +238,16 @@ private:
     std::uint64_t final_seq_ = 0;
     bool shutdown_sent_ = false;   // SHUTDOWN_WR écrit sur la connexion courante
 
-    // Réception.
-    std::uint64_t last_rx_ = 0;
+    // Réception. Les DATA reçues attendent leur livraison dans delivery_ : la
+    // lecture du transport (ACK, PING…) ne dépend pas de l'application.
+    struct Received {
+        std::uint64_t seq;
+        std::string bytes;
+    };
+    std::deque<Received> delivery_;
+    std::uint64_t delivery_bytes_ = 0;
+    std::uint64_t received_ = 0;  // dernière DATA reçue (mise en file)
+    std::uint64_t last_rx_ = 0;   // dernière DATA livrée (acquittée)
     std::uint64_t acked_rx_ = 0;
     std::uint64_t rx_since_ack_ = 0;  // octets reçus depuis le dernier ACK
     std::optional<std::uint64_t> peer_final_;
@@ -248,6 +257,8 @@ private:
     Event space_event_;
     Event transport_event_;
     Event ack_event_;
+    Event delivery_event_;  // DATA mise en file
+    Event drained_event_;   // file de livraison libérée
     asio::steady_timer idle_timer_;
     asio::steady_timer ack_timer_;
     asio::steady_timer lifetime_timer_;
@@ -255,7 +266,7 @@ private:
     asio::steady_timer keepalive_timer_;
     Clock::time_point last_frame_;  // dernière trame reçue sur la connexion courante
     std::uint64_t ping_nonce_ = 0;
-    bool delivering_ = false;  // écriture vers la connexion brute en cours (contre-pression de l'application)
+    bool reading_held_ = false;  // lecture du transport suspendue : file de livraison pleine
     asio::cancellation_signal dial_cancel_;
 
     Clock::time_point opened_at_;

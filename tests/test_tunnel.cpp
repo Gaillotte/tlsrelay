@@ -424,6 +424,47 @@ TEST_F(TunnelTest, KeepaliveToleratesApplicationNotReading) {
     EXPECT_EQ(server.stats().resume_failures.load(), 0u);
 }
 
+TEST_F(TunnelTest, SlowDestinationDoesNotStallAcknowledgements) {
+    // La destination ne lit que lorsqu'elle peut écrire, avec de petits tampons :
+    // le serveur, bloqué en livraison vers elle, doit continuer de traiter les
+    // ACK du client, sinon sa fenêtre d'émission reste pleine et tout s'arrête.
+    EchoServer echo(4096);
+    auto server_cfg = server_config(echo.port(), PortKind::tls);
+    server_cfg.limits.resume_buffer = 64 * 1024;
+    RunningService server(std::move(server_cfg));
+    auto client_cfg = client_config(server.port(PortKind::tls), PortKind::tls);
+    client_cfg.limits.resume_buffer = 64 * 1024;
+    RunningService client(std::move(client_cfg));
+
+    const auto data = make_random_data(16 << 20, 7);
+    std::string received;
+    asio::io_context io;
+    tcp::socket app(io);
+    app.connect(tcp::endpoint(loopback(), client.port(PortKind::tls)));
+    asio::co_spawn(
+        io,
+        [&]() -> asio::awaitable<void> {
+            co_await asio::async_write(app, asio::buffer(data), use_tuple);
+            std::error_code ignored;
+            app.shutdown(tcp::socket::shutdown_send, ignored);
+        },
+        asio::detached);
+    asio::co_spawn(
+        io,
+        [&]() -> asio::awaitable<void> {
+            std::array<char, 65536> buffer;
+            for (;;) {
+                auto [ec, n] = co_await app.async_read_some(asio::buffer(buffer), use_tuple);
+                if (ec) co_return;
+                received.append(buffer.data(), n);
+            }
+        },
+        asio::detached);
+    io.run_for(30s);
+    EXPECT_EQ(received.size(), data.size());
+    EXPECT_TRUE(received == data);
+}
+
 TEST_F(TunnelTest, TransportLossDuringHandshakeReopensTunnel) {
     EchoServer echo;
     RunningService server(server_config(echo.port(), PortKind::mtls));

@@ -127,6 +127,8 @@ Channel::Channel(std::uint64_t id, asio::any_io_executor strand, ChannelSettings
       space_event_(executor_),
       transport_event_(executor_),
       ack_event_(executor_),
+      delivery_event_(executor_),
+      drained_event_(executor_),
       idle_timer_(executor_),
       ack_timer_(executor_),
       lifetime_timer_(executor_),
@@ -216,6 +218,7 @@ asio::awaitable<void> Channel::run_client() {
     spawn(sender());
     spawn(downlink());
     spawn(ack_loop());
+    spawn(deliverer());
     spawn(lifetime());
     spawn(keepalive());
 }
@@ -280,6 +283,7 @@ asio::awaitable<void> Channel::run_server() {
     spawn(downlink());
     spawn(uplink());
     spawn(ack_loop());
+    spawn(deliverer());
     spawn(lifetime());
     spawn(keepalive());
 }
@@ -609,10 +613,10 @@ asio::awaitable<void> Channel::keepalive() {
         auto t = transport_;
         if (!t || t->broken || !opened_) continue;
         const auto silence = Clock::now() - last_frame_;
-        // Pendant une livraison bloquée par l'application, le transport n'est pas
+        // File de livraison pleine (application lente), le transport n'est pas
         // lu : pas de verdict, mais les PING continuent pour que l'autre côté,
         // qui ne reçoit plus rien d'autre, ne conclue pas à un lien mort.
-        if (silence >= 3 * interval && !delivering_) {
+        if (silence >= 3 * interval && !reading_held_) {
             transport_failed(t, "aucune trame reçue depuis " +
                                     format_duration(std::chrono::duration_cast<Duration>(silence)));
         } else if (silence >= interval) {
@@ -663,10 +667,7 @@ asio::awaitable<void> Channel::migrate() {
                     unacked_bytes_ = 0;
                     // Tout ce que le serveur a envoyé a été reçu : fin du sens descendant
                     // après la livraison en cours, s'il y en a une.
-                    while (delivering_ && !closing_) {
-                        retry_timer_.expires_after(std::chrono::milliseconds(10));
-                        co_await retry_timer_.async_wait(use_tuple);
-                    }
+                    while (!delivery_.empty() && !closing_) co_await drained_event_.wait();
                     if (closing_) break;
                     if (!peer_final_) peer_final_ = last_rx_;
                     co_await deliver_peer_shutdown();
@@ -741,7 +742,7 @@ asio::awaitable<bool> Channel::handle(const tunnel::Frame& f) {
         case FrameType::ack: co_return handle_ack(tunnel::read_u64(f));
         case FrameType::shutdown_wr: {
             const auto final_seq = tunnel::read_u64(f);
-            if (final_seq < last_rx_ || (peer_final_ && *peer_final_ != final_seq)) {
+            if (final_seq < received_ || (peer_final_ && *peer_final_ != final_seq)) {
                 protocol_error(CloseCode::protocol_error, "SHUTDOWN_WR incohérent");
                 co_return false;
             }
@@ -792,30 +793,59 @@ asio::awaitable<bool> Channel::handle_data(const tunnel::Frame& f) {
         co_return false;
     }
     const auto d = tunnel::read_data(f);
-    if (d.seq <= last_rx_) co_return true;  // déjà reçue : renvoi après une reprise
-    if (d.seq != last_rx_ + 1 || (peer_final_ && d.seq > *peer_final_)) {
+    if (d.seq <= received_) co_return true;  // déjà reçue : renvoi après une reprise
+    if (d.seq != received_ + 1 || (peer_final_ && d.seq > *peer_final_)) {
         protocol_error(CloseCode::protocol_error,
-                       "DATA seq=" + std::to_string(d.seq) + " au lieu de " + std::to_string(last_rx_ + 1));
+                       "DATA seq=" + std::to_string(d.seq) + " au lieu de " + std::to_string(received_ + 1));
         co_return false;
     }
-    delivering_ = true;
-    const auto ec = co_await raw_->write(asio::buffer(d.bytes, d.size));
-    delivering_ = false;
-    last_frame_ = Clock::now();  // le silence pendant la livraison ne compte pas
+    // L'émetteur n'a jamais plus de resume_buffer + kMaxData octets non acquittés
+    // (il s'arrête une fois resume_buffer atteint) : la file ne se remplit au-delà
+    // que si les deux côtés sont configurés différemment ; la lecture attend alors
+    // la livraison.
+    while (delivery_bytes_ + d.size > settings_.resume_buffer + tunnel::kMaxData && !closing_) {
+        reading_held_ = true;
+        co_await drained_event_.wait();
+    }
+    if (reading_held_) last_frame_ = Clock::now();  // le silence pendant l'attente ne compte pas
+    reading_held_ = false;
     if (closing_) co_return false;
-    if (ec) {
-        logging::activity().debug("canal={} erreur d'écriture vers {} : {}", id_, raw_peer_, ec.message());
-        stop(CloseReason::io_error);
-        co_return false;
+    received_ = d.seq;
+    delivery_.push_back(Received{d.seq, std::string(reinterpret_cast<const char*>(d.bytes), d.size)});
+    delivery_bytes_ += d.size;
+    delivery_event_.notify();
+    co_return true;
+}
+
+// Livraison des DATA reçues à la connexion brute, dans l'ordre ; l'acquittement
+// suit la livraison (une donnée acquittée a été écrite).
+asio::awaitable<void> Channel::deliverer() {
+    while (!closing_) {
+        if (delivery_.empty()) {
+            co_await delivery_event_.wait();
+            continue;
+        }
+        auto& next = delivery_.front();
+        const auto ec = co_await raw_->write(asio::buffer(next.bytes));
+        if (closing_) co_return;
+        if (ec) {
+            logging::activity().debug("canal={} erreur d'écriture vers {} : {}", id_, raw_peer_, ec.message());
+            stop(CloseReason::io_error);
+            co_return;
+        }
+        const auto seq = next.seq;
+        const auto size = next.bytes.size();
+        delivery_.pop_front();
+        delivery_bytes_ -= size;
+        drained_event_.notify();
+        last_rx_ = seq;
+        raw_out_ += size;
+        last_activity_ = Clock::now();
+        rx_since_ack_ += size;
+        if (rx_since_ack_ >= kAckBytes) send_ack();
+        else ack_event_.notify();
+        if (!co_await deliver_peer_shutdown()) co_return;
     }
-    // Acquittement après livraison : une donnée acquittée a été écrite.
-    last_rx_ = d.seq;
-    raw_out_ += d.size;
-    last_activity_ = Clock::now();
-    rx_since_ack_ += d.size;
-    if (rx_since_ack_ >= kAckBytes) send_ack();
-    else ack_event_.notify();
-    co_return co_await deliver_peer_shutdown();
 }
 
 bool Channel::handle_ack(std::uint64_t seq) {
@@ -925,6 +955,8 @@ void Channel::stop(CloseReason reason, std::optional<std::string> last_frame) {
     space_event_.notify();
     transport_event_.notify();
     ack_event_.notify();
+    delivery_event_.notify();
+    drained_event_.notify();
     if (raw_) raw_->close();
     if (pending_stream_) pending_stream_->close();
 

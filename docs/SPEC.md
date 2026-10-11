@@ -96,7 +96,8 @@ Tous les entiers sont en ordre réseau (big-endian).
 
 - Chaque côté conserve les trames `DATA` envoyées et non acquittées, dans la limite de `resume_buffer` (4 Mio par défaut et par sens).
 - Quand le tampon est plein, la lecture de la source (application ou destination) est suspendue : contre-pression, sans perte.
-- Un `ACK` est envoyé après 64 Kio reçus ou 100 ms sans acquittement, selon ce qui arrive en premier.
+- Les trames `DATA` reçues attendent leur livraison dans une file : la lecture de la connexion de transport (et donc des `ACK`, `PING`…) ne dépend jamais de la vitesse de l'application ou de la destination. La file reste dans la fenêtre de l'émetteur (`resume_buffer`, plus une trame).
+- Un `ACK` acquitte des données livrées (écrites vers l'application ou la destination). Il est envoyé après 64 Kio livrés ou 100 ms sans acquittement, selon ce qui arrive en premier.
 - Une trame `DATA` dont le `seq` n'est pas exactement le suivant attendu est une erreur de protocole, sauf pendant le renvoi qui suit une reprise (section 4.5), où les doublons déjà reçus sont ignorés.
 
 ### 4.5 Renégociation transparente (ports 2 et 3)
