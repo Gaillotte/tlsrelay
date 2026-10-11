@@ -246,7 +246,8 @@ peers:
   │   ├── cert.pem           # certificat feuille
   │   ├── chain.pem          # AC intermédiaire qui a émis la feuille
   │   ├── trust-roots.pem    # une ou plusieurs racines de confiance
-  │   └── trust-issuer.pem   # AC attendue chez le pair (AC Serveurs côté client, AC Clients côté serveur)
+  │   └── trust-issuer.pem   # AC attendue(s) chez le pair (AC Serveurs côté client, AC Clients côté serveur) :
+  │                          # une par racine, donc deux pendant un changement de racine
   ├── v2/ ...
   └── current                # fichier texte contenant « v2 », remplacé par renommage atomique
 ```
@@ -262,15 +263,20 @@ peers:
 4. Contraintes des AC : `CA:true`, `keyCertSign`, `pathlen`, racine auto-signée.
 5. Dates valides sur toute la chaîne ; avertissement si une expiration survient dans moins de `expiry_warning` (30 jours).
 6. Usage de la feuille conforme au rôle (`serverAuth` / `clientAuth`).
-7. Garde-fou : refus si `trust-roots.pem` ne contient plus aucune racine de la génération courante, sauf avec `--force` (étape 3 d'un changement de racine).
+7. Garde-fou de rotation, par rapport à la génération courante :
+   - au moins une racine de confiance commune ;
+   - le nouveau certificat (s'il y en a un) se rattache à une racine de confiance de la génération courante.
+   
+   Les deux conditions sont toujours remplies par la procédure en 3 étapes (§7.5) ; elles refusent un passage direct d'une racine à une autre. `trust-roots.pem` est lu dès qu'il est présent, même quand il ne sert pas à vérifier un pair (serveur sans port mtls), pour que ce contrôle soit possible. `pki activate --force` permet de passer outre (urgence).
 
 Un échec conserve la génération courante et produit une erreur dans la catégorie `config`.
 
 ### 7.4 Bascule et drain
 
-- Chaque génération correspond à un `SSL_CTX`. La génération courante est désignée par un pointeur atomique.
-- Chaque connexion de transport garde une référence sur son `SSL_CTX` (comptage de références d'OpenSSL) et sur sa génération (compteur `active`).
-- Une génération retirée est libérée quand son compteur atteint 0. Événement `generation_drained`.
+- Déclenchement : le contenu de `<pki_root>/current` est comparé toutes les 2 secondes (si `credentials.watch` vaut `true`), ou rechargement explicite (`SIGHUP` sous Linux ; commande `reload` en phase 6).
+- Chaque génération correspond à un `SSL_CTX` par port TLS. Les contextes courants sont remplacés sous verrou ; chaque connexion garde une référence sur le sien.
+- Une génération retirée est libérée quand sa dernière connexion se ferme ; le journal `config` l'indique (« génération vN libérée »).
+- Une génération refusée (contrôles ou garde-fou) laisse la génération courante en service ; l'erreur est journalisée.
 - Comme les renégociations utilisent la génération courante, une génération retirée est libérée au plus tard après `session_lifetime + renegotiation_grace` (ports 2 et 3), ou à la fermeture des canaux (port 1).
 - `reload --kill-old` : ferme immédiatement les connexions des générations retirées (révocation d'urgence).
 
@@ -288,8 +294,8 @@ Un échec conserve la génération courante et produit une erreur dans la catég
 |---|---|
 | `tlsrelay pki gen-csr --role server\|client --subject DN [--san ...]` | Génère une clé P-256 dans le prochain `vN` et écrit `request.csr` |
 | `tlsrelay pki install --cert cert.pem --chain chain.pem --roots roots.pem --issuer issuer.pem` | Complète le répertoire `vN` |
-| `tlsrelay check-pki <dir>` | Applique la validation de la section 7.3 sans bascule |
-| `tlsrelay pki activate <vN>` | Met à jour `current` (renommage atomique) |
+| `tlsrelay check-pki -c <config> [vN]` | Applique la validation de la section 7.3, garde-fou compris, sans bascule (par défaut : génération courante) |
+| `tlsrelay pki activate -c <config> <vN> [--force]` | Contrôle comme `check-pki`, puis met à jour `current` (renommage atomique) |
 | `tlsrelay ca init --dir <ca_dir>` | Crée la racine et les deux AC intermédiaires (clés chiffrées, phrase de passe demandée) |
 | `tlsrelay ca sign --role server\|client --csr request.csr` | Signe une demande avec l'AC correspondante ; applique la politique de l'AC (usages, durée) en ignorant les extensions demandées ; refuse une clé non P-256 ou un sujet déjà attribué |
 

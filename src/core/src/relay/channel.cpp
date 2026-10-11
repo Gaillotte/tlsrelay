@@ -41,6 +41,7 @@ std::string_view to_string(CloseReason r) {
         case CloseReason::tls_failed: return "tls_refuse";
         case CloseReason::not_authorized: return "non_autorise";
         case CloseReason::peer_revoked: return "pair_retire";
+        case CloseReason::generation_retired: return "generation_retiree";
         case CloseReason::io_error: return "erreur_reseau";
     }
     return "?";

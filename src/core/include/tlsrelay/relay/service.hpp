@@ -3,6 +3,7 @@
 #include "tlsrelay/config.hpp"
 #include "tlsrelay/relay/channel.hpp"
 #include "tlsrelay/relay/stats.hpp"
+#include "tlsrelay/pki/generation.hpp"
 #include "tlsrelay/tls/context.hpp"
 #include "tlsrelay/whitelist.hpp"
 
@@ -20,19 +21,23 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace tlsrelay::relay {
 
 struct ServiceOptions {
     bool handle_signals = true;  // Ctrl+C / SIGTERM : arrêt propre ; second signal : arrêt immédiat
     unsigned threads = 0;        // 0 : nombre de cœurs
-    Duration whitelist_poll = std::chrono::seconds(2);  // intervalle de surveillance du fichier de liste blanche
+    Duration watch_interval = std::chrono::seconds(2);  // surveillance de la liste blanche et de la PKI
 };
 
 // Le service ouvre les ports configurés et relaie chaque connexion acceptée
 // (mode client : vers l'upstream du port ; mode serveur : vers la destination).
 // En mode serveur, il applique la liste blanche et la recharge quand son
-// fichier change.
+// fichier change. Quand le fichier <pki_root>/current désigne une nouvelle
+// génération, il bascule à chaud : les nouvelles connexions utilisent la
+// nouvelle génération, les connexions ouvertes finissent sur l'ancienne
+// (SPEC §7.4).
 class Service : private PeerAuthorizer {
 public:
     // Charge la PKI si un port TLS est configuré, puis ouvre les ports d'écoute.
@@ -55,6 +60,16 @@ public:
     // Arrêt immédiat, sans drain.
     void request_abort();
 
+    // Recharge la PKI (nouvelle génération désignée par current) et la liste
+    // blanche, comme SIGHUP. kill_old : ferme aussi les connexions établies avec
+    // une génération retirée. Utilisable depuis n'importe quel thread.
+    void reload(bool kill_old = false);
+
+    // Génération PKI courante (vide sans port TLS) et générations encore
+    // utilisées par des connexions (courante comprise).
+    std::string current_generation() const;
+    std::vector<std::string> live_generations() const;
+
     std::optional<asio::ip::tcp::endpoint> local_endpoint(PortKind kind) const;
     std::size_t active_channels() const;
     const Stats& stats() const { return stats_; }
@@ -70,14 +85,30 @@ private:
         std::atomic<std::size_t> active{0};
     };
 
+    struct Contexts {
+        std::shared_ptr<const tls::Context> tls;   // port tls
+        std::shared_ptr<const tls::Context> mtls;  // port mtls
+    };
+    struct RetiredGeneration {
+        std::string name;
+        std::weak_ptr<const tls::Context> tls;
+        std::weak_ptr<const tls::Context> mtls;
+        bool released() const { return tls.expired() && mtls.expired(); }
+    };
+
     void load_pki();
+    Contexts build_contexts(const std::shared_ptr<const pki::Generation>& generation) const;
+    void reload_pki(bool kill_old);
+    void close_retired_generations();
+    void sweep_generations();
+    std::optional<std::string> read_pki_pointer() const;
     void load_whitelist();
     void reload_whitelist();
     std::optional<std::string> read_whitelist_file() const;
     std::shared_ptr<const whitelist::Whitelist> current_whitelist() const;
     std::optional<std::string> authorize(const asio::ip::address& address, PortKind port,
                                          const X509_NAME* subject) const override;
-    asio::awaitable<void> watch_whitelist();
+    asio::awaitable<void> watch();
     asio::awaitable<void> accept_loop(Port& port);
     asio::awaitable<void> drain(Duration timeout);
     asio::awaitable<void> wait_signals();
@@ -93,8 +124,13 @@ private:
     asio::signal_set signals_;
     bool signals_done_ = false;  // accédé uniquement sur control_
     std::optional<asio::ip::address> source_address_;
-    std::shared_ptr<const tls::Context> tls_context_;   // port tls, génération PKI courante
-    std::shared_ptr<const tls::Context> mtls_context_;  // port mtls, génération PKI courante
+
+    // PKI : génération courante, ses contextes, et générations retirées en drain.
+    mutable std::mutex pki_mutex_;
+    std::shared_ptr<const pki::Generation> generation_;
+    Contexts contexts_;
+    std::vector<RetiredGeneration> retired_;
+    std::optional<std::string> pki_pointer_;  // contenu de current, accédé sur control_ après le démarrage
 
     mutable std::mutex whitelist_mutex_;
     std::shared_ptr<const whitelist::Whitelist> whitelist_;

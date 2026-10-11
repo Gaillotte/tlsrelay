@@ -67,7 +67,7 @@ TEST_F(PkiTest, LoadsClientGenerationWithTrustOnly) {
     const auto r = load(files, kClient);
     ASSERT_TRUE(r.generation) << dump(r);
     EXPECT_FALSE(r.generation->cert);
-    EXPECT_TRUE(r.generation->trust_issuer);
+    EXPECT_EQ(r.generation->trust_issuers.size(), 1u);
 }
 
 TEST_F(PkiTest, RejectsMissingOrInvalidPointer) {
@@ -193,4 +193,42 @@ TEST(PkiRequirements, DependOnModeAndPorts) {
     r = pki::requirements_for(c);
     EXPECT_TRUE(r->identity);
     EXPECT_TRUE(r->trust);
+}
+
+TEST_F(PkiTest, CheckCandidateAppliesRootGuard) {
+    write_generation(dir_.path(), "v1", server_files(*h_));
+    // v2 : nouvelle racine sans pré-confiance -> refusée.
+    const auto other = Hierarchy::create("Autre");
+    write_generation(dir_.path(), "v2", server_files(other), false);
+    auto r = pki::check_candidate(dir_.path(), "v2", kServerMtls);
+    EXPECT_FALSE(r.generation);
+    EXPECT_TRUE(has(r.errors, "v2", "aucune racine de confiance commune")) << dump(r);
+
+    // v3 : même racine, nouveau certificat -> acceptée.
+    auto files = server_files(*h_);
+    auto renewed = make_certificate({.common_name = "relay.test", .usage = Usage::server, .dns = {"relay.test"}},
+                                    &h_->servers_ca);
+    files.key = pem(renewed.key.get());
+    files.cert = pem(renewed.cert.get());
+    write_generation(dir_.path(), "v3", files, false);
+    r = pki::check_candidate(dir_.path(), "v3", kServerMtls);
+    EXPECT_TRUE(r.generation) << dump(r);
+
+    EXPECT_FALSE(pki::check_candidate(dir_.path(), "../v3", kServerMtls).generation);
+
+    // Serveur sans mTLS : la nouvelle identité doit se rattacher aux racines courantes.
+    r = pki::check_candidate(dir_.path(), "v2", kServer);
+    EXPECT_FALSE(r.generation);
+    EXPECT_TRUE(has(r.errors, "v2", "ne se rattache à aucune racine")) << dump(r);
+}
+
+TEST_F(PkiTest, ActivateReplacesCurrentPointer) {
+    write_generation(dir_.path(), "v1", server_files(*h_));
+    write_generation(dir_.path(), "v2", server_files(*h_), false);
+    pki::activate(dir_.path(), "v2");
+    const auto r = pki::load_current_generation(dir_.path(), kServer);
+    ASSERT_TRUE(r.generation) << dump(r);
+    EXPECT_EQ(r.generation->name, "v2");
+    EXPECT_FALSE(std::filesystem::exists(dir_.path() / "current.tmp"));
+    EXPECT_THROW(pki::activate(dir_.path(), "a/b"), std::filesystem::filesystem_error);
 }

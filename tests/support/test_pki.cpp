@@ -110,7 +110,8 @@ Hierarchy Hierarchy::create(const std::string& label) {
     return h;
 }
 
-void write_generation(const std::filesystem::path& pki_root, const std::string& name, const GenerationFiles& files) {
+void write_generation(const std::filesystem::path& pki_root, const std::string& name, const GenerationFiles& files,
+                      bool activate) {
     const auto dir = pki_root / name;
     std::filesystem::create_directories(dir);
     auto write = [&](const char* file, const std::optional<std::string>& content) {
@@ -121,7 +122,10 @@ void write_generation(const std::filesystem::path& pki_root, const std::string& 
     write("chain.pem", files.chain);
     write("trust-roots.pem", files.trust_roots);
     write("trust-issuer.pem", files.trust_issuer);
-    std::ofstream(pki_root / "current", std::ios::binary) << name << "\n";
+    if (!activate) return;
+    // Fichier temporaire puis renommage : un service qui surveille current ne lit jamais un fichier partiel.
+    std::ofstream(pki_root / "current.tmp", std::ios::binary) << name << "\n";
+    std::filesystem::rename(pki_root / "current.tmp", pki_root / "current");
 }
 
 GenerationFiles server_files(const Hierarchy& h) {

@@ -16,6 +16,8 @@ struct Stats {
     std::atomic<std::uint64_t> tls_handshake_failures{0}; // handshakes TLS refusés ou expirés
     std::atomic<std::uint64_t> peers_rejected{0};        // pairs refusés par la liste blanche
     std::atomic<std::uint64_t> peers_revoked{0};         // canaux fermés après retrait du pair de la liste
+    std::atomic<std::uint64_t> pki_rotations{0};         // bascules vers une nouvelle génération PKI
+    std::atomic<std::uint64_t> pki_reload_failures{0};   // nouvelles générations refusées
     std::atomic<std::uint64_t> bytes_upstream{0};        // application -> destination
     std::atomic<std::uint64_t> bytes_downstream{0};      // destination -> application
 };

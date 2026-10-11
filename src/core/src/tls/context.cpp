@@ -72,7 +72,7 @@ int verify_expected_issuer(int preverify_ok, X509_STORE_CTX* store) {
     const auto* context = static_cast<const Context*>(SSL_CTX_get_app_data(SSL_get_SSL_CTX(ssl)));
     STACK_OF(X509)* chain = X509_STORE_CTX_get0_chain(store);
     const X509* issuer = chain && sk_X509_num(chain) >= 2 ? sk_X509_value(chain, 1) : nullptr;
-    if (!issuer || X509_cmp(issuer, context->generation().trust_issuer.get()) != 0) {
+    if (!context->generation().is_expected_issuer(issuer)) {
         report(ssl, std::string("certificat du ") + peer_role(*context) + " émis par une AC inattendue : " +
                         subject_of(issuer));
         X509_STORE_CTX_set_error(store, X509_V_ERR_APPLICATION_VERIFICATION);
@@ -100,7 +100,7 @@ void verify_peer(SSL_CTX* ctx, const pki::Generation& generation, int mode, int 
 }
 
 bool has_identity(const pki::Generation* g) { return g && g->cert && g->key; }
-bool has_trust(const pki::Generation* g) { return g && !g->trust_roots.empty() && g->trust_issuer; }
+bool has_trust(const pki::Generation* g) { return g && !g->trust_roots.empty() && !g->trust_issuers.empty(); }
 
 }  // namespace
 
@@ -184,7 +184,7 @@ std::string Context::check_peer(SSL* ssl) const {
         }
         STACK_OF(X509)* chain = SSL_get0_verified_chain(ssl);
         if (!chain || sk_X509_num(chain) < 2) return "chaîne du " + role + " incomplète";
-        if (X509_cmp(sk_X509_value(chain, 1), generation_->trust_issuer.get()) != 0) {
+        if (!generation_->is_expected_issuer(sk_X509_value(chain, 1))) {
             return "certificat du " + role + " émis par une AC inattendue : " + subject_of(sk_X509_value(chain, 1));
         }
     }

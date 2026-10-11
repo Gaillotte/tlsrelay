@@ -240,6 +240,7 @@ public:
     }
 
     std::uint16_t port(PortKind kind = PortKind::plain) const { return service_->local_endpoint(kind)->port(); }
+    relay::Service& service() { return *service_; }
     const relay::Stats& stats() const { return service_->stats(); }
     std::size_t active_channels() const { return service_->active_channels(); }
 

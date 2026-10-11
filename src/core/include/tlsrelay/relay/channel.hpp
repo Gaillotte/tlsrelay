@@ -23,7 +23,17 @@
 
 namespace tlsrelay::relay {
 
-enum class CloseReason { normal, idle_timeout, shutdown, dial_failed, tls_failed, not_authorized, peer_revoked, io_error };
+enum class CloseReason {
+    normal,
+    idle_timeout,
+    shutdown,
+    dial_failed,
+    tls_failed,
+    not_authorized,
+    peer_revoked,
+    generation_retired,
+    io_error
+};
 
 std::string_view to_string(CloseReason r);
 
@@ -69,6 +79,12 @@ public:
     void revalidate();
 
     std::uint64_t id() const { return id_; }
+
+    // Contexte TLS (donc génération PKI) du canal, nullptr en clair. Constant
+    // pendant toute la vie du canal : lisible depuis n'importe quel thread.
+    const tls::Context* tls_context() const {
+        return settings_.inbound_tls ? settings_.inbound_tls.get() : settings_.outbound_tls.get();
+    }
 
 private:
     using Clock = std::chrono::steady_clock;

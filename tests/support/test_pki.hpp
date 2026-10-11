@@ -61,8 +61,9 @@ struct GenerationFiles {
     std::optional<std::string> trust_issuer;
 };
 
-// Écrit <pki_root>/<name>/... et <pki_root>/current.
-void write_generation(const std::filesystem::path& pki_root, const std::string& name, const GenerationFiles& files);
+// Écrit <pki_root>/<name>/... et, si activate, <pki_root>/current.
+void write_generation(const std::filesystem::path& pki_root, const std::string& name, const GenerationFiles& files,
+                      bool activate = true);
 
 // Répertoires prêts à l'emploi pour un tlsrelay serveur ou client.
 GenerationFiles server_files(const Hierarchy& h);

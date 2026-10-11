@@ -12,6 +12,7 @@
 
 #include <csignal>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -86,6 +87,9 @@ Service::Service(Config config, ServiceOptions options)
     if (options_.handle_signals) {
         signals_.add(SIGINT);
         signals_.add(SIGTERM);
+#ifdef SIGHUP
+        signals_.add(SIGHUP);  // rechargement de la PKI et de la liste blanche
+#endif
 #ifdef SIGBREAK
         signals_.add(SIGBREAK);
 #endif
@@ -106,23 +110,157 @@ void Service::load_pki() {
         for (const auto& e : result.errors) message += "\n  " + e.path + " : " + e.message;
         throw std::runtime_error(message);
     }
+    auto contexts = build_contexts(result.generation);
     const auto& gen = *result.generation;
-    const bool server = config_.mode == Mode::server;
-    if (config_.ports.count(PortKind::tls)) {
-        tls_context_ = server ? tls::Context::make_server(result.generation, false)
-                              : tls::Context::make_client(result.generation, false);
+    {
+        std::lock_guard lock(pki_mutex_);
+        generation_ = result.generation;
+        contexts_ = std::move(contexts);
     }
-    if (config_.ports.count(PortKind::mtls)) {
-        mtls_context_ = server ? tls::Context::make_server(result.generation, true)
-                               : tls::Context::make_client(result.generation, true);
-    }
+    pki_pointer_ = read_pki_pointer();
     if (gen.cert) {
         logging::config().info("PKI : génération {} chargée, certificat {} valable jusqu'au {}", gen.name,
                                tls::subject_of(gen.cert.get()), tls::not_after_of(gen.cert.get()));
     } else {
         logging::config().info("PKI : génération {} chargée, AC attendue du serveur : {}", gen.name,
-                               tls::subject_of(gen.trust_issuer.get()));
+                               tls::subject_of(gen.trust_issuers.front().get()));
     }
+}
+
+Service::Contexts Service::build_contexts(const std::shared_ptr<const pki::Generation>& generation) const {
+    Contexts c;
+    const bool server = config_.mode == Mode::server;
+    if (config_.ports.count(PortKind::tls)) {
+        c.tls = server ? tls::Context::make_server(generation, false) : tls::Context::make_client(generation, false);
+    }
+    if (config_.ports.count(PortKind::mtls)) {
+        c.mtls = server ? tls::Context::make_server(generation, true) : tls::Context::make_client(generation, true);
+    }
+    return c;
+}
+
+std::optional<std::string> Service::read_pki_pointer() const {
+    std::ifstream in(std::filesystem::path(config_.credentials->pki_root) / "current", std::ios::binary);
+    if (!in) return std::nullopt;
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+void Service::reload_pki(bool kill_old) {
+    const auto requirements = pki::requirements_for(config_);
+    if (!requirements) return;
+
+    std::shared_ptr<const pki::Generation> previous;
+    {
+        std::lock_guard lock(pki_mutex_);
+        previous = generation_;
+    }
+    auto result = pki::load_current_generation(config_.credentials->pki_root, *requirements);
+    for (const auto& w : result.warnings) logging::config().warn("PKI : {} : {}", w.path, w.message);
+    auto refuse = [&](const std::string& why) {
+        ++stats_.pki_reload_failures;
+        logging::config().error("PKI : nouvelle génération refusée ({}) ; la génération {} reste en service", why,
+                                previous->name);
+    };
+    if (!result.generation) {
+        refuse("contrôles en échec");
+        for (const auto& e : result.errors) logging::config().error("  {} : {}", e.path, e.message);
+    } else if (result.generation->name == previous->name) {
+        logging::config().info("PKI : génération {} inchangée", previous->name);
+    } else if (auto problem = pki::rotation_guard(*previous, *result.generation, *requirements)) {
+        refuse("garde-fou : " + *problem);
+    } else {
+        try {
+            auto contexts = build_contexts(result.generation);
+            {
+                std::lock_guard lock(pki_mutex_);
+                retired_.push_back({previous->name, contexts_.tls, contexts_.mtls});
+                generation_ = result.generation;
+                contexts_ = std::move(contexts);
+            }
+            ++stats_.pki_rotations;
+            const auto& gen = *result.generation;
+            logging::config().info("PKI : bascule vers la génération {}{} ; la génération {} reste utilisée par les "
+                                   "connexions déjà ouvertes",
+                                   gen.name,
+                                   gen.cert ? " (certificat " + tls::subject_of(gen.cert.get()) + " valable jusqu'au " +
+                                                  tls::not_after_of(gen.cert.get()) + ")"
+                                            : std::string(),
+                                   previous->name);
+        } catch (const std::exception& e) {
+            refuse(e.what());
+        }
+    }
+    if (kill_old) close_retired_generations();
+    sweep_generations();
+}
+
+void Service::close_retired_generations() {
+    Contexts current;
+    {
+        std::lock_guard lock(pki_mutex_);
+        current = contexts_;
+    }
+    std::vector<std::shared_ptr<Channel>> channels;
+    {
+        std::lock_guard lock(channels_mutex_);
+        for (auto& [id, weak] : channels_) {
+            if (auto ch = weak.lock()) channels.push_back(std::move(ch));
+        }
+    }
+    std::size_t closed = 0;
+    for (auto& ch : channels) {
+        const auto* ctx = ch->tls_context();
+        if (ctx && ctx != current.tls.get() && ctx != current.mtls.get()) {
+            ch->abort(CloseReason::generation_retired);
+            ++closed;
+        }
+    }
+    logging::config().warn("PKI : fermeture immédiate de {} connexion(s) établie(s) avec une génération retirée",
+                           closed);
+}
+
+void Service::sweep_generations() {
+    std::lock_guard lock(pki_mutex_);
+    for (auto it = retired_.begin(); it != retired_.end();) {
+        if (it->released()) {
+            logging::config().info("PKI : génération {} libérée (plus aucune connexion)", it->name);
+            it = retired_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void Service::reload(bool kill_old) {
+    asio::post(control_, [this, kill_old] {
+        if (stopping_) return;
+        logging::config().info("rechargement demandé{}", kill_old ? " (avec fermeture des anciennes générations)" : "");
+        if (pki::requirements_for(config_)) {
+            pki_pointer_ = read_pki_pointer();
+            reload_pki(kill_old);
+        }
+        if (config_.mode == Mode::server) {
+            whitelist_content_ = read_whitelist_file();
+            reload_whitelist();
+        }
+    });
+}
+
+std::string Service::current_generation() const {
+    std::lock_guard lock(pki_mutex_);
+    return generation_ ? generation_->name : std::string();
+}
+
+std::vector<std::string> Service::live_generations() const {
+    std::lock_guard lock(pki_mutex_);
+    std::vector<std::string> names;
+    if (generation_) names.push_back(generation_->name);
+    for (const auto& r : retired_) {
+        if (!r.released()) names.push_back(r.name);
+    }
+    return names;
 }
 
 void Service::load_whitelist() {
@@ -161,17 +299,29 @@ std::optional<std::string> Service::authorize(const asio::ip::address& address, 
     return peer->name;
 }
 
-asio::awaitable<void> Service::watch_whitelist() {
+asio::awaitable<void> Service::watch() {
+    const bool watch_pki = pki::requirements_for(config_) && config_.credentials && config_.credentials->watch;
     while (!stopping_) {
-        watch_timer_.expires_after(options_.whitelist_poll);
+        watch_timer_.expires_after(options_.watch_interval);
         co_await watch_timer_.async_wait(use_tuple);
         if (stopping_) co_return;
 
-        // Comparaison du contenu : indépendante de la précision des dates de modification.
-        auto content = read_whitelist_file();
-        if (content == whitelist_content_) continue;
-        whitelist_content_ = content;
-        reload_whitelist();
+        // Comparaison des contenus : indépendante de la précision des dates de modification.
+        if (config_.mode == Mode::server) {
+            auto content = read_whitelist_file();
+            if (content != whitelist_content_) {
+                whitelist_content_ = std::move(content);
+                reload_whitelist();
+            }
+        }
+        if (watch_pki) {
+            auto pointer = read_pki_pointer();
+            if (pointer != pki_pointer_) {
+                pki_pointer_ = std::move(pointer);
+                reload_pki(false);
+            }
+        }
+        sweep_generations();
     }
 }
 
@@ -215,7 +365,9 @@ int Service::run() {
         asio::co_spawn(port.acceptor.get_executor(), accept_loop(port), log_exceptions("acceptation"));
     }
     if (options_.handle_signals) asio::co_spawn(control_, wait_signals(), log_exceptions("signaux"));
-    if (config_.mode == Mode::server) asio::co_spawn(control_, watch_whitelist(), log_exceptions("liste blanche"));
+    if (config_.mode == Mode::server || pki::requirements_for(config_)) {
+        asio::co_spawn(control_, watch(), log_exceptions("surveillance"));
+    }
 
     logging::config().info("service démarré mode={} instance={}", to_string(config_.mode), config_.instance);
 
@@ -375,6 +527,13 @@ asio::awaitable<void> Service::wait_signals() {
     while (!signals_done_) {
         auto [ec, signal] = co_await signals_.async_wait(use_tuple);
         if (ec) co_return;
+#ifdef SIGHUP
+        if (signal == SIGHUP) {
+            logging::config().info("signal SIGHUP reçu : rechargement");
+            reload(false);
+            continue;
+        }
+#endif
         if (!stopping_) {
             logging::config().info("signal {} reçu : arrêt propre (un second signal force l'arrêt immédiat)", signal);
             request_stop();
@@ -391,7 +550,11 @@ ChannelSettings Service::settings_for(const Port& port) const {
     s.port = port.kind;
     s.idle_timeout = config_.limits.idle_timeout;
     s.handshake_timeout = config_.limits.handshake_timeout;
-    const auto& context = port.kind == PortKind::mtls ? mtls_context_ : tls_context_;
+    std::shared_ptr<const tls::Context> context;
+    {
+        std::lock_guard lock(pki_mutex_);
+        context = port.kind == PortKind::mtls ? contexts_.mtls : contexts_.tls;
+    }
     const bool tls = port.kind != PortKind::plain;
     if (config_.mode == Mode::client) {
         s.dial.target = *port.config.upstream;

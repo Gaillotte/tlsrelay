@@ -1,17 +1,22 @@
-// Point d'entrée de tlsrelay (SPEC §10). Commandes de la phase 1 :
+// Point d'entrée de tlsrelay (SPEC §10). Commandes disponibles :
 //   tlsrelay run -c <config> [-v|-vv|-q]
 //   tlsrelay check-config -c <config>
+//   tlsrelay check-pki -c <config> [génération]
+//   tlsrelay pki activate -c <config> <génération> [--force]
 //   tlsrelay version
 
 #include "tlsrelay/config.hpp"
 #include "tlsrelay/logging.hpp"
 #include "tlsrelay/openssl_info.hpp"
+#include "tlsrelay/pki/generation.hpp"
 #include "tlsrelay/relay/service.hpp"
 #include "tlsrelay/version.hpp"
 
 #include <CLI/CLI.hpp>
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -40,6 +45,64 @@ int cmd_check_config(const std::string& path) {
         return kExitConfig;
     }
     std::cout << "configuration valide : " << path << '\n';
+    return kExitOk;
+}
+
+// Charge la configuration et en déduit les exigences PKI ; nullopt si erreur (déjà affichée).
+std::optional<std::pair<tlsrelay::Config, tlsrelay::pki::Requirements>> pki_context(const std::string& path) {
+    const auto result = tlsrelay::load_config_file(path);
+    print_issues(result);
+    if (!result.config) return std::nullopt;
+    const auto req = tlsrelay::pki::requirements_for(*result.config);
+    if (!req || !result.config->credentials) {
+        std::cerr << "erreur : aucun port tls ou mtls configuré dans " << path << '\n';
+        return std::nullopt;
+    }
+    return std::pair{*result.config, *req};
+}
+
+int cmd_check_pki(const std::string& config_path, std::string name) {
+    const auto ctx = pki_context(config_path);
+    if (!ctx) return kExitConfig;
+    const auto& root = ctx->first.credentials->pki_root;
+    if (name.empty()) {
+        std::ifstream in(std::filesystem::path(root) / "current");
+        std::getline(in, name);
+    }
+    const auto result = tlsrelay::pki::check_candidate(root, name, ctx->second);
+    for (const auto& e : result.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
+    for (const auto& w : result.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+    if (!result.generation) {
+        std::cerr << "génération « " << name << " » refusée\n";
+        return kExitConfig;
+    }
+    const auto& gen = *result.generation;
+    std::cout << "génération « " << name << " » valide";
+    if (gen.cert) std::cout << " : certificat " << tlsrelay::tls::subject_of(gen.cert.get()) << ", valable jusqu'au "
+                            << tlsrelay::tls::not_after_of(gen.cert.get());
+    std::cout << '\n';
+    return kExitOk;
+}
+
+int cmd_pki_activate(const std::string& config_path, const std::string& name, bool force) {
+    const auto ctx = pki_context(config_path);
+    if (!ctx) return kExitConfig;
+    const auto& root = ctx->first.credentials->pki_root;
+    const auto result = tlsrelay::pki::check_candidate(root, name, ctx->second);
+    for (const auto& e : result.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
+    for (const auto& w : result.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+    if (!result.generation && !force) {
+        std::cerr << "génération « " << name << " » non activée (--force pour passer outre)\n";
+        return kExitConfig;
+    }
+    try {
+        tlsrelay::pki::activate(root, name);
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    std::cout << "génération « " << name << " » activée dans " << root
+              << " (prise en compte par le service en cours d'exécution à la prochaine surveillance, ou avec SIGHUP)\n";
     return kExitOk;
 }
 
@@ -100,9 +163,25 @@ int main(int argc, char** argv) {
     auto* check = app.add_subcommand("check-config", "Valide un fichier de configuration sans le charger");
     check->add_option("-c,--config", config_path, "Fichier de configuration")->required();
 
+    std::string generation;
+    bool force = false;
+    auto* check_pki = app.add_subcommand("check-pki", "Valide une génération PKI (par défaut la génération courante)");
+    check_pki->add_option("-c,--config", config_path, "Fichier de configuration")->required();
+    check_pki->add_option("generation", generation, "Nom de la génération (ex. v2)");
+
+    auto* pki = app.add_subcommand("pki", "Gestion de la PKI");
+    pki->require_subcommand(1);
+    auto* activate = pki->add_subcommand("activate", "Active une génération (remplace le fichier current)");
+    activate->add_option("-c,--config", config_path, "Fichier de configuration")->required();
+    activate->add_option("generation", generation, "Nom de la génération à activer (ex. v2)")->required();
+    activate->add_flag("--force", force, "Active même si les contrôles échouent (urgence uniquement)");
+
     auto* version = app.add_subcommand("version", "Affiche la version de tlsrelay et d'OpenSSL");
 
     CLI11_PARSE(app, argc, argv);
+
+    if (*check_pki) return cmd_check_pki(config_path, generation);
+    if (*activate) return cmd_pki_activate(config_path, generation, force);
 
     if (*version) {
         std::cout << "tlsrelay " << tlsrelay::kVersion << '\n'

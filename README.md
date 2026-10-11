@@ -32,7 +32,8 @@ Principales caractéristiques :
 | 1 | Socle : CMake/vcpkg, configuration et validation, logs et mode verbose, relais en clair, multi-canaux, `idle_timeout`, essais vers la destination, arrêt propre | Terminée |
 | 2 | TLS 1.3 sur OpenSSL : port `tls`, ALPN `tlsrelay/1`, vérification du nom et de l'AC émettrice du serveur, chargement et contrôle de la PKI | Terminée |
 | 3 | mTLS (certificat client émis par l'AC Clients) et liste blanche des pairs (IP, sujet, ports), rechargée à chaud | Terminée |
-| 4 | Rotation à chaud des certificats et des AC | À venir |
+| 4 | Rotation à chaud des certificats et des AC jusqu'à la racine (générations, drain, garde-fou, `check-pki`, `pki activate`, `SIGHUP`) | Terminée |
+| 5 | Protocole de tunnel et renégociation transparente | À venir |
 
 Les trois ports sont disponibles. Le protocole de tunnel arrive en phase 5 : d'ici là, le client et le serveur se relaient un flux TCP brut (chiffré en TLS sur les ports `tls` et `mtls`).
 
@@ -99,6 +100,18 @@ peers:
 ```
 
 Les clés produites par ce script ne sont pas chiffrées : il est réservé aux essais.
+
+### Rotation des certificats
+
+Une génération PKI est un répertoire `vN` du `pki_root` ; le fichier `current` désigne la génération en service. Pour renouveler un certificat ou une AC :
+
+```sh
+cp -r /chemin/pki/v1 /chemin/pki/v2      # puis remplacer les fichiers à renouveler dans v2
+tlsrelay check-pki   -c serveur.yaml v2  # contrôles et garde-fou, sans bascule
+tlsrelay pki activate -c serveur.yaml v2 # bascule : prise en compte en 2 s par le service en cours
+```
+
+Les nouvelles connexions utilisent v2 ; celles déjà ouvertes finissent sur v1, qui est libérée à la fermeture de sa dernière connexion. Pour changer de racine, suivre les 3 étapes de [SPEC §7.5](docs/SPEC.md).
 
 - Ctrl+C (ou `SIGTERM`) : arrêt propre, avec drain des canaux pendant `limits.shutdown_timeout` ; un second Ctrl+C force l'arrêt immédiat.
 - Codes de sortie : 0 (succès), 1 (erreur d'exécution), 2 (configuration invalide).

@@ -68,7 +68,7 @@ protected:
 
     static relay::ServiceOptions fast_reload() {
         relay::ServiceOptions o{false, 2};
-        o.whitelist_poll = 50ms;
+        o.watch_interval = 50ms;
         return o;
     }
 

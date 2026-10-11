@@ -137,22 +137,28 @@ LoadResult load_generation(const fs::path& dir, const Requirements& req) {
     const int purpose = req.role == Role::server ? X509_PURPOSE_SSL_SERVER : X509_PURPOSE_SSL_CLIENT;
     const char* role_name = req.role == Role::server ? "serveur (serverAuth)" : "client (clientAuth)";
 
+    // Les racines de confiance sont lues dès que le fichier est présent, même
+    // si elles ne servent pas à vérifier un pair : le garde-fou de rotation
+    // s'en sert pour contrôler la nouvelle identité (rotation_guard).
+    if (!req.trust && fs::exists(dir / kRootsFile)) {
+        gen->trust_roots = loader.certificates(kRootsFile, false);
+    }
     if (req.trust) {
         gen->trust_roots = loader.certificates(kRootsFile, true);
         for (const auto& root : gen->trust_roots) {
             if (X509_check_ca(root.get()) < 1) loader.error(kRootsFile, "n'est pas une AC : " + tls::subject_of(root.get()));
             check_dates(loader, kRootsFile, root.get(), req.expiry_warning);
         }
-        auto issuer = loader.certificates(kIssuerFile, true);
-        if (issuer.size() > 1) loader.error(kIssuerFile, "un seul certificat attendu");
-        if (!issuer.empty()) {
-            gen->trust_issuer = std::move(issuer.front());
-            const X509* ca = gen->trust_issuer.get();
+        // Une AC attendue par racine : plusieurs pendant un changement de racine (SPEC §7.5).
+        gen->trust_issuers = loader.certificates(kIssuerFile, true);
+        for (const auto& issuer : gen->trust_issuers) {
+            const X509* ca = issuer.get();
             if (X509_check_ca(const_cast<X509*>(ca)) < 1) loader.error(kIssuerFile, "n'est pas une AC : " + tls::subject_of(ca));
             check_dates(loader, kIssuerFile, ca, req.expiry_warning);
             if (!gen->trust_roots.empty()) {
                 if (auto failure = verify(ca, {}, gen->trust_roots, 0)) {
-                    loader.error(kIssuerFile, "ne se rattache pas aux racines de confiance : " + *failure);
+                    loader.error(kIssuerFile, tls::subject_of(ca) + " ne se rattache pas aux racines de confiance : " +
+                                                  *failure);
                 }
             }
         }
@@ -192,6 +198,23 @@ LoadResult load_generation(const fs::path& dir, const Requirements& req) {
     return result;
 }
 
+bool Generation::is_expected_issuer(const X509* ca) const {
+    if (!ca) return false;
+    for (const auto& issuer : trust_issuers) {
+        if (X509_cmp(ca, issuer.get()) == 0) return true;
+    }
+    return false;
+}
+
+bool Generation::shares_root_with(const Generation& other) const {
+    for (const auto& a : trust_roots) {
+        for (const auto& b : other.trust_roots) {
+            if (X509_cmp(a.get(), b.get()) == 0) return true;
+        }
+    }
+    return false;
+}
+
 LoadResult load_current_generation(const fs::path& pki_root, const Requirements& req) {
     const auto pointer = pki_root / "current";
     auto content = read_file(pointer);
@@ -209,6 +232,69 @@ LoadResult load_current_generation(const fs::path& pki_root, const Requirements&
         return result;
     }
     return load_generation(pki_root / *content, req);
+}
+
+std::optional<std::string> rotation_guard(const Generation& current, const Generation& next, const Requirements& req) {
+    if (current.name == next.name) return std::nullopt;
+    // Racines : au moins une en commun, sinon les pairs encore sur l'ancienne
+    // génération seraient refusés (étape 1 du changement de racine manquante).
+    if (req.trust && !next.shares_root_with(current)) {
+        return "aucune racine de confiance commune avec la génération " + current.name +
+               " ; pour changer de racine, ajouter d'abord la nouvelle racine (SPEC §7.5)";
+    }
+    // Identité : le nouveau certificat doit se rattacher à une racine déjà
+    // connue de la génération courante, sinon les pairs qui ne connaissent
+    // pas encore sa racine ne pourraient plus se connecter.
+    if (next.cert) {
+        const int purpose = req.role == Role::server ? X509_PURPOSE_SSL_SERVER : X509_PURPOSE_SSL_CLIENT;
+        if (!current.trust_roots.empty()) {
+            if (auto failure = verify(next.cert.get(), next.chain, current.trust_roots, purpose)) {
+                return "le nouveau certificat ne se rattache à aucune racine de confiance de la génération " +
+                       current.name + " (" + *failure + ") ; pour changer de racine, ajouter d'abord la nouvelle "
+                       "racine (SPEC §7.5)";
+            }
+        } else if (!current.chain.empty() && !next.chain.empty() &&
+                   X509_NAME_cmp(X509_get_issuer_name(current.chain.back().get()),
+                                 X509_get_issuer_name(next.chain.back().get())) != 0) {
+            return "le nouveau certificat dépend d'une autre racine que la génération " + current.name +
+                   " ; ajouter trust-roots.pem (racines connues des pairs) pour permettre un changement de racine";
+        }
+    }
+    return std::nullopt;
+}
+
+LoadResult check_candidate(const fs::path& pki_root, const std::string& name, const Requirements& req) {
+    if (!valid_generation_name(name)) {
+        LoadResult result;
+        result.errors.push_back({name, "nom de génération invalide"});
+        return result;
+    }
+    auto result = load_generation(pki_root / name, req);
+    if (!result.generation) return result;
+
+    const auto current = load_current_generation(pki_root, req);
+    if (!current.generation) {
+        result.warnings.push_back({(pki_root / "current").string(),
+                                   "génération courante illisible : garde-fou des racines non vérifié"});
+    } else if (auto problem = rotation_guard(*current.generation, *result.generation, req)) {
+        result.errors.push_back({(pki_root / name).string(), "garde-fou de rotation : " + *problem});
+        result.generation.reset();
+    }
+    return result;
+}
+
+void activate(const fs::path& pki_root, const std::string& name) {
+    if (!valid_generation_name(name)) {
+        throw fs::filesystem_error("nom de génération invalide", pki_root / name,
+                                   std::make_error_code(std::errc::invalid_argument));
+    }
+    const auto tmp = pki_root / "current.tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        out << name << "\n";
+        if (!out) throw fs::filesystem_error("écriture impossible", tmp, std::make_error_code(std::errc::io_error));
+    }
+    fs::rename(tmp, pki_root / "current");  // remplacement atomique
 }
 
 std::optional<Requirements> requirements_for(const Config& config) {
