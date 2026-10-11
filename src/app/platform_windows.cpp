@@ -14,6 +14,7 @@
 #include <mutex>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace tlsrelay::app {
@@ -54,6 +55,11 @@ public:
     }
     Handle(const Handle&) = delete;
     Handle& operator=(const Handle&) = delete;
+    Handle(Handle&& other) noexcept : h_(other.h_) { other.h_ = nullptr; }
+    Handle& operator=(Handle&& other) noexcept {
+        std::swap(h_, other.h_);
+        return *this;
+    }
     SC_HANDLE get() const { return h_; }
     explicit operator bool() const { return h_ != nullptr; }
 
