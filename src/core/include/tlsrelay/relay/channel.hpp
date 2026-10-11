@@ -271,6 +271,8 @@ private:
     bool window_full_ = false;   // lecture de la source suspendue : tampon de reprise plein
     bool delivering_ = false;    // écriture vers la connexion brute en cours
     bool sending_ = false;       // envoi sur la connexion de transport en cours
+    bool reading_source_ = false;     // lecture de la connexion brute en cours
+    bool reading_transport_ = false;  // lecture de la connexion de transport en cours
     asio::cancellation_signal dial_cancel_;
 
     Clock::time_point opened_at_;

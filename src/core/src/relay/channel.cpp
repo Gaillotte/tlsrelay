@@ -498,7 +498,9 @@ asio::awaitable<void> Channel::uplink() {
             window_full_ = false;
             continue;
         }
+        reading_source_ = true;
         auto [ec, n] = co_await raw_->read_some(asio::buffer(buffer));
+        reading_source_ = false;
         if (closing_) co_return;
         if (ec) {
             if (ec != asio::error::eof) {
@@ -529,7 +531,9 @@ asio::awaitable<void> Channel::downlink() {
             co_await transport_event_.wait();
             continue;
         }
+        reading_transport_ = true;
         auto r = co_await read_frame(*t);
+        reading_transport_ = false;
         if (closing_) co_return;
         if (t != transport_) continue;  // remplacée pendant la lecture
         if (!r.frame) {
@@ -912,7 +916,9 @@ asio::awaitable<ChannelInfo> Channel::describe() const {
     if (window_full_) blocked += ",fenêtre";
     if (sending_) blocked += ",envoi";
     if (delivering_) blocked += ",livraison";
-    if (reading_held_) blocked += ",lecture";
+    if (reading_held_) blocked += ",lecture_suspendue";
+    if (reading_source_) blocked += ",lecture_source";
+    if (reading_transport_) blocked += ",lecture_transport";
     info.flow = "émis=" + std::to_string(next_seq_ - 1) + " envoyé=" + std::to_string(sent_upto_) +
                 " non_acquitté=" + std::to_string(unacked_bytes_) + "o reçu=" + std::to_string(received_) +
                 " livré=" + std::to_string(last_rx_) + " acquitté=" + std::to_string(acked_rx_) +
