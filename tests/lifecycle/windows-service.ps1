@@ -5,6 +5,7 @@
 # Usage : windows-service.ps1 <répertoire contenant tlsrelay.exe et ses DLL>
 param([Parameter(Mandatory = $true)][string]$BuildDir)
 $ErrorActionPreference = 'Stop'
+$env:PYTHONIOENCODING = 'utf-8'
 $here = $PSScriptRoot
 
 function Fail($message) {
@@ -76,6 +77,7 @@ try {
     Step "rechargement"
     $out = Run @('reload', '--instance', 'ci')
     if ($out -notmatch 'liste blanche : 1 pair') { Fail "reload" }
+    if ($out -match 'redémarrage nécessaire') { Fail "reload : changement signalé à tort" }
 
     Step "redémarrage"
     $pid1 = (Get-CimInstance Win32_Service -Filter "Name='tlsrelay-ci'").ProcessId
@@ -114,3 +116,4 @@ finally {
     Stop-Process -Id $echo.Id -Force -ErrorAction SilentlyContinue
     & $bin service uninstall --instance ci 2>$null | Out-Null
 }
+exit 0

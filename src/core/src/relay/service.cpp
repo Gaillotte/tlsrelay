@@ -313,7 +313,10 @@ std::string Service::reload_config() {
         for (const auto& e : result.errors) logging::config().error("  {} : {}", e.path, e.message);
         return "configuration : fichier invalide (voir le journal), non relu\n";
     }
-    const Config& next = *result.config;
+    Config next = *result.config;
+    if (!options_.stderr_log_replacement.empty() && next.logging.output == "stderr") {
+        next.logging.output = options_.stderr_log_replacement;
+    }
     const auto& log = next.logging;
     logging::set_level(logging::Category::activity, log.activity.value_or(log.level));
     logging::set_level(logging::Category::config, log.config.value_or(log.level));

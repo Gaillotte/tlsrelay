@@ -135,9 +135,9 @@ int run_instance(const std::string& path, std::optional<tlsrelay::LogLevel> cli_
     }
 #ifdef _WIN32
     // Un service Windows n'a pas de console : journal dans %ProgramData%.
-    if (control && config.logging.output == "stderr") {
-        config.logging.output = app::default_service_log(config.instance).string();
-    }
+    std::string stderr_replacement;
+    if (control) stderr_replacement = app::default_service_log(config.instance).string();
+    if (control && config.logging.output == "stderr") config.logging.output = stderr_replacement;
 #endif
 
     if (!openssl_runtime_supported()) {
@@ -160,6 +160,7 @@ int run_instance(const std::string& path, std::optional<tlsrelay::LogLevel> cli_
         relay::ServiceOptions options;
 #ifdef _WIN32
         options.handle_signals = control == nullptr;  // un service reçoit ses ordres du gestionnaire
+        options.stderr_log_replacement = stderr_replacement;
 #endif
         options.config_path = std::filesystem::absolute(path).string();
         relay::Service service(config, options);

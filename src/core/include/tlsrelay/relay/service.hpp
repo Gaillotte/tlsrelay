@@ -31,6 +31,9 @@ struct ServiceOptions {
     bool handle_signals = true;  // Ctrl+C / SIGTERM : arrêt propre ; second signal : arrêt immédiat
     unsigned threads = 0;        // 0 : nombre de cœurs
     Duration watch_interval = std::chrono::seconds(2);  // surveillance de la liste blanche et de la PKI
+    // Sortie de journal utilisée à la place de « stderr » (service Windows sans
+    // console) ; prise en compte aussi lors de la relecture de la configuration.
+    std::string stderr_log_replacement{};
     std::string config_path{};  // fichier relu par la commande reload (vide : pas de relecture)
 };
 
