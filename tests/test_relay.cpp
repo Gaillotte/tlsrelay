@@ -16,6 +16,7 @@ Config server_config(std::uint16_t destination_port) {
     c.mode = Mode::server;
     c.ports[PortKind::plain].listen = Endpoint{"127.0.0.1", 0};
     c.destination = Destination{Endpoint{"127.0.0.1", destination_port}};
+    c.whitelist = WhitelistRef{permissive_whitelist()};
     c.destination->dial_timeout = 1s;
     c.destination->dial_backoff = 100ms;
     c.limits.shutdown_timeout = 1s;
@@ -228,12 +229,6 @@ TEST(Relay, AbortClosesChannelsImmediately) {
     server.abort();
     EXPECT_LT(Clock::now() - start, 1s);
     EXPECT_TRUE(app.wait_closed(1s));
-}
-
-TEST(Relay, MtlsPortIsNotYetAvailable) {
-    auto cfg = server_config(9);
-    cfg.ports[PortKind::mtls].listen = Endpoint{"127.0.0.1", 0};
-    EXPECT_THROW(relay::Service service(cfg), std::runtime_error);
 }
 
 TEST(Relay, SignalTriggersGracefulStop) {

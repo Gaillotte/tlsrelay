@@ -217,9 +217,11 @@ peers:
 | 2 (`tls`) | IP dans une entrée autorisant `tls` | — |
 | 3 (`mtls`) | IP dans une entrée autorisant `mtls` (rejet avant handshake sinon) | Chaîne valide jusqu'à une racine de confiance, feuille émise par l'AC Clients, DN **exactement** égal au `subject` d'une entrée qui contient aussi l'IP |
 
-- Comparaison du DN : forme canonique RFC 4514, comparaison exacte (`X509_NAME_cmp` sur les noms canoniques).
-- Validation du fichier : noms uniques, syntaxe IP/CIDR et DN, `subject` obligatoire si `mtls` est autorisé, un même `subject` ne peut pas figurer dans deux entrées.
-- Rechargement : avec `reload`, ou automatiquement si le fichier change. Un fichier invalide est rejeté et la liste en vigueur est conservée.
+- Comparaison du DN : forme canonique (`X509_NAME_cmp`), donc insensible à la casse et aux espaces superflus, mais sensible à l'ordre des composants. Le DN s'écrit au format RFC 4514, le composant le plus spécifique en premier ; les noms à plusieurs valeurs (`+`) et les valeurs hexadécimales (`#`) ne sont pas acceptés.
+- `ports` absent : tous les ports, sauf `mtls` si l'entrée n'a pas de `subject`.
+- Validation du fichier : clés connues uniquement, noms uniques, syntaxe IP/CIDR (bits d'hôte nuls) et DN, `subject` obligatoire si `mtls` est explicitement autorisé, un même `subject` ne peut pas figurer dans deux entrées. Une liste vide est acceptée avec un avertissement.
+- Rechargement : le contenu du fichier est comparé toutes les 2 secondes ; tout changement entraîne un rechargement (commande `reload` en phase 6). Un fichier invalide est rejeté et la liste en vigueur est conservée. Le journal `config` indique les pairs ajoutés, retirés et modifiés.
+- Une adresse IPv4 reçue sur une socket IPv6 (`::ffff:a.b.c.d`) est comparée comme une IPv4.
 - Pairs retirés : leurs canaux sont fermés immédiatement (`PEER_REVOKED`) ; option `revoke_mode: next_renegotiation` pour attendre plutôt la prochaine renégociation.
 - Les contrôles sont rejoués à chaque renégociation.
 

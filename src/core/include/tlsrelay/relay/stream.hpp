@@ -56,6 +56,8 @@ public:
     // Après handshake : « TLSv1.3 TLS_AES_256_GCM_SHA384 », et sujet du certificat du pair.
     std::string session_description() const;
     std::string peer_subject() const;
+    // Certificat présenté par le pair (nullptr en clair ou s'il n'en a pas présenté).
+    X509* peer_certificate() const;
     const std::string& failure_reason() const { return failure_reason_; }
 
 private:

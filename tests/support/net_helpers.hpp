@@ -4,6 +4,11 @@
 // client de test avec délais, service exécuté dans un thread, empreintes.
 
 #include "tlsrelay/relay/service.hpp"
+
+#include "support/test_pki.hpp"
+
+#include <filesystem>
+#include <fstream>
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
@@ -32,6 +37,18 @@ using Clock = std::chrono::steady_clock;
 
 
 inline constexpr auto use_tuple = asio::as_tuple(asio::use_awaitable);
+
+// Liste blanche de test, valable pour tout le processus : 127.0.0.0/8 sur les
+// ports plain et tls.
+inline std::string permissive_whitelist() {
+    static const testpki::TempDir dir;
+    static const std::string path = [] {
+        const auto file = dir / "whitelist.yaml";
+        std::ofstream(file) << "peers:\n  - name: local\n    ip: 127.0.0.0/8\n    ports: [plain, tls]\n";
+        return file.string();
+    }();
+    return path;
+}
 
 inline const asio::ip::address& loopback() {
     static const auto addr = asio::ip::make_address("127.0.0.1");

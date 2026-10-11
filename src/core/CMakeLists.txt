@@ -4,6 +4,7 @@ add_library(tlsrelay_core STATIC
     src/units.cpp
     src/endpoint.cpp
     src/config.cpp
+    src/whitelist.cpp
     src/logging.cpp
     src/openssl_info.cpp
     src/tls/openssl_ptr.cpp

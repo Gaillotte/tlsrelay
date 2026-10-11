@@ -334,7 +334,8 @@ void validate(const Config& cfg, std::vector<Issue>& errors, std::vector<Issue>&
             if (d.dial_timeout.count() <= 0) err("destination.dial_timeout", "doit être supérieur à 0");
             if (d.dial_retries < 1 || d.dial_retries > 10) err("destination.dial_retries", "doit être compris entre 1 et 10");
         }
-        if (cfg.whitelist && cfg.whitelist->file.empty()) err("whitelist.file", "valeur obligatoire");
+        if (!cfg.whitelist) err("whitelist", "obligatoire en mode serveur");
+        else if (cfg.whitelist->file.empty()) err("whitelist.file", "valeur obligatoire");
     }
 
     // Limites (SPEC §5.2)

@@ -20,5 +20,5 @@ ports:
     upstream: "127.0.0.1:9001"
   # TLS 1.3 : nécessite credentials.pki_root (voir tools/make-test-pki.sh)
   # tls:  { listen: "127.0.0.1:7002", upstream: "relay.example:9002", server_name: relay.example }
-  # mTLS : disponible à partir de la phase 3
+  # mTLS : nécessite credentials.pki_root avec l'identité du client
   # mtls: { listen: "127.0.0.1:7003", upstream: "relay.example:9003", server_name: relay.example }

@@ -2,6 +2,7 @@
 // et un tlsrelay serveur, et cas de refus (SPEC §3, PLAN §5.3 et §5.4).
 
 #include "support/net_helpers.hpp"
+#include "support/raw_tls_client.hpp"
 #include "support/test_pki.hpp"
 
 #include <openssl/err.h>
@@ -22,6 +23,7 @@ Config tls_server_config(std::uint16_t destination_port, const std::filesystem::
     c.mode = Mode::server;
     c.ports[PortKind::tls].listen = Endpoint{"127.0.0.1", 0};
     c.destination = Destination{Endpoint{"127.0.0.1", destination_port}};
+    c.whitelist = WhitelistRef{permissive_whitelist()};
     c.destination->dial_timeout = 1s;
     c.credentials = Credentials{pki_root.string()};
     c.limits.shutdown_timeout = 1s;
@@ -40,62 +42,6 @@ Config tls_client_config(std::uint16_t server_port, const std::filesystem::path&
     c.limits.handshake_timeout = 2s;
     return c;
 }
-
-// Client TLS « brut » (OpenSSL bloquant) pour simuler des pairs non conformes.
-class RawTlsClient {
-public:
-    RawTlsClient(std::uint16_t port, int max_version, std::optional<std::string> alpn, const X509* root = nullptr)
-        : socket_(io_) {
-#ifndef _WIN32
-        std::signal(SIGPIPE, SIG_IGN);
-#endif
-        socket_.connect(tcp::endpoint(loopback(), port));
-        ctx_.reset(SSL_CTX_new(TLS_client_method()));
-        SSL_CTX_set_max_proto_version(ctx_.get(), max_version);
-        if (root) {
-            X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx_.get()), const_cast<X509*>(root));
-            SSL_CTX_set_verify(ctx_.get(), SSL_VERIFY_PEER, nullptr);
-        }
-        if (alpn) {
-            const std::string wire = std::string(1, static_cast<char>(alpn->size())) + *alpn;
-            SSL_CTX_set_alpn_protos(ctx_.get(), reinterpret_cast<const unsigned char*>(wire.data()),
-                                    static_cast<unsigned>(wire.size()));
-        }
-        ssl_.reset(SSL_new(ctx_.get()));
-        SSL_set_fd(ssl_.get(), static_cast<int>(socket_.native_handle()));
-    }
-
-    bool handshake() {
-        ERR_clear_error();
-        return SSL_connect(ssl_.get()) == 1;
-    }
-
-    // Lecture bloquante : retourne vide si le serveur ferme la connexion.
-    std::string read(std::size_t n) {
-        std::string out(n, '\0');
-        std::size_t got = 0;
-        while (got < n) {
-            std::size_t r = 0;
-            if (SSL_read_ex(ssl_.get(), out.data() + got, n - got, &r) != 1) break;
-            got += r;
-        }
-        out.resize(got);
-        return out;
-    }
-
-    bool write(const std::string& data) {
-        std::size_t w = 0;
-        return SSL_write_ex(ssl_.get(), data.data(), data.size(), &w) == 1;
-    }
-
-    SSL* ssl() { return ssl_.get(); }
-
-private:
-    asio::io_context io_;
-    tcp::socket socket_;
-    tlsrelay::tls::SslCtxPtr ctx_;
-    tlsrelay::tls::SslPtr ssl_;
-};
 
 class TlsTest : public ::testing::Test {
 protected:

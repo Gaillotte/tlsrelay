@@ -1,0 +1,19 @@
+# Liste blanche du tlsrelay serveur (SPEC §6). Rechargée automatiquement
+# quand le fichier change ; un fichier invalide est ignoré (la liste en
+# vigueur est conservée).
+#
+#   name    : nom unique de l'entrée
+#   ip      : adresse IPv4/IPv6 ou plage CIDR (adresse du réseau)
+#   ports   : sous-ensemble de [plain, tls, mtls] ; par défaut tous les ports,
+#             sauf mtls si aucun sujet n'est donné
+#   subject : sujet exact du certificat client (RFC 4514), obligatoire pour mtls ;
+#             le certificat doit aussi être émis par l'AC Clients
+peers:
+  - name: poste-local
+    ip: 127.0.0.1
+    ports: [plain, tls]
+
+  # - name: agence-lyon
+  #   ip: 192.0.2.10
+  #   ports: [mtls]
+  #   subject: "CN=relay-lyon.example,O=MonEntreprise"

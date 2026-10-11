@@ -6,6 +6,8 @@ add_executable(tlsrelay_tests
     test_relay.cpp
     test_pki.cpp
     test_tls.cpp
+    test_whitelist.cpp
+    test_mtls.cpp
     support/test_pki.cpp)
 
 target_link_libraries(tlsrelay_tests PRIVATE

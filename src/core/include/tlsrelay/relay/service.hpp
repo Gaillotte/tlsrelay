@@ -4,6 +4,7 @@
 #include "tlsrelay/relay/channel.hpp"
 #include "tlsrelay/relay/stats.hpp"
 #include "tlsrelay/tls/context.hpp"
+#include "tlsrelay/whitelist.hpp"
 
 #include <asio/awaitable.hpp>
 #include <asio/io_context.hpp>
@@ -25,18 +26,21 @@ namespace tlsrelay::relay {
 struct ServiceOptions {
     bool handle_signals = true;  // Ctrl+C / SIGTERM : arrêt propre ; second signal : arrêt immédiat
     unsigned threads = 0;        // 0 : nombre de cœurs
+    Duration whitelist_poll = std::chrono::seconds(2);  // intervalle de surveillance du fichier de liste blanche
 };
 
 // Le service ouvre les ports configurés et relaie chaque connexion acceptée
 // (mode client : vers l'upstream du port ; mode serveur : vers la destination).
-class Service {
+// En mode serveur, il applique la liste blanche et la recharge quand son
+// fichier change.
+class Service : private PeerAuthorizer {
 public:
     // Charge la PKI si un port TLS est configuré, puis ouvre les ports d'écoute.
     // Lève std::system_error si un port ne peut pas être ouvert,
     // std::runtime_error si la PKI est invalide ou si la configuration demande
     // une fonctionnalité absente de cette version.
     explicit Service(Config config, ServiceOptions options = {});
-    ~Service();
+    ~Service() override;
 
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
@@ -67,6 +71,13 @@ private:
     };
 
     void load_pki();
+    void load_whitelist();
+    void reload_whitelist();
+    std::optional<std::string> read_whitelist_file() const;
+    std::shared_ptr<const whitelist::Whitelist> current_whitelist() const;
+    std::optional<std::string> authorize(const asio::ip::address& address, PortKind port,
+                                         const X509_NAME* subject) const override;
+    asio::awaitable<void> watch_whitelist();
     asio::awaitable<void> accept_loop(Port& port);
     asio::awaitable<void> drain(Duration timeout);
     asio::awaitable<void> wait_signals();
@@ -82,7 +93,13 @@ private:
     asio::signal_set signals_;
     bool signals_done_ = false;  // accédé uniquement sur control_
     std::optional<asio::ip::address> source_address_;
-    std::shared_ptr<const tls::Context> tls_context_;  // génération PKI courante
+    std::shared_ptr<const tls::Context> tls_context_;   // port tls, génération PKI courante
+    std::shared_ptr<const tls::Context> mtls_context_;  // port mtls, génération PKI courante
+
+    mutable std::mutex whitelist_mutex_;
+    std::shared_ptr<const whitelist::Whitelist> whitelist_;
+    std::optional<std::string> whitelist_content_;  // accédé uniquement sur control_ après le démarrage
+    asio::steady_timer watch_timer_;
 
     mutable std::mutex channels_mutex_;
     std::unordered_map<std::uint64_t, std::weak_ptr<Channel>> channels_;

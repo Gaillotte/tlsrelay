@@ -2,6 +2,7 @@
 
 #include "tlsrelay/logging.hpp"
 #include "tlsrelay/pki/generation.hpp"
+#include "tlsrelay/whitelist.hpp"
 
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
@@ -11,6 +12,8 @@
 
 #include <csignal>
 #include <exception>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -42,18 +45,21 @@ using exclusive_address_use = asio::detail::socket_option::boolean<SOL_SOCKET, S
 }  // namespace
 
 Service::Service(Config config, ServiceOptions options)
-    : config_(std::move(config)), options_(options), control_(asio::make_strand(io_)), signals_(control_) {
+    : config_(std::move(config)),
+      options_(options),
+      control_(asio::make_strand(io_)),
+      signals_(control_),
+      watch_timer_(control_) {
     for (const auto& [kind, port] : config_.ports) {
-        if (kind == PortKind::mtls) {
-            throw std::runtime_error("le port mtls n'est pas encore disponible dans cette version");
-        }
         if (config_.mode == Mode::client && !port.upstream) {
             throw std::invalid_argument("ports." + std::string(to_string(kind)) + ".upstream manquant");
         }
     }
     if (config_.mode == Mode::server && !config_.destination) throw std::invalid_argument("destination manquante");
+    if (config_.mode == Mode::server && !config_.whitelist) throw std::invalid_argument("liste blanche manquante");
     if (config_.source_address) source_address_ = asio::ip::make_address(*config_.source_address);
     load_pki();
+    if (config_.mode == Mode::server) load_whitelist();
 
     for (const auto& [kind, port_config] : config_.ports) {
         auto& port = ports_.emplace_back(kind, port_config, tcp::acceptor(asio::make_strand(io_)));
@@ -101,8 +107,15 @@ void Service::load_pki() {
         throw std::runtime_error(message);
     }
     const auto& gen = *result.generation;
-    tls_context_ = config_.mode == Mode::server ? tls::Context::make_server(result.generation)
-                                                : tls::Context::make_client(result.generation);
+    const bool server = config_.mode == Mode::server;
+    if (config_.ports.count(PortKind::tls)) {
+        tls_context_ = server ? tls::Context::make_server(result.generation, false)
+                              : tls::Context::make_client(result.generation, false);
+    }
+    if (config_.ports.count(PortKind::mtls)) {
+        mtls_context_ = server ? tls::Context::make_server(result.generation, true)
+                               : tls::Context::make_client(result.generation, true);
+    }
     if (gen.cert) {
         logging::config().info("PKI : génération {} chargée, certificat {} valable jusqu'au {}", gen.name,
                                tls::subject_of(gen.cert.get()), tls::not_after_of(gen.cert.get()));
@@ -112,11 +125,97 @@ void Service::load_pki() {
     }
 }
 
+void Service::load_whitelist() {
+    const auto& path = config_.whitelist->file;
+    auto result = whitelist::Whitelist::load_file(path);
+    for (const auto& w : result.warnings) logging::config().warn("liste blanche : {} : {}", w.path, w.message);
+    if (!result.whitelist) {
+        std::string message = "liste blanche invalide";
+        for (const auto& e : result.errors) message += "\n  " + e.path + " : " + e.message;
+        throw std::runtime_error(message);
+    }
+    whitelist_content_ = read_whitelist_file();
+    logging::config().info("liste blanche chargée depuis {} : {} pair(s)", path, result.whitelist->peers().size());
+    std::lock_guard lock(whitelist_mutex_);
+    whitelist_ = std::move(result.whitelist);
+}
+
+std::optional<std::string> Service::read_whitelist_file() const {
+    std::ifstream in(config_.whitelist->file, std::ios::binary);
+    if (!in) return std::nullopt;
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+std::shared_ptr<const whitelist::Whitelist> Service::current_whitelist() const {
+    std::lock_guard lock(whitelist_mutex_);
+    return whitelist_;
+}
+
+std::optional<std::string> Service::authorize(const asio::ip::address& address, PortKind port,
+                                              const X509_NAME* subject) const {
+    const auto wl = current_whitelist();
+    const auto* peer = wl ? wl->authorize(address, port, subject) : nullptr;
+    if (!peer) return std::nullopt;
+    return peer->name;
+}
+
+asio::awaitable<void> Service::watch_whitelist() {
+    while (!stopping_) {
+        watch_timer_.expires_after(options_.whitelist_poll);
+        co_await watch_timer_.async_wait(use_tuple);
+        if (stopping_) co_return;
+
+        // Comparaison du contenu : indépendante de la précision des dates de modification.
+        auto content = read_whitelist_file();
+        if (content == whitelist_content_) continue;
+        whitelist_content_ = content;
+        reload_whitelist();
+    }
+}
+
+void Service::reload_whitelist() {
+    const auto& path = config_.whitelist->file;
+    auto result = whitelist::Whitelist::load_file(path);
+    for (const auto& w : result.warnings) logging::config().warn("liste blanche : {} : {}", w.path, w.message);
+    if (!result.whitelist) {
+        logging::config().error("liste blanche modifiée mais invalide : la liste en vigueur est conservée");
+        for (const auto& e : result.errors) logging::config().error("  {} : {}", e.path, e.message);
+        return;
+    }
+    const auto previous = current_whitelist();
+    const auto changes = whitelist::diff(*previous, *result.whitelist);
+    auto names = [](const std::vector<std::string>& v) {
+        std::string out;
+        for (const auto& n : v) out += (out.empty() ? "" : ", ") + n;
+        return out.empty() ? std::string("aucun") : out;
+    };
+    logging::config().info("liste blanche rechargée : {} pair(s) ; ajoutés : {} ; retirés : {} ; modifiés : {}",
+                           result.whitelist->peers().size(), names(changes.added), names(changes.removed),
+                           names(changes.changed));
+    {
+        std::lock_guard lock(whitelist_mutex_);
+        whitelist_ = std::move(result.whitelist);
+    }
+    if (config_.whitelist->revoke_mode != RevokeMode::immediate) return;
+    // Chaque canal vérifie de nouveau son pair et se ferme s'il n'est plus autorisé.
+    std::vector<std::shared_ptr<Channel>> channels;
+    {
+        std::lock_guard lock(channels_mutex_);
+        for (auto& [id, weak] : channels_) {
+            if (auto ch = weak.lock()) channels.push_back(std::move(ch));
+        }
+    }
+    for (auto& ch : channels) ch->revalidate();
+}
+
 int Service::run() {
     for (auto& port : ports_) {
         asio::co_spawn(port.acceptor.get_executor(), accept_loop(port), log_exceptions("acceptation"));
     }
     if (options_.handle_signals) asio::co_spawn(control_, wait_signals(), log_exceptions("signaux"));
+    if (config_.mode == Mode::server) asio::co_spawn(control_, watch_whitelist(), log_exceptions("liste blanche"));
 
     logging::config().info("service démarré mode={} instance={}", to_string(config_.mode), config_.instance);
 
@@ -175,6 +274,23 @@ asio::awaitable<void> Service::accept_loop(Port& port) {
             pause.expires_after(100ms);
             co_await pause.async_wait(use_tuple);
             continue;
+        }
+
+        // Liste blanche (mode serveur) : l'adresse doit être autorisée pour ce port,
+        // avant tout handshake.
+        if (config_.mode == Mode::server) {
+            std::error_code rec;
+            const auto remote = socket.remote_endpoint(rec);
+            const auto address = whitelist::normalize(remote.address());
+            const auto wl = current_whitelist();
+            if (rec || !wl || !wl->admits(address, port.kind)) {
+                ++stats_.peers_rejected;
+                logging::activity().info("port={} connexion de {} refusée : adresse absente de la liste blanche",
+                                         to_string(port.kind), rec ? std::string("?") : address.to_string());
+                std::error_code ignored;
+                socket.close(ignored);
+                continue;
+            }
         }
 
         if (port.active.load() >= config_.limits.max_channels) {
@@ -245,6 +361,7 @@ asio::awaitable<void> Service::drain(Duration timeout) {
         }
     }
 
+    watch_timer_.cancel();
     // drain peut s'exécuter à l'intérieur de wait_signals (même strand) : le
     // drapeau empêche la boucle de se réarmer après cette annulation.
     signals_done_ = true;
@@ -274,6 +391,7 @@ ChannelSettings Service::settings_for(const Port& port) const {
     s.port = port.kind;
     s.idle_timeout = config_.limits.idle_timeout;
     s.handshake_timeout = config_.limits.handshake_timeout;
+    const auto& context = port.kind == PortKind::mtls ? mtls_context_ : tls_context_;
     const bool tls = port.kind != PortKind::plain;
     if (config_.mode == Mode::client) {
         s.dial.target = *port.config.upstream;
@@ -281,11 +399,12 @@ ChannelSettings Service::settings_for(const Port& port) const {
         s.dial.timeout = config_.limits.handshake_timeout;
         s.dial.attempts = 1;
         if (tls) {
-            s.outbound_tls = tls_context_;
+            s.outbound_tls = context;
             s.server_name = port.config.server_name.value_or(port.config.upstream->host);
         }
     } else {
-        if (tls) s.inbound_tls = tls_context_;
+        s.authorizer = this;
+        if (tls) s.inbound_tls = context;
         const auto& d = *config_.destination;
         s.dial.target = d.endpoint;
         s.dial.timeout = d.dial_timeout;

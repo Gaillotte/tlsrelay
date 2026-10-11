@@ -31,9 +31,12 @@ Principales caractéristiques :
 | 0 | Spécification | Terminée |
 | 1 | Socle : CMake/vcpkg, configuration et validation, logs et mode verbose, relais en clair, multi-canaux, `idle_timeout`, essais vers la destination, arrêt propre | Terminée |
 | 2 | TLS 1.3 sur OpenSSL : port `tls`, ALPN `tlsrelay/1`, vérification du nom et de l'AC émettrice du serveur, chargement et contrôle de la PKI | Terminée |
-| 3 | mTLS et liste blanche | À venir |
+| 3 | mTLS (certificat client émis par l'AC Clients) et liste blanche des pairs (IP, sujet, ports), rechargée à chaud | Terminée |
+| 4 | Rotation à chaud des certificats et des AC | À venir |
 
-Dans cette version, les ports `plain` et `tls` sont disponibles ; le port `mtls` est accepté par la validation mais refusé au démarrage. Le protocole de tunnel arrive en phase 5 : d'ici là, le client et le serveur se relaient un flux TCP brut (chiffré en TLS sur le port `tls`).
+Les trois ports sont disponibles. Le protocole de tunnel arrive en phase 5 : d'ici là, le client et le serveur se relaient un flux TCP brut (chiffré en TLS sur les ports `tls` et `mtls`).
+
+En mode serveur, la liste blanche est obligatoire (exemple commenté : [examples/whitelist.yaml](examples/whitelist.yaml)).
 
 ## Compilation
 
@@ -86,6 +89,13 @@ tools/make-test-pki.sh /tmp/pki-test          # nécessite la commande openssl
 credentials: { pki_root: /tmp/pki-test/serveur }   credentials: { pki_root: /tmp/pki-test/client }
 ports:                                      ports:
   tls: { listen: "0.0.0.0:9002" }             tls: { listen: "127.0.0.1:7002", upstream: "relais:9002", server_name: relay.test }
+```
+
+Pour le port `mtls`, le client présente le certificat `CN=client.test,O=tlsrelay-test` de la PKI de test ; la liste blanche du serveur doit contenir ce sujet :
+
+```yaml
+peers:
+  - { name: poste-local, ip: 127.0.0.1, ports: [mtls], subject: "CN=client.test,O=tlsrelay-test" }
 ```
 
 Les clés produites par ce script ne sont pas chiffrées : il est réservé aux essais.

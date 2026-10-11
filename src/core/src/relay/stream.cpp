@@ -149,6 +149,8 @@ std::string Stream::session_description() const {
     return std::string(SSL_get_version(ssl_.get())) + " " + (cipher ? SSL_CIPHER_get_name(cipher) : "?");
 }
 
+X509* Stream::peer_certificate() const { return ssl_ ? SSL_get0_peer_certificate(ssl_.get()) : nullptr; }
+
 std::string Stream::peer_subject() const {
     if (!ssl_) return {};
     X509* peer = SSL_get0_peer_certificate(ssl_.get());

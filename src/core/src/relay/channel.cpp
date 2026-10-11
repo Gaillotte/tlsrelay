@@ -1,6 +1,7 @@
 #include "tlsrelay/relay/channel.hpp"
 
 #include "tlsrelay/logging.hpp"
+#include "tlsrelay/whitelist.hpp"
 
 #include <asio/as_tuple.hpp>
 #include <asio/bind_cancellation_slot.hpp>
@@ -38,6 +39,8 @@ std::string_view to_string(CloseReason r) {
         case CloseReason::shutdown: return "arret";
         case CloseReason::dial_failed: return "destination_injoignable";
         case CloseReason::tls_failed: return "tls_refuse";
+        case CloseReason::not_authorized: return "non_autorise";
+        case CloseReason::peer_revoked: return "pair_retire";
         case CloseReason::io_error: return "erreur_reseau";
     }
     return "?";
@@ -51,6 +54,9 @@ Channel::Channel(std::uint64_t id, tcp::socket inbound, ChannelSettings settings
       on_closed_(std::move(on_closed)),
       idle_timer_(executor_) {
     peer_ = describe_peer(inbound);
+    std::error_code ec;
+    const auto remote = inbound.remote_endpoint(ec);
+    if (!ec) peer_address_ = whitelist::normalize(remote.address());
     inbound_ = settings_.inbound_tls ? std::make_unique<Stream>(std::move(inbound), settings_.inbound_tls)
                                      : std::make_unique<Stream>(std::move(inbound));
 }
@@ -60,12 +66,52 @@ void Channel::start() {
 }
 
 void Channel::abort(CloseReason reason) {
-    asio::post(executor_, [self = shared_from_this(), reason] {
-        if (!self->reason_) self->reason_ = reason;
-        self->dial_cancel_.emit(asio::cancellation_type::terminal);
-        self->idle_timer_.cancel();
-        self->close_streams();
+    asio::post(executor_, [self = shared_from_this(), reason] { self->stop(reason); });
+}
+
+void Channel::revalidate() {
+    asio::post(executor_, [self = shared_from_this()] {
+        // Pair pas encore authentifié : le contrôle après handshake utilisera la nouvelle liste.
+        if (!self->settings_.authorizer || !self->peer_name_ || self->reason_) return;
+        const auto name =
+            self->settings_.authorizer->authorize(self->peer_address_, self->settings_.port, self->peer_subject_.get());
+        if (name) {
+            self->peer_name_ = name;
+            return;
+        }
+        ++self->stats_.peers_revoked;
+        logging::activity().info("canal={} pair « {} » retiré de la liste blanche : fermeture du canal", self->id_,
+                                 *self->peer_name_);
+        self->stop(CloseReason::peer_revoked);
     });
+}
+
+void Channel::stop(CloseReason reason) {
+    if (!reason_) reason_ = reason;
+    dial_cancel_.emit(asio::cancellation_type::terminal);
+    idle_timer_.cancel();
+    close_streams();
+}
+
+bool Channel::authorize_peer() {
+    const X509_NAME* subject = nullptr;
+    if (settings_.port == PortKind::mtls) {
+        if (X509* cert = inbound_->peer_certificate()) {
+            peer_subject_.reset(X509_NAME_dup(X509_get_subject_name(cert)));
+            subject = peer_subject_.get();
+        }
+    }
+    peer_name_ = settings_.authorizer->authorize(peer_address_, settings_.port, subject);
+    if (!peer_name_) {
+        ++stats_.peers_rejected;
+        reason_ = CloseReason::not_authorized;
+        logging::activity().info("canal={} pair refusé par la liste blanche : ip={} port={}{}", id_, peer_,
+                                 to_string(settings_.port),
+                                 subject ? " sujet=" + tls::name_to_string(subject) : std::string());
+        return false;
+    }
+    logging::activity().debug("canal={} pair autorisé : « {} »", id_, *peer_name_);
+    return true;
 }
 
 asio::awaitable<void> Channel::run() {
@@ -79,6 +125,12 @@ asio::awaitable<void> Channel::run() {
 
     // Mode serveur : le pair doit s'authentifier avant toute connexion à la destination.
     if (inbound_->is_tls() && !co_await secure(*inbound_, "entrant")) {
+        close_streams();
+        finish();
+        co_return;
+    }
+    // Liste blanche : en mTLS, l'IP et le sujet du certificat doivent figurer dans la même entrée.
+    if (settings_.authorizer && !reason_ && !authorize_peer()) {
         close_streams();
         finish();
         co_return;

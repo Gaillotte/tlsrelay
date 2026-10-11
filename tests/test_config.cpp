@@ -164,6 +164,7 @@ ports:
   plain: { listen: "0.0.0.0:9001", upstream: "h:1", server_name: x }
 )");
     EXPECT_TRUE(has_error(r, "destination", "obligatoire")) << dump(r);
+    EXPECT_TRUE(has_error(r, "whitelist", "obligatoire")) << dump(r);
     EXPECT_TRUE(has_error(r, "ports.plain.upstream", "sans objet")) << dump(r);
     EXPECT_TRUE(has_error(r, "ports.plain.server_name", "sans objet")) << dump(r);
     EXPECT_TRUE(has_error(r, "source_address", "sans objet")) << dump(r);
@@ -231,6 +232,7 @@ TEST(Validate, ProgrammaticConfigUsesSameRules) {
     c.ports[PortKind::plain].listen = Endpoint{"0.0.0.0", 9001};
     std::vector<Issue> errors, warnings;
     validate(c, errors, warnings);
-    ASSERT_EQ(errors.size(), 1u);
+    ASSERT_EQ(errors.size(), 2u);
     EXPECT_EQ(errors[0].path, "destination");
+    EXPECT_EQ(errors[1].path, "whitelist");
 }
