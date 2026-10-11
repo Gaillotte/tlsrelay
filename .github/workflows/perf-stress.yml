@@ -30,6 +30,10 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_BUILD_TESTS=OFF
           cmake --build build
 
+      - name: Boucle locale à MTU 1500 (essais pairs)
+        if: matrix.run % 2 == 0
+        run: sudo ip link set lo mtu 1500 && ip link show lo
+
       - name: Objectifs de performance (3 fois)
         run: for i in 1 2 3; do echo "=== passe $i"; bash tests/perf/perf.sh build 1000 || exit 1; done
 
