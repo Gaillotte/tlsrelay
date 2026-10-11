@@ -215,6 +215,13 @@ private:
 };
 
 // Service exécuté dans un thread, arrêté proprement à la destruction.
+// Configuration sans canal d'administration à l'emplacement par défaut :
+// partagé entre tests exécutés en parallèle, il servirait de verrou commun.
+inline Config without_default_admin(Config config) {
+    if (!config.admin.endpoint) config.admin.enabled = false;
+    return config;
+}
+
 class RunningService {
 public:
     // Canal d'administration désactivé, sauf si le test donne admin.endpoint :
@@ -253,11 +260,6 @@ public:
     std::size_t active_channels() const { return service_->active_channels(); }
 
 private:
-    static Config without_default_admin(Config config) {
-        if (!config.admin.endpoint) config.admin.enabled = false;
-        return config;
-    }
-
     bool eventually_finished(std::chrono::milliseconds timeout) {
         const auto deadline = Clock::now() + timeout;
         while (Clock::now() < deadline) {

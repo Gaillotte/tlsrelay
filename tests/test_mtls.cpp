@@ -275,7 +275,7 @@ TEST_F(MtlsTest, ReloadAddsPeer) {
 TEST_F(MtlsTest, ServiceRefusesInvalidWhitelistAtStartup) {
     write_whitelist("peers:\n  - { name: a, ip: 999.0.0.1 }\n");
     try {
-        relay::Service service(server_config(9));
+        relay::Service service(without_default_admin(server_config(9)));
         FAIL() << "le service aurait dû refuser de démarrer";
     } catch (const std::runtime_error& e) {
         EXPECT_NE(std::string(e.what()).find("adresse IP invalide"), std::string::npos) << e.what();

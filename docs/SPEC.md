@@ -82,7 +82,7 @@ Tous les entiers sont en ordre réseau (big-endian).
 
 - `session_id` : 128 bits issus de `RAND_bytes`, choisis par le client.
 - Les numéros `seq` commencent à 1 dans chaque sens, et sont propres à chaque sens.
-- `PING`/`PONG` servent à détecter un transport mort sans erreur TCP (lien muet) ; ils ne repoussent **pas** l'échéance d'inactivité. Chaque côté envoie un `PING` quand il n'a reçu aucune trame depuis `keepalive_interval` (15 s par défaut) ; sans aucune trame reçue pendant 3 intervalles, la connexion de transport est abandonnée : reprise de session sur les ports 2 et 3 (section 4.5), fermeture du canal sur le port 1. Pendant qu'une livraison est bloquée par l'application ou la destination (contre-pression), le silence n'est pas compté.
+- `PING`/`PONG` servent à détecter un transport mort sans erreur TCP (lien muet) ; ils ne repoussent **pas** l'échéance d'inactivité. Chaque côté envoie un `PING` quand il n'a reçu aucune trame depuis `keepalive_interval` (15 s par défaut) ; sans aucune trame reçue pendant 3 intervalles, la connexion de transport est abandonnée : reprise de session sur les ports 2 et 3 (section 4.5), fermeture du canal sur le port 1. Pendant qu'une livraison est bloquée par l'application ou la destination (contre-pression), ce côté ne lit plus le transport : il ne rend pas de verdict, mais continue d'envoyer ses `PING` pour que l'autre côté ne conclue pas à tort à un lien mort.
 
 ### 4.3 Ouverture d'un canal
 

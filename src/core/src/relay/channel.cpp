@@ -547,10 +547,12 @@ asio::awaitable<void> Channel::keepalive() {
         co_await keepalive_timer_.async_wait(use_tuple);
         if (closing_) co_return;
         auto t = transport_;
-        // Pendant une livraison bloquée par l'application, le transport n'est pas lu : pas de verdict.
-        if (!t || t->broken || !opened_ || delivering_) continue;
+        if (!t || t->broken || !opened_) continue;
         const auto silence = Clock::now() - last_frame_;
-        if (silence >= 3 * interval) {
+        // Pendant une livraison bloquée par l'application, le transport n'est pas
+        // lu : pas de verdict, mais les PING continuent pour que l'autre côté,
+        // qui ne reçoit plus rien d'autre, ne conclue pas à un lien mort.
+        if (silence >= 3 * interval && !delivering_) {
             transport_failed(t, "aucune trame reçue depuis " +
                                     format_duration(std::chrono::duration_cast<Duration>(silence)));
         } else if (silence >= interval) {

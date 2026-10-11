@@ -258,7 +258,7 @@ TEST_F(TlsTest, ServiceRefusesToStartWithInvalidPki) {
     write_generation(server_pki(), "v1", files);
 
     try {
-        relay::Service service(tls_server_config(9, server_pki()));
+        relay::Service service(without_default_admin(tls_server_config(9, server_pki())));
         FAIL() << "le service aurait dû refuser de démarrer";
     } catch (const std::runtime_error& e) {
         EXPECT_NE(std::string(e.what()).find("expiré"), std::string::npos) << e.what();

@@ -413,7 +413,9 @@ TEST_F(TunnelTest, KeepaliveToleratesApplicationNotReading) {
     RunningService client(std::move(client_cfg));
 
     TestClient app(client.port(PortKind::tls));
-    const auto data = make_random_data(2 << 20, 11);
+    // Assez de données pour saturer les tampons TCP, quelle que soit leur taille
+    // (Windows : petits tampons ; Linux : tampons de loopback plus grands).
+    const auto data = make_random_data(3 << 20, 11);
     app.write(data);
     std::this_thread::sleep_for(1500ms);  // l'application ne lit pas : contre-pression jusqu'à la destination
     const auto received = app.read_exactly(data.size(), 10s);

@@ -105,7 +105,9 @@ jobs:
         working-directory: build
         env:
           LD_LIBRARY_PATH: /home/runner/openssl/lib
+        # Les scénarios utilisent aussi la commande openssl : celle de la même version.
         run: |
+          export PATH="$HOME/openssl/bin:$PATH"
           ./src/app/tlsrelay version | tee version.txt
           grep -q "OpenSSL 3\.5\." version.txt
           ctest --output-on-failure -j 2
