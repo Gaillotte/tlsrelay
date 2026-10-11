@@ -63,7 +63,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\vcpkg-cache
-          key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json', 'vcpkg-overlays/**') }}
           restore-keys: vcpkg-x64-windows-
 
       - name: Préparation
@@ -81,6 +81,9 @@ jobs:
       - name: Tests
         run: ctest --preset windows-release -j 2
 
-      - name: Version d'OpenSSL embarquée
+      - name: Version d'OpenSSL embarquée (3.5 LTS attendue)
         shell: pwsh
-        run: .\build\windows-msvc\src\app\Release\tlsrelay.exe version
+        run: |
+          $out = .\build\windows-msvc\src\app\Release\tlsrelay.exe version
+          $out
+          if (-not ($out -match 'OpenSSL 3\.5\.')) { throw "OpenSSL 3.5.x attendu" }

@@ -9,5 +9,10 @@
     "openssl",
     "spdlog",
     "yaml-cpp"
-  ]
+  ],
+  "vcpkg-configuration": {
+    "overlay-ports": [
+      "./vcpkg-overlays"
+    ]
+  }
 }
