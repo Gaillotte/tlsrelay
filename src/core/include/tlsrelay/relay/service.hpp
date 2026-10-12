@@ -122,6 +122,11 @@ private:
     void close_retired_generations();
     void sweep_generations();
     std::optional<std::string> read_pki_pointer() const;
+    // CRL (SPEC §7.7) : <pki_root>/crl.pem contrôlé pour la génération donnée.
+    // initial : au démarrage, un fichier invalide est une erreur fatale.
+    bool load_crl(const pki::Generation& generation, bool initial);
+    bool verifies_peers() const;
+    std::optional<std::string> read_crl_file() const;
     void load_whitelist();
     bool reload_whitelist();
     std::optional<std::string> read_whitelist_file() const;
@@ -159,6 +164,8 @@ private:
     Contexts contexts_;
     std::vector<RetiredGeneration> retired_;
     std::optional<std::string> pki_pointer_;  // contenu de current, accédé sur control_ après le démarrage
+    std::shared_ptr<tls::Revocations> revocations_ = std::make_shared<tls::Revocations>();
+    std::optional<std::string> crl_content_;  // contenu de crl.pem, accédé sur control_ après le démarrage
 
     mutable std::mutex whitelist_mutex_;
     std::shared_ptr<const whitelist::Whitelist> whitelist_;

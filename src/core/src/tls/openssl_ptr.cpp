@@ -135,10 +135,11 @@ X509NamePtr parse_dn(std::string_view text, std::string& error) {
     return name;
 }
 
-std::string not_after_of(const X509* cert) {
-    if (!cert) return "?";
+std::string not_after_of(const X509* cert) { return cert ? time_to_string(X509_get0_notAfter(cert)) : "?"; }
+
+std::string time_to_string(const ASN1_TIME* time) {
     std::tm tm{};
-    if (ASN1_TIME_to_tm(X509_get0_notAfter(cert), &tm) != 1) return "?";
+    if (!time || ASN1_TIME_to_tm(time, &tm) != 1) return "?";
     char buffer[32];
     (void)std::strftime(buffer, sizeof buffer, "%Y-%m-%d %H:%M:%SZ", &tm);
     return buffer;

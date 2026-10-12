@@ -50,4 +50,7 @@ std::string name_to_string(const X509_NAME* name);
 // Date de fin de validité, en UTC (ex. "2027-10-11 12:00:00Z").
 std::string not_after_of(const X509* cert);
 
+// Date en UTC, même format ; "?" si illisible.
+std::string time_to_string(const ASN1_TIME* time);
+
 }  // namespace tlsrelay::tls

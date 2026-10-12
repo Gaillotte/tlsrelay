@@ -2,7 +2,7 @@
 # PKI en ligne de commande (SPEC §7.6), avec le binaire réel :
 # ca init → pki gen-csr → ca sign → pki install → pki activate, chaîne mTLS
 # en service, vérification par « openssl verify », renouvellement à chaud,
-# refus de la politique de l'AC.
+# refus de la politique de l'AC, révocation (CRL) et journal d'audit.
 # Usage : pki.sh <chemin de tlsrelay>
 set -euo pipefail
 
@@ -12,6 +12,8 @@ work=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$work"' EXIT
 cd "$work"
 
+# Cherche un motif dans toute la sortie d'une commande (grep -q fermerait le tube trop tôt : SIGPIPE avec pipefail).
+has() { local out; out=$(cat); grep -q -- "$1" <<<"$out"; }
 fail() { echo "ÉCHEC : $*" >&2; exit 1; }
 port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 
@@ -84,10 +86,10 @@ grep -q "déjà attribué" err.txt || fail "message de sujet déjà attribué"
 "$bin" ca sign --dir ac --role client --csr pki-client/v2/request.csr --renew --out kit-c2 --passphrase-file pass.txt
 "$bin" pki install -c client.yaml --from kit-c2
 "$bin" pki activate -c client.yaml v2
-"$bin" reload -c client.yaml | grep -q "bascule de v1 vers v2" || fail "bascule du client"
+"$bin" reload -c client.yaml | has "bascule de v1 vers v2" || fail "bascule du client"
 python3 "$here/exchange.py" "$cli" || fail "échange après renouvellement"
 "$bin" ca list --dir ac | tee list.txt
-grep -c "remplacé" list.txt | grep -q 1 || fail "inventaire"
+grep -c "remplacé" list.txt | has 1 || fail "inventaire"
 
 echo "== refus de la politique de l'AC"
 openssl req -new -newkey rsa:2048 -nodes -keyout rsa.key -subj "/CN=rsa.essai" -out rsa.csr 2>req.err \
@@ -103,6 +105,30 @@ if "$bin" ca sign --dir ac --role client --csr x.csr --out kit-x --passphrase-fi
   fail "mauvaise phrase de passe acceptée"
 fi
 grep -q "phrase de passe incorrecte" err.txt || fail "message de phrase de passe"
+
+echo "== révocation du certificat client et CRL"
+serial=$(awk '$2 == "client" && $3 == "valide" { print $1 }' list.txt)
+[ -n "$serial" ] || fail "série du certificat client"
+"$bin" ca revoke --dir ac --serial "$serial" --reason keyCompromise --out crl.pem --passphrase-file pass.txt
+openssl storeutl -noout -text -crls crl.pem | has "Key Compromise" || fail "motif absent de la CRL"
+cat kit-c2/trust-roots.pem kit-c2/chain.pem crl.pem > crl-check.pem
+if openssl verify -crl_check -CAfile crl-check.pem -untrusted kit-c2/chain.pem kit-c2/cert.pem >verify.txt 2>&1; then
+  fail "certificat révoqué accepté par openssl verify -crl_check"
+fi
+grep -q "revoked" verify.txt || fail "openssl verify : $(cat verify.txt)"
+"$bin" pki crl -c server.yaml crl.pem
+"$bin" check-pki -c server.yaml | has "CRL valide : 1 certificat" || fail "check-pki sans la CRL"
+for _ in $(seq 50); do "$bin" status -c server.yaml | has "CRL : 1 certificat" && break; sleep 0.1; done
+"$bin" status -c server.yaml | has "CRL : 1 certificat" || fail "CRL non prise en compte par le serveur"
+if python3 "$here/exchange.py" "$cli" 2>/dev/null; then fail "client révoqué accepté"; fi
+grep -q "révoqué" server.log || fail "refus non journalisé"
+"$bin" ca list --dir ac | has "révoqué le" || fail "inventaire après révocation"
+"$bin" ca audit --dir ac | tee audit.txt
+grep -q "chaîne d'empreintes intacte" audit.txt || fail "journal d'audit"
+[ "$(grep -c -E '  (init|sign|revoke|crl)  ' audit.txt)" = 6 ] || fail "opérations d'audit"
+sed -i 's/revoke/revok3/' ac/audit.log
+if "$bin" ca audit --dir ac >/dev/null 2>err.txt; then fail "journal d'audit altéré non détecté"; fi
+grep -q "altéré à la ligne 5" err.txt || fail "ligne altérée : $(cat err.txt)"
 
 "$bin" stop -c client.yaml >/dev/null; "$bin" stop -c server.yaml >/dev/null
 echo "PKI en ligne de commande : OK"

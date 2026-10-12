@@ -45,6 +45,15 @@ Principales caractéristiques :
 | 10 | Campagne de sécurité : cas d'attaque automatisés, testssl.sh, MSVC `/analyze`, durcissement et dépendances vérifiés en CI, grille de test d'intrusion ; kit de recette (`recette.ps1`, cahier, procès-verbal) | Terminée |
 | 11 | Paquets `.deb`, `.rpm` et `.msi` (OpenSSL 3.5 LTS sous Windows), testés à l'installation sur Ubuntu 22.04 et 24.04, Debian 12, RHEL 9 et équivalents, Windows ; guides d'installation et d'exploitation | Terminée |
 
+Livraison 1.1 (éditeur `tlsrelay-admin`, [PLAN §4](docs/PLAN.md)) :
+
+| Phase | Contenu | État |
+|---|---|---|
+| 12 | Socle de l'éditeur : écriture normalisée de la configuration et de la liste blanche, différences ; mini-AC : révocation (`ca revoke`), CRL (`ca crl`), journal d'audit chaîné (`ca audit`) ; CRL appliquées par le service (`pki crl`, rechargement à chaud) | En cours |
+| 13 | Application Qt : configuration, liste blanche, validation, différences, export des paquets de déploiement | À faire |
+| 14 | Module PKI de l'éditeur : AC, signatures, inventaire, révocation, assistants de renouvellement et de changement de racine | À faire |
+| 15 | Tests Qt, intégration au MSI, documentation, recette de l'éditeur | À faire |
+
 Les trois ports sont disponibles. Le client et le serveur dialoguent avec le protocole de tunnel (SPEC §4) : sur les ports `tls` et `mtls`, le client renégocie la session à l'échéance de `session_lifetime` (nouvelle connexion, handshake complet avec la génération PKI courante) sans que l'application ne voie de coupure, et reprend la session si la connexion tombe. Le serveur n'accepte que des tlsrelay clients : une application ne peut pas s'y connecter directement.
 
 En mode serveur, la liste blanche est obligatoire (exemple commenté : [examples/whitelist.yaml](examples/whitelist.yaml)).
@@ -159,6 +168,8 @@ tlsrelay pki activate -c serveur.yaml v1
 ```
 
 Même parcours pour un client mTLS avec `--role client` (sans `--san`). La politique de l'AC impose une clé ECDSA P-256 et ses propres extensions (celles de la demande sont ignorées), refuse un sujet déjà attribué (sauf `--renew`) et tient l'inventaire (`tlsrelay ca list --dir /ac`). La phrase de passe est demandée au clavier, ou lue dans `--passphrase-file` ou la variable `TLSRELAY_CA_PASSPHRASE`.
+
+Révocation : `tlsrelay ca revoke --dir /ac --serial <série> --reason keyCompromise --out crl.pem` publie les CRL, à installer sur chaque instance avec `tlsrelay pki crl -c <config> crl.pem` ; le certificat est refusé au handshake et les canaux qui l'utilisent sont fermés (SPEC §7.7). Les CRL se republient avant échéance (`tlsrelay ca crl`, 30 jours par défaut). Toutes les opérations de l'AC sont tracées dans un journal d'audit chaîné par SHA-256 (`tlsrelay ca audit --dir /ac`).
 
 ### Rotation des certificats
 

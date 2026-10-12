@@ -102,6 +102,8 @@ struct Config {
     std::optional<Destination> destination;     // mode serveur
     std::optional<WhitelistRef> whitelist;      // mode serveur
     AdminConfig admin;
+
+    bool operator==(const Config&) const = default;
 };
 
 bool valid_instance_name(std::string_view name);
@@ -121,6 +123,12 @@ struct LoadResult {
 
 LoadResult load_config_string(std::string_view yaml);
 LoadResult load_config_file(const std::filesystem::path& path);
+
+// Écriture normalisée d'une configuration (éditeur tlsrelay-admin) : sections
+// dans l'ordre de la SPEC, valeurs égales aux valeurs par défaut omises. Relu
+// par load_config_string, le texte redonne une configuration égale. header :
+// commentaire placé en tête, une ligne par ligne de texte.
+std::string to_yaml(const Config& cfg, std::string_view header = {});
 
 // Règles de cohérence (SPEC §8.3). Partagées avec l'éditeur tlsrelay-admin.
 void validate(const Config& cfg, std::vector<Issue>& errors, std::vector<Issue>& warnings);

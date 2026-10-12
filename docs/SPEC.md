@@ -148,7 +148,7 @@ Pendant toute la renégociation, les données continuent de circuler sur l'ancie
 | 0 | `NORMAL` | Fin normale |
 | 1 | `IDLE_TIMEOUT` | Inactivité |
 | 2 | `LIFETIME_EXCEEDED` | Pas de renégociation dans le délai de grâce |
-| 3 | `PEER_REVOKED` | Pair retiré de la liste blanche |
+| 3 | `PEER_REVOKED` | Pair retiré de la liste blanche, ou certificat du pair révoqué (§7.7) |
 | 4 | `DEST_UNREACHABLE` | 3 essais vers la destination échoués |
 | 5 | `SHUTDOWN` | Arrêt du service |
 | 6 | `PROTOCOL_ERROR` | Trame invalide |
@@ -294,7 +294,7 @@ Un échec conserve la génération courante et produit une erreur dans la catég
 | 2. Bascule | ancienne + nouvelle racine | nouvelle PKI | Tous les `tlsrelay` sont à l'étape 2 |
 | 3. Retrait | nouvelle racine | nouvelle PKI | — |
 
-### 7.6 Commandes PKI (livraison 1)
+### 7.6 Commandes PKI
 
 | Commande | Effet |
 |---|---|
@@ -304,7 +304,11 @@ Un échec conserve la génération courante et produit une erreur dans la catég
 | `tlsrelay pki activate -c <config> <vN> [--force]` | Contrôle comme `check-pki`, puis met à jour `current` (renommage atomique) |
 | `tlsrelay ca init --dir <ac> [--org O]` | Crée la racine et les deux AC intermédiaires (section 7.1) ; refuse un répertoire non vide |
 | `tlsrelay ca sign --dir <ac> --role server\|client --csr <fichier> [--san ...] [--days 365] [--renew] --out <kit>` | Signe une demande et écrit le kit `cert.pem`, `chain.pem`, `trust-roots.pem`, `trust-issuer.pem` pour `pki install --from` |
-| `tlsrelay ca list --dir <ac>` | Inventaire : série, rôle, état (`valide`, `remplacé`), fin de validité, sujet |
+| `tlsrelay ca list --dir <ac>` | Inventaire : série, rôle, état (`valide`, `remplacé`, `révoqué`), fin de validité, sujet, date et motif de révocation |
+| `tlsrelay ca revoke --dir <ac> --serial S [--reason motif] [--days 30] [--out crl.pem]` | Révoque un certificat émis (motifs RFC 5280 : `unspecified`, `keyCompromise`, `superseded`, `cessationOfOperation`) puis publie les CRL (§7.7) |
+| `tlsrelay ca crl --dir <ac> [--days 30] [--out crl.pem]` | Publie les CRL des AC Serveurs et Clients (à refaire avant leur échéance) |
+| `tlsrelay ca audit --dir <ac>` | Affiche le journal d'audit de l'AC et vérifie sa chaîne d'empreintes |
+| `tlsrelay pki crl -c <config> <fichier>` | Contrôle des CRL pour la génération courante, puis installation dans `<pki_root>/crl.pem` (renommage atomique) |
 
 **Politique de `ca sign`**
 
@@ -313,11 +317,23 @@ Un échec conserve la génération courante et produit une erreur dans la catég
 - Un sujet déjà attribué à un certificat en cours de validité est refusé, sauf `--renew` (même rôle) : l'ancien certificat est alors marqué `remplacé`.
 - Fin de validité : `--days` (365 par défaut), jamais au-delà de celle de l'AC qui signe. Numéro de série aléatoire de 128 bits ; signature SHA-384.
 
-**Répertoire de l'AC** : `root.*`, `servers.*`, `clients.*` (`.key.pem` et `.cert.pem`), `index.tsv` (inventaire), `issued/<série>.pem`. Clés des AC : PKCS#8 chiffré AES-256-CBC, dérivation scrypt (N = 2¹⁴, r = 8, p = 1) ; phrase de passe de 12 caractères au moins, saisie sans écho, ou lue dans `--passphrase-file` ou `TLSRELAY_CA_PASSPHRASE`. Droits : `0600` sous Linux ; ACL protégée (SYSTEM, Administrateurs, compte de l'opérateur) sous Windows.
+**Répertoire de l'AC** : `root.*`, `servers.*`, `clients.*` (`.key.pem` et `.cert.pem`), `index.tsv` (inventaire), `issued/<série>.pem`, `crl.pem` et `crlnumber` (dernières CRL publiées), `audit.log` (journal d'audit). Clés des AC : PKCS#8 chiffré AES-256-CBC, dérivation scrypt (N = 2¹⁴, r = 8, p = 1) ; phrase de passe de 12 caractères au moins, saisie sans écho, ou lue dans `--passphrase-file` ou `TLSRELAY_CA_PASSPHRASE`. Droits : `0600` sous Linux ; ACL protégée (SYSTEM, Administrateurs, compte de l'opérateur) sous Windows.
 
 **Clé d'une instance sous Windows** : `key.pem` hérite des droits du répertoire `pki_root`, qui doit être réservé aux Administrateurs et au compte du service (par exemple `icacls <pki_root> /inheritance:r /grant:r "Administrateurs:(OI)(CI)F" "NT SERVICE\tlsrelay-N:(OI)(CI)R"`).
 
-La révocation (CRL), l'inventaire graphique et l'assistant de changement de racine relèvent de l'éditeur `tlsrelay-admin` (livraison 1.1).
+**Journal d'audit** (`<ac>/audit.log`) : une ligne par opération (`init`, `sign`, `revoke`, `crl`), champs séparés par des tabulations : date UTC, compte de l'opérateur, opération, détails, empreinte. L'empreinte est le SHA-256 de « empreinte précédente, tabulation, ligne sans empreinte » (64 zéros pour la première ligne) : une ligne modifiée, supprimée ou insérée rompt la chaîne, ce que `ca audit` signale. Un répertoire d'AC créé avant la livraison 1.1 reçoit son journal à la première opération.
+
+L'inventaire graphique et les assistants de renouvellement et de changement de racine relèvent de l'éditeur `tlsrelay-admin` (livraison 1.1).
+
+### 7.7 Révocation (CRL)
+
+- **Publication** : `ca revoke` ou `ca crl` produisent une CRL v2 par AC intermédiaire (AC Serveurs, AC Clients), signée SHA-384, avec numéro de CRL croissant, identifiant de clé de l'AC et motif de révocation ; validité 30 jours par défaut (`--days`, jamais au-delà de celle de l'AC). Les deux CRL sont écrites dans un même fichier, à déployer sur toutes les instances.
+- **Déploiement** : `<pki_root>/crl.pem` de chaque instance (`tlsrelay pki crl -c <config> <fichier>`, ou copie suivie d'un renommage). Le fichier est commun à toutes les générations.
+- **Contrôle au chargement** : seules comptent les CRL des AC attendues chez le pair (`trust-issuer.pem`) ; leur signature est vérifiée avec la clé de l'AC. Une CRL au nom d'une AC attendue mais à la signature invalide fait refuser le fichier. Les CRL des autres AC sont ignorées, sauf pour signaler que le certificat de l'instance elle-même est révoqué. Avertissements : AC attendue sans CRL (ses certificats ne sont pas contrôlés), CRL périmée (date de prochaine mise à jour passée : elle reste appliquée, il faut la republier), CRL datée dans le futur.
+- **Application** : au handshake, un certificat du pair qui figure dans la CRL de son émetteur est refusé (alerte TLS, motif « certificat du client révoqué » ou « certificat du serveur révoqué » dans le journal) ; le serveur ne contacte pas la destination. Le contrôle porte sur le certificat du pair, pas sur les AC intermédiaires.
+- **Rechargement** : le contenu de `crl.pem` est comparé toutes les 2 secondes (si `credentials.watch` vaut `true`), et relu par `reload` et à chaque bascule de génération. Un fichier invalide conserve les CRL en vigueur (erreur dans la catégorie `config`, compteur `tlsrelay_crl_reload_failures_total`) ; au démarrage, il empêche le service de démarrer. Un fichier supprimé désactive le contrôle (avertissement).
+- **Canaux ouverts** : quand une CRL ajoute des certificats révoqués, les canaux dont le pair présente l'un d'eux sont fermés (code `PEER_REVOKED`, raison `certificat_revoque`, compteur `tlsrelay_certificates_revoked_total`), sauf `revoke_mode: next_renegotiation` (serveur) : ils sont alors refusés à leur prochaine renégociation.
+- **Instances concernées** : celles qui vérifient le certificat de leur pair : serveur avec port `mtls`, client avec port `tls` ou `mtls`. `status` indique le nombre de certificats révoqués et la prochaine mise à jour ; métrique `tlsrelay_crl_revoked_certificates`.
 
 ## 8. Configuration
 
@@ -460,10 +476,12 @@ Format texte Prometheus (version 0.0.4), lu par `tlsrelay metrics` sur le canal 
 | `tlsrelay_uptime_seconds` | gauge |
 | `tlsrelay_channels_active{port}` | gauge |
 | `tlsrelay_pki_generation_info{generation}`, `tlsrelay_pki_generations_live` | gauge |
+| `tlsrelay_crl_revoked_certificates` (instances qui vérifient leur pair) | gauge |
 | `tlsrelay_channels_{opened,closed,rejected,idle_closed}_total` | counter |
 | `tlsrelay_dial_attempt_failures_total`, `tlsrelay_dial_failures_total` | counter |
 | `tlsrelay_tls_handshake_failures_total`, `tlsrelay_peers_{rejected,revoked}_total` | counter |
 | `tlsrelay_pki_rotations_total`, `tlsrelay_pki_reload_failures_total` | counter |
+| `tlsrelay_certificates_revoked_total`, `tlsrelay_crl_reload_failures_total` | counter |
 | `tlsrelay_renegotiations_total`, `tlsrelay_resume_failures_total`, `tlsrelay_protocol_errors_total` | counter |
 | `tlsrelay_bytes_{upstream,downstream}_total` (canaux fermés) | counter |
 

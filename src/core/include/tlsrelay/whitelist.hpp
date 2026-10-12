@@ -35,6 +35,7 @@ struct Peer {
     std::string name;
     IpRange range;
     std::set<PortKind> ports;
+    bool ports_explicit = false;             // ports donnés dans le fichier (sinon valeur par défaut)
     std::string subject_text;                // tel qu'écrit dans le fichier, vide si absent
     std::shared_ptr<const X509_NAME> subject;  // forme comparable, nullptr si absent
 
@@ -78,5 +79,21 @@ struct Diff {
 };
 
 Diff diff(const Whitelist& before, const Whitelist& after);
+
+// Entrée telle qu'écrite dans le fichier (éditeur tlsrelay-admin).
+struct PeerSpec {
+    std::string name;
+    std::string ip;
+    std::optional<std::set<PortKind>> ports;  // absent : valeur par défaut (SPEC §6)
+    std::string subject;                      // vide : absent
+
+    bool operator==(const PeerSpec&) const = default;
+};
+
+PeerSpec to_spec(const Peer& peer);
+
+// Écriture normalisée d'une liste blanche, relue par Whitelist::load_string.
+// header : commentaire placé en tête, une ligne par ligne de texte.
+std::string to_yaml(const std::vector<PeerSpec>& peers, std::string_view header = {});
 
 }  // namespace tlsrelay::whitelist

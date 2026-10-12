@@ -9,13 +9,19 @@
 //   root.key.pem, root.cert.pem          racine (P-384, 15 ans)
 //   servers.key.pem, servers.cert.pem    AC Serveurs (P-384, 5 ans, pathlen 0, serverAuth)
 //   clients.key.pem, clients.cert.pem    AC Clients (P-384, 5 ans, pathlen 0, clientAuth)
-//   index.tsv                            inventaire : série, rôle, état, fin de validité, sujet
+//   index.tsv                            inventaire : série, rôle, état, fin de validité, sujet,
+//                                        date et motif de révocation
 //   issued/<série>.pem                   certificats émis
+//   crl.pem, crlnumber                   dernières CRL publiées (AC Serveurs, AC Clients) et leur numéro
+//   audit.log                            journal d'audit chaîné (pki/audit.hpp)
 
 #include "tlsrelay/pki/generation.hpp"
 #include "tlsrelay/pki/request.hpp"
 
+#include <cstdint>
 #include <filesystem>
+#include <optional>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -72,11 +78,37 @@ void write_bundle(const std::filesystem::path& out, const IssuedCertificate& iss
 struct IndexEntry {
     std::string serial;
     std::string role;    // server, client
-    std::string status;  // valide, remplacé
+    std::string status;  // valide, remplacé, révoqué
     std::string not_after;
     std::string subject;
+    std::string revoked_at;  // date de révocation (vide sinon)
+    std::string reason;      // motif de révocation (RFC 5280), vide sinon
 };
 
 std::vector<IndexEntry> list_issued(const std::filesystem::path& dir);
+
+// Motifs de révocation retenus (RFC 5280 §5.3.1).
+enum class RevocationReason { unspecified, key_compromise, superseded, cessation_of_operation };
+std::string_view to_string(RevocationReason reason);  // unspecified, keyCompromise, superseded, cessationOfOperation
+std::optional<RevocationReason> parse_revocation_reason(std::string_view text);
+
+// Révoque un certificat émis (série en hexadécimal, casse indifférente) :
+// l'inventaire le marque révoqué ; il figurera dans la prochaine CRL
+// (publish_crl). Refuse une série inconnue ou déjà révoquée. Lève
+// std::runtime_error.
+IndexEntry revoke_certificate(const std::filesystem::path& dir, const std::string& serial, RevocationReason reason);
+
+struct CrlInfo {
+    std::string pem;  // CRL de l'AC Serveurs puis de l'AC Clients
+    std::uint64_t number = 0;
+    std::string next_update;
+    std::size_t revoked = 0;  // certificats révoqués listés (les deux CRL)
+};
+
+// Publie les CRL des deux AC intermédiaires (validité days jours, jamais
+// au-delà de la fin de validité de l'AC), les écrit dans <ac>/crl.pem et les
+// retourne. Les certificats révoqués arrivés à expiration y restent listés.
+// Lève std::runtime_error (phrase de passe incorrecte, etc.).
+CrlInfo publish_crl(const std::filesystem::path& dir, const std::string& passphrase, int days = 30);
 
 }  // namespace tlsrelay::pki

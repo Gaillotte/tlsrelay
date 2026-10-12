@@ -12,6 +12,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 Set-Location $work
 $env:TLSRELAY_CA_PASSPHRASE = "phrase de passe d'essai"
 
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8  # sorties de tlsrelay en UTF-8
 function Fail($message) { Write-Host "ÉCHEC : $message"; exit 1 }
 function Check($what) { if ($LASTEXITCODE -ne 0) { Fail $what } }
 
@@ -44,6 +45,13 @@ if ($LASTEXITCODE -eq 0) { Fail "sujet déjà attribué accepté" }
 & $bin ca sign --dir ac --role server --csr pki\v2\request.csr --san relay.essai --renew --out kit2; Check "renouvellement"
 & $bin pki install -c server.yaml --from kit2; Check "pki install v2"
 & $bin check-pki -c server.yaml v2; Check "check-pki v2"
-& $bin ca list --dir ac
+$serial = (Get-Content ac\index.tsv | Where-Object { $_ -match "`tremplacé`t" } | ForEach-Object { ($_ -split "`t")[0] })
+if (-not $serial) { Fail "série du certificat remplacé" }
+& $bin ca revoke --dir ac --serial $serial --reason superseded --out crl.pem; Check "ca revoke"
+if (-not (Select-String -Path crl.pem -Pattern "BEGIN X509 CRL" -Quiet)) { Fail "CRL non écrite" }
+& $bin ca list --dir ac | Tee-Object -Variable listing
+if (-not ($listing -match "révoqué le")) { Fail "inventaire après révocation" }
+& $bin ca audit --dir ac | Tee-Object -Variable audit; Check "ca audit"
+if (-not ($audit -match "$([regex]::Escape($env:USERNAME))\s+revoke")) { Fail "opérateur absent du journal d'audit" }
 Write-Host "PKI en ligne de commande sous Windows : OK"
 exit 0

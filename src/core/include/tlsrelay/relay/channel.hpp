@@ -34,6 +34,7 @@ enum class CloseReason {
     tls_failed,
     not_authorized,
     peer_revoked,
+    certificate_revoked,
     generation_retired,
     io_error,
     lifetime_exceeded,  // pas de renégociation réussie dans le délai de grâce
@@ -134,6 +135,8 @@ public:
     // Ferme le canal si sa connexion de transport utilise un autre contexte que
     // ceux donnés (génération retirée). Utilisable depuis n'importe quel thread.
     void close_if_retired(std::shared_ptr<const tls::Context> tls, std::shared_ptr<const tls::Context> mtls);
+    // Ferme le canal si le certificat du pair figure dans les CRL en vigueur.
+    void close_if_revoked();
 
     // À exécuter sur le strand du canal.
     asio::awaitable<ChannelInfo> describe() const;

@@ -3,6 +3,7 @@
 #include "tlsrelay/logging.hpp"
 #include "tlsrelay/version.hpp"
 #include "tlsrelay/pki/generation.hpp"
+#include "tlsrelay/pki/revocation.hpp"
 #include "tlsrelay/openssl_info.hpp"
 #include "tlsrelay/relay/transport.hpp"
 #include "tlsrelay/system/notify.hpp"
@@ -173,6 +174,7 @@ void Service::load_pki() {
         contexts_ = std::move(contexts);
     }
     pki_pointer_ = read_pki_pointer();
+    if (verifies_peers()) load_crl(gen, true);
     if (gen.cert) {
         logging::config().info("PKI : génération {} chargée, certificat {} valable jusqu'au {}", gen.name,
                                tls::subject_of(gen.cert.get()), tls::not_after_of(gen.cert.get()));
@@ -186,12 +188,71 @@ Service::Contexts Service::build_contexts(const std::shared_ptr<const pki::Gener
     Contexts c;
     const bool server = config_.mode == Mode::server;
     if (config_.ports.count(PortKind::tls)) {
-        c.tls = server ? tls::Context::make_server(generation, false) : tls::Context::make_client(generation, false);
+        c.tls = server ? tls::Context::make_server(generation, false, revocations_)
+                       : tls::Context::make_client(generation, false, revocations_);
     }
     if (config_.ports.count(PortKind::mtls)) {
-        c.mtls = server ? tls::Context::make_server(generation, true) : tls::Context::make_client(generation, true);
+        c.mtls = server ? tls::Context::make_server(generation, true, revocations_)
+                        : tls::Context::make_client(generation, true, revocations_);
     }
     return c;
+}
+
+bool Service::verifies_peers() const {
+    const auto requirements = pki::requirements_for(config_);
+    return requirements && requirements->trust;
+}
+
+std::optional<std::string> Service::read_crl_file() const {
+    std::ifstream in(std::filesystem::path(config_.credentials->pki_root) / pki::kCrlFile, std::ios::binary);
+    if (!in) return std::nullopt;
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+bool Service::load_crl(const pki::Generation& generation, bool initial) {
+    const auto path = std::filesystem::path(config_.credentials->pki_root) / pki::kCrlFile;
+    crl_content_ = read_crl_file();
+    const auto previous = revocations_->get();
+    if (!crl_content_) {
+        if (previous) logging::config().warn("CRL : {} retiré, plus aucune révocation contrôlée", path.string());
+        revocations_->set(nullptr);
+        return true;
+    }
+    auto result = pki::load_revocations(path, generation);
+    for (const auto& w : result.warnings) logging::config().warn("CRL : {} : {}", w.path, w.message);
+    if (!result.list) {
+        std::string message = "CRL invalide : " + path.string();
+        for (const auto& e : result.errors) message += "\n  " + e.path + " : " + e.message;
+        if (initial) throw std::runtime_error(message);
+        ++stats_.crl_reload_failures;
+        logging::config().error("{} ; {}", message,
+                                previous ? "les CRL en vigueur sont conservées" : "aucune révocation contrôlée");
+        return false;
+    }
+    std::size_t added = result.list->size();
+    if (previous) {
+        const auto before = previous->entries();
+        added = 0;
+        for (const auto& e : result.list->entries()) {
+            if (std::find(before.begin(), before.end(), e) == before.end()) ++added;
+        }
+    }
+    const auto count = result.list->size();
+    const auto next = result.list->next_update();
+    revocations_->set(std::move(result.list));
+    logging::config().info("CRL {} : {} certificat(s) révoqué(s){}, prochaine mise à jour avant le {}",
+                           initial ? "chargée" : "rechargée", count,
+                           initial ? std::string() : " dont " + std::to_string(added) + " nouveau(x)",
+                           next.empty() ? std::string("?") : next);
+    // Canaux ouverts : fermés si leur pair est révoqué, sauf révocation à la
+    // prochaine renégociation (le handshake suivant le refusera).
+    const bool immediate = !config_.whitelist || config_.whitelist->revoke_mode == RevokeMode::immediate;
+    if (!initial && added > 0 && immediate) {
+        for (auto& ch : channels()) ch->close_if_revoked();
+    }
+    return true;
 }
 
 std::optional<std::string> Service::read_pki_pointer() const {
@@ -236,6 +297,7 @@ void Service::reload_pki(bool kill_old) {
             }
             ++stats_.pki_rotations;
             const auto& gen = *result.generation;
+            if (verifies_peers()) load_crl(gen, false);
             logging::config().info("PKI : bascule vers la génération {}{} ; la génération {} reste utilisée par les "
                                    "connexions déjà ouvertes",
                                    gen.name,
@@ -296,6 +358,20 @@ asio::awaitable<std::string> Service::reload_now(bool kill_old) {
             summary += "PKI : génération " + after + " inchangée\n";
         }
         if (kill_old) summary += "PKI : connexions des générations retirées fermées\n";
+        if (verifies_peers()) {
+            std::shared_ptr<const pki::Generation> gen;
+            {
+                std::lock_guard lock(pki_mutex_);
+                gen = generation_;
+            }
+            if (!load_crl(*gen, false)) {
+                summary += "CRL : fichier invalide (voir le journal), CRL en vigueur conservées\n";
+            } else if (const auto list = revocations_->get()) {
+                summary += "CRL : " + std::to_string(list->size()) + " certificat(s) révoqué(s)\n";
+            } else {
+                summary += "CRL : aucune\n";
+            }
+        }
     }
     if (config_.mode == Mode::server) {
         whitelist_content_ = read_whitelist_file();
@@ -424,6 +500,14 @@ asio::awaitable<void> Service::watch() {
             if (pointer != pki_pointer_) {
                 pki_pointer_ = std::move(pointer);
                 reload_pki(false);
+            }
+            if (verifies_peers() && read_crl_file() != crl_content_) {
+                std::shared_ptr<const pki::Generation> gen;
+                {
+                    std::lock_guard lock(pki_mutex_);
+                    gen = generation_;
+                }
+                load_crl(*gen, false);
             }
         }
         sweep_generations();
@@ -1048,6 +1132,14 @@ std::string Service::status_text() const {
         out << "génération PKI : " << current_generation()
             << (retired.empty() ? std::string() : " (en drain : " + retired + ")") << '\n';
     }
+    if (verifies_peers()) {
+        if (const auto crl = revocations_->get()) {
+            out << "CRL : " << crl->size() << " certificat(s) révoqué(s), prochaine mise à jour avant le "
+                << (crl->next_update().empty() ? std::string("?") : crl->next_update()) << '\n';
+        } else {
+            out << "CRL : aucune\n";
+        }
+    }
     if (config_.mode == Mode::server) {
         const auto wl = current_whitelist();
         out << "liste blanche : " << (wl ? wl->peers().size() : 0) << " pair(s)\n";
@@ -1114,6 +1206,11 @@ std::string Service::metrics_text() const {
         metric("pki_generations_live", "gauge", "Générations PKI encore utilisées (courante comprise).", inst,
                live_generations().size());
     }
+    if (verifies_peers()) {
+        const auto crl = revocations_->get();
+        metric("crl_revoked_certificates", "gauge", "Certificats révoqués listés par les CRL en vigueur.", inst,
+               crl ? crl->size() : 0);
+    }
 
     struct Counter {
         const char* name;
@@ -1129,6 +1226,9 @@ std::string Service::metrics_text() const {
         {"dial_failures_total", "Canaux abandonnés après tous les essais de connexion.", stats_.dial_failures},
         {"tls_handshake_failures_total", "Handshakes TLS refusés ou expirés.", stats_.tls_handshake_failures},
         {"peers_rejected_total", "Pairs refusés par la liste blanche.", stats_.peers_rejected},
+        {"certificates_revoked_total", "Canaux fermés après révocation du certificat du pair (CRL).",
+         stats_.certificates_revoked},
+        {"crl_reload_failures_total", "Fichiers de CRL refusés.", stats_.crl_reload_failures},
         {"peers_revoked_total", "Canaux fermés après retrait du pair de la liste blanche.", stats_.peers_revoked},
         {"pki_rotations_total", "Bascules vers une nouvelle génération PKI.", stats_.pki_rotations},
         {"pki_reload_failures_total", "Nouvelles générations PKI refusées.", stats_.pki_reload_failures},

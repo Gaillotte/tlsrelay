@@ -70,6 +70,32 @@ std::optional<double> parse_percent(std::string_view text) {
     return value / 100.0;
 }
 
+std::string format_size(std::uint64_t bytes) {
+    static constexpr std::array<std::pair<std::string_view, std::uint64_t>, 3> kUnits{{
+        {"GiB", 1ULL << 30}, {"MiB", 1ULL << 20}, {"KiB", 1ULL << 10}}};
+    if (bytes != 0) {
+        for (const auto& [name, factor] : kUnits) {
+            if (bytes % factor == 0) return std::to_string(bytes / factor) + std::string(name);
+        }
+    }
+    return std::to_string(bytes);
+}
+
+std::string format_percent(double fraction) {
+    // Écriture la plus courte qui redonne exactement la même fraction.
+    char buffer[64];
+    for (int precision = 0; precision <= 17; ++precision) {
+        auto [end, ec] = std::to_chars(buffer, buffer + sizeof buffer, fraction * 100.0, std::chars_format::fixed,
+                                       precision);
+        if (ec != std::errc{}) break;
+        std::string text(buffer, end);
+        text += '%';
+        if (auto back = parse_percent(text); back && *back == fraction) return text;
+    }
+    auto [end, ec] = std::to_chars(buffer, buffer + sizeof buffer, fraction * 100.0);
+    return std::string(buffer, ec == std::errc{} ? end : buffer) + "%";
+}
+
 std::string format_duration(Duration d) {
     const auto ms = d.count();
     static constexpr std::array<std::pair<std::string_view, Duration::rep>, 4> kUnits{{

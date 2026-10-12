@@ -205,6 +205,7 @@ LoadResult Whitelist::load_string(std::string_view yaml) {
                 err(path + ".ports", "liste non vide attendue, parmi plain, tls, mtls");
                 ok = false;
             } else {
+                peer.ports_explicit = true;
                 for (const auto& p : ports) {
                     const auto kind = p.IsScalar() ? parse_port_kind(p.Scalar()) : std::nullopt;
                     if (!kind) {
@@ -291,6 +292,38 @@ Diff diff(const Whitelist& before, const Whitelist& after) {
         if (!find(after, p.name)) d.removed.push_back(p.name);
     }
     return d;
+}
+
+PeerSpec to_spec(const Peer& peer) {
+    PeerSpec spec{peer.name, peer.range.to_string(), std::nullopt, peer.subject_text};
+    if (peer.ports_explicit) spec.ports = peer.ports;
+    return spec;
+}
+
+std::string to_yaml(const std::vector<PeerSpec>& peers, std::string_view header) {
+    YAML::Emitter out;
+    out.SetIndent(2);
+    out << YAML::BeginMap << YAML::Key << "peers" << YAML::Value;
+    if (peers.empty()) out << YAML::Flow;
+    out << YAML::BeginSeq;
+    for (const auto& p : peers) {
+        out << YAML::BeginMap;
+        out << YAML::Key << "name" << YAML::Value << p.name;
+        out << YAML::Key << "ip" << YAML::Value << p.ip;
+        if (p.ports) {
+            out << YAML::Key << "ports" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+            for (const auto kind : *p.ports) out << std::string(to_string(kind));
+            out << YAML::EndSeq;
+        }
+        if (!p.subject.empty()) out << YAML::Key << "subject" << YAML::Value << p.subject;
+        out << YAML::EndMap;
+    }
+    out << YAML::EndSeq << YAML::EndMap;
+    if (!out.good()) throw std::runtime_error("écriture YAML impossible : " + out.GetLastError());
+    std::string text;
+    std::istringstream lines{std::string(header)};
+    for (std::string line; std::getline(lines, line);) text += line.empty() ? "#\n" : "# " + line + "\n";
+    return text + out.c_str() + "\n";
 }
 
 }  // namespace tlsrelay::whitelist

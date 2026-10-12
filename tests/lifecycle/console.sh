@@ -9,6 +9,8 @@ work=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$work"' EXIT
 cd "$work"
 
+# Cherche un motif dans toute la sortie d'une commande (grep -q fermerait le tube trop tôt : SIGPIPE avec pipefail).
+has() { local out; out=$(cat); grep -q -- "$1" <<<"$out"; }
 fail() { echo "ÉCHEC : $*" >&2; exit 1; }
 port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 
@@ -38,29 +40,29 @@ wait_ready() {
 # 1. Démarrage et état
 "$bin" run -c server.yaml & pid=$!
 wait_ready
-"$bin" status -c server.yaml | grep -q "instance : essai" || fail "status"
-"$bin" status -c server.yaml | grep -q "pid : $pid" || fail "pid"
+"$bin" status -c server.yaml | has "instance : essai" || fail "status"
+"$bin" status -c server.yaml | has "pid : $pid" || fail "pid"
 
 # 2. Une seule exécution par instance
 if "$bin" run -c server.yaml 2> second.err; then fail "seconde exécution acceptée"; fi
 grep -q "autre exécution" second.err || fail "message de verrou : $(cat second.err)"
 
 # 3. Rechargement et journalisation à chaud
-"$bin" reload -c server.yaml | grep -q "liste blanche : 1 pair" || fail "reload"
-"$bin" log-level -c server.yaml debug | grep -q "activity=debug" || fail "log-level"
-"$bin" metrics -c server.yaml | grep -q '^tlsrelay_channels_opened_total{instance="essai"} 0$' || fail "metrics"
+"$bin" reload -c server.yaml | has "liste blanche : 1 pair" || fail "reload"
+"$bin" log-level -c server.yaml debug | has "activity=debug" || fail "log-level"
+"$bin" metrics -c server.yaml | has '^tlsrelay_channels_opened_total{instance="essai"} 0$' || fail "metrics"
 
 # 4. Arrêt propre
-"$bin" stop -c server.yaml --timeout 1s | grep -q "arrêtée" || fail "stop"
+"$bin" stop -c server.yaml --timeout 1s | has "arrêtée" || fail "stop"
 wait $pid || fail "code de sortie après stop"
 [ ! -e essai.sock ] || fail "socket non supprimé"
-{ "$bin" status -c server.yaml 2>&1 || true; } | grep -q "injoignable" || fail "status après arrêt"
-"$bin" stop -c server.yaml | grep -q "déjà arrêtée" || fail "stop d'une instance arrêtée"
+{ "$bin" status -c server.yaml 2>&1 || true; } | has "injoignable" || fail "status après arrêt"
+"$bin" stop -c server.yaml | has "déjà arrêtée" || fail "stop d'une instance arrêtée"
 
 # 5. Arrêt immédiat
 "$bin" run -c server.yaml & pid=$!
 wait_ready
-"$bin" kill -c server.yaml | grep -q "immédiatement" || fail "kill"
+"$bin" kill -c server.yaml | has "immédiatement" || fail "kill"
 wait $pid || true
 
 # 6. SIGTERM : arrêt propre (gestionnaire de services)

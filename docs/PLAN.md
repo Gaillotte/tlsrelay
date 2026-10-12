@@ -116,6 +116,25 @@ Modules principaux de `libtlsrelay-core` :
 | C | Module PKI : AC racine et intermédiaires, signature des CSR, inventaire, révocation (CRL), assistant de rotation et de changement de racine, journal d'audit ; reprise du répertoire de la mini-AC | 10 j |
 | D | Tests (Qt Test, parité de validation éditeur/service), installeur, documentation | 9 j |
 
+Découpage en phases, chacune sur sa branche, validée par la CI puis fusionnée :
+
+| Phase | Lot | Contenu |
+|---|---|---|
+| 12 | A | Socle de l'éditeur dans `libtlsrelay-core` : écriture normalisée de la configuration et de la liste blanche, différences de texte ; mini-AC : révocation, CRL, journal d'audit chaîné ; application des CRL par le service (SPEC §7.7) |
+| 13 | B | Application Qt `tlsrelay-admin` : formulaires de configuration, validation à la saisie (règles du service), liste blanche, aperçu des différences, export des paquets de déploiement ; Qt en CI (Linux et Windows) |
+| 14 | C | Module PKI de l'éditeur : AC, signature des CSR, inventaire, révocation et CRL, assistants de renouvellement et de changement de racine, journal d'audit |
+| 15 | D | Tests Qt Test et parité de validation, fonctionnalité « tlsrelay-admin » du MSI (DLL Qt, avis LGPL), documentation, recette de l'éditeur |
+
+Décisions de la livraison 1.1 :
+
+| Sujet | Décision |
+|---|---|
+| Révocation | CRL publiées par l'AC (`ca crl`, éditeur) et **appliquées par le service** : `<pki_root>/crl.pem`, rechargé à chaud, canaux du pair révoqué fermés (SPEC §7.7) |
+| Licence de Qt | Qt 6 sous LGPLv3, liaison dynamique : DLL Qt non modifiées livrées avec l'éditeur, texte de la LGPL et offre des sources de Qt dans les avis des composants tiers |
+| Plateformes de l'éditeur | Livré sous Windows (fonctionnalité du MSI) ; compilé et testé aussi sous Linux en CI, sans paquet Linux |
+| Enregistrement d'une configuration | Réécriture normalisée (`to_yaml`) : les commentaires du fichier d'origine ne sont pas conservés ; l'aperçu des différences le montre et une copie `.bak` de l'original est gardée |
+| Journal d'audit de l'AC | `<ac>/audit.log`, une ligne par opération, chaîné par SHA-256 ; écrit par la ligne de commande et par l'éditeur |
+
 ## 5. Stratégie de tests
 
 ### 5.1 Principes

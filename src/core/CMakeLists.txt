@@ -4,6 +4,8 @@ add_library(tlsrelay_core STATIC
     src/units.cpp
     src/endpoint.cpp
     src/config.cpp
+    src/config_writer.cpp
+    src/text_diff.cpp
     src/whitelist.cpp
     src/logging.cpp
     src/openssl_info.cpp
@@ -12,6 +14,8 @@ add_library(tlsrelay_core STATIC
     src/pki/generation.cpp
     src/pki/request.cpp
     src/pki/authority.cpp
+    src/pki/audit.cpp
+    src/pki/revocation.cpp
     src/tunnel/frame.cpp
     src/relay/stream.cpp
     src/relay/dial.cpp

@@ -78,6 +78,12 @@ int verify_expected_issuer(int preverify_ok, X509_STORE_CTX* store) {
         X509_STORE_CTX_set_error(store, X509_V_ERR_APPLICATION_VERIFICATION);
         return 0;
     }
+    X509* cert = X509_STORE_CTX_get_current_cert(store);
+    if (context->is_revoked(cert)) {
+        report(ssl, std::string("certificat du ") + peer_role(*context) + " révoqué : " + subject_of(cert));
+        X509_STORE_CTX_set_error(store, X509_V_ERR_CERT_REVOKED);
+        return 0;
+    }
     return 1;
 }
 
@@ -106,11 +112,23 @@ bool has_trust(const pki::Generation* g) { return g && !g->trust_roots.empty() &
 
 void set_failure_sink(SSL* ssl, std::string* sink) { SSL_set_ex_data(ssl, failure_index(), sink); }
 
-Context::Context(SslCtxPtr ctx, std::shared_ptr<const pki::Generation> generation, bool server, bool verify)
-    : ctx_(std::move(ctx)), generation_(std::move(generation)), server_(server), verifies_peer_(verify) {}
+Context::Context(SslCtxPtr ctx, std::shared_ptr<const pki::Generation> generation, bool server, bool verify,
+                 std::shared_ptr<const Revocations> revocations)
+    : ctx_(std::move(ctx)),
+      generation_(std::move(generation)),
+      revocations_(std::move(revocations)),
+      server_(server),
+      verifies_peer_(verify) {}
+
+bool Context::is_revoked(const X509* cert) const {
+    if (!revocations_) return false;
+    const auto list = revocations_->get();
+    return list && list->is_revoked(cert);
+}
 
 std::shared_ptr<const Context> Context::make_server(std::shared_ptr<const pki::Generation> generation,
-                                                    bool require_client_certificate) {
+                                                    bool require_client_certificate,
+                                                    std::shared_ptr<const Revocations> revocations) {
     if (!has_identity(generation.get())) {
         throw std::runtime_error("contexte TLS serveur : identité absente de la génération");
     }
@@ -125,13 +143,14 @@ std::shared_ptr<const Context> Context::make_server(std::shared_ptr<const pki::G
     }
     SSL_CTX_set_alpn_select_cb(ctx.get(), select_alpn, nullptr);
     auto context = std::shared_ptr<Context>(
-        new Context(std::move(ctx), std::move(generation), true, require_client_certificate));
+        new Context(std::move(ctx), std::move(generation), true, require_client_certificate, std::move(revocations)));
     SSL_CTX_set_app_data(context->ctx_.get(), context.get());  // lu par verify_expected_issuer
     return context;
 }
 
 std::shared_ptr<const Context> Context::make_client(std::shared_ptr<const pki::Generation> generation,
-                                                    bool present_certificate) {
+                                                    bool present_certificate,
+                                                    std::shared_ptr<const Revocations> revocations) {
     if (!has_trust(generation.get())) {
         throw std::runtime_error("contexte TLS client : racines ou AC attendue absentes de la génération");
     }
@@ -147,7 +166,8 @@ std::shared_ptr<const Context> Context::make_client(std::shared_ptr<const pki::G
                                 static_cast<unsigned int>(wire.size())) != 0) {
         fail("protocole ALPN");
     }
-    auto context = std::shared_ptr<Context>(new Context(std::move(ctx), std::move(generation), false, true));
+    auto context = std::shared_ptr<Context>(
+        new Context(std::move(ctx), std::move(generation), false, true, std::move(revocations)));
     SSL_CTX_set_app_data(context->ctx_.get(), context.get());  // lu par verify_expected_issuer
     return context;
 }
@@ -187,6 +207,7 @@ std::string Context::check_peer(SSL* ssl) const {
         if (!generation_->is_expected_issuer(sk_X509_value(chain, 1))) {
             return "certificat du " + role + " émis par une AC inattendue : " + subject_of(sk_X509_value(chain, 1));
         }
+        if (is_revoked(SSL_get0_peer_certificate(ssl))) return "certificat du " + role + " révoqué";
     }
     return {};
 }

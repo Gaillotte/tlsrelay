@@ -22,4 +22,10 @@ std::optional<double> parse_percent(std::string_view text);
 // Forme lisible d'une durée, avec l'unité la plus grande qui la représente exactement.
 std::string format_duration(Duration d);
 
+// Forme lisible d'une taille, avec l'unité la plus grande qui la représente exactement ("4MiB").
+std::string format_size(std::uint64_t bytes);
+
+// Forme lisible d'une fraction en pourcentage (0.1 -> "10%"), relue à l'identique par parse_percent.
+std::string format_percent(double fraction);
+
 }  // namespace tlsrelay

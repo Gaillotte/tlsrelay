@@ -5,9 +5,13 @@
 //   tlsrelay pki activate -c <config> <génération> [--force]
 //   tlsrelay pki gen-csr -c <config> --subject DN [--san ...]
 //   tlsrelay pki install -c <config> [--generation vN] [--from kit] [--cert --chain --roots --issuer]
+//   tlsrelay pki crl -c <config> <fichier>
 //   tlsrelay ca init --dir <ac> [--org nom]
 //   tlsrelay ca sign --dir <ac> --role server|client --csr <fichier> [--san ...] [--days N] [--renew] --out <kit>
 //   tlsrelay ca list --dir <ac>
+//   tlsrelay ca revoke --dir <ac> --serial S [--reason motif] [--days N] [--out crl.pem]
+//   tlsrelay ca crl --dir <ac> [--days N] [--out crl.pem]
+//   tlsrelay ca audit --dir <ac>
 //   tlsrelay status|channels|metrics|kill|log-reopen [cible]
 //   tlsrelay stop [cible] [--timeout durée]
 //   tlsrelay reload [cible] [--kill-old]
@@ -25,9 +29,11 @@
 #include "tlsrelay/config.hpp"
 #include "tlsrelay/logging.hpp"
 #include "tlsrelay/openssl_info.hpp"
+#include "tlsrelay/pki/audit.hpp"
 #include "tlsrelay/pki/authority.hpp"
 #include "tlsrelay/pki/generation.hpp"
 #include "tlsrelay/pki/request.hpp"
+#include "tlsrelay/pki/revocation.hpp"
 #include "tlsrelay/relay/service.hpp"
 #include "tlsrelay/version.hpp"
 
@@ -102,6 +108,54 @@ int cmd_check_pki(const std::string& config_path, std::string name) {
     if (gen.cert) std::cout << " : certificat " << tlsrelay::tls::subject_of(gen.cert.get()) << ", valable jusqu'au "
                             << tlsrelay::tls::not_after_of(gen.cert.get());
     std::cout << '\n';
+    // CRL en place : contrôlée pour cette génération (seulement si elle vérifie les pairs).
+    const auto crl = std::filesystem::path(root) / tlsrelay::pki::kCrlFile;
+    if (ctx->second.trust && std::filesystem::exists(crl)) {
+        const auto revocations = tlsrelay::pki::load_revocations(crl, gen);
+        for (const auto& e : revocations.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
+        for (const auto& w : revocations.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+        if (!revocations.list) {
+            std::cerr << "CRL refusée\n";
+            return kExitConfig;
+        }
+        std::cout << "CRL valide : " << revocations.list->size() << " certificat(s) révoqué(s)\n";
+    }
+    return kExitOk;
+}
+
+// Contrôle un fichier de CRL pour la génération courante, puis le place dans
+// <pki_root>/crl.pem par renommage atomique (pris en compte à chaud).
+int cmd_pki_crl(const std::string& config_path, const std::string& file) {
+    const auto ctx = pki_context(config_path);
+    if (!ctx) return kExitConfig;
+    if (!ctx->second.trust) {
+        std::cerr << "erreur : cette instance ne vérifie pas le certificat de ses pairs : CRL sans objet\n";
+        return kExitConfig;
+    }
+    const std::filesystem::path root = ctx->first.credentials->pki_root;
+    const auto current = tlsrelay::pki::load_current_generation(root, ctx->second);
+    if (!current.generation) {
+        for (const auto& e : current.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
+        return kExitConfig;
+    }
+    const auto result = tlsrelay::pki::load_revocations(file, *current.generation);
+    for (const auto& e : result.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
+    for (const auto& w : result.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+    if (!result.list) {
+        std::cerr << "CRL refusée : " << file << '\n';
+        return kExitConfig;
+    }
+    try {
+        const auto tmp = root / (std::string(tlsrelay::pki::kCrlFile) + ".tmp");
+        std::filesystem::copy_file(file, tmp, std::filesystem::copy_options::overwrite_existing);
+        std::filesystem::rename(tmp, root / tlsrelay::pki::kCrlFile);
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    std::cout << "CRL installée dans " << (root / tlsrelay::pki::kCrlFile).string() << " : "
+              << result.list->size() << " certificat(s) révoqué(s) ; prise en compte par le service en cours "
+              << "d'exécution à la prochaine surveillance, ou avec reload\n";
     return kExitOk;
 }
 
@@ -253,8 +307,69 @@ int cmd_ca_list(const std::string& dir) {
         std::cout << entries.size() << " certificat(s) émis\n";
         for (const auto& e : entries) {
             std::cout << e.serial << "  " << e.role << "  " << e.status << "  jusqu'au " << e.not_after << "  "
-                      << e.subject << '\n';
+                      << e.subject;
+            if (!e.revoked_at.empty()) std::cout << "  (révoqué le " << e.revoked_at << ", " << e.reason << ")";
+            std::cout << '\n';
         }
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    return kExitOk;
+}
+
+// Publie les CRL et, si demandé, en écrit une copie (à déployer dans <pki_root>/crl.pem).
+int publish_crl(const std::string& dir, int days, const std::string& out, const std::string& passphrase_file) {
+    const auto passphrase = tlsrelay::app::read_passphrase(passphrase_file, false);
+    if (!passphrase) return kExitRuntime;
+    try {
+        const auto crl = tlsrelay::pki::publish_crl(dir, *passphrase, days);
+        if (!out.empty()) {
+            std::ofstream file(out, std::ios::binary | std::ios::trunc);
+            file << crl.pem;
+            if (!file) throw std::runtime_error("écriture impossible : " + out);
+        }
+        std::cout << "CRL n° " << crl.number << " publiée : " << crl.revoked << " certificat(s) révoqué(s), "
+                  << "prochaine mise à jour avant le " << crl.next_update << '\n'
+                  << "à copier dans <pki_root>/crl.pem de chaque instance : "
+                  << (out.empty() ? (std::filesystem::path(dir) / "crl.pem").string() : out) << '\n';
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    return kExitOk;
+}
+
+int cmd_ca_revoke(const std::string& dir, const std::string& serial, const std::string& reason_text, int days,
+                  const std::string& out, const std::string& passphrase_file) {
+    const auto reason = tlsrelay::pki::parse_revocation_reason(reason_text);
+    if (!reason) {
+        std::cerr << "erreur : motif inconnu « " << reason_text
+                  << " » (unspecified, keyCompromise, superseded, cessationOfOperation)\n";
+        return kExitConfig;
+    }
+    try {
+        const auto entry = tlsrelay::pki::revoke_certificate(dir, serial, *reason);
+        std::cout << "certificat " << entry.serial << " (" << entry.role << ", " << entry.subject << ") révoqué : "
+                  << entry.reason << '\n';
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    return publish_crl(dir, days, out, passphrase_file);
+}
+
+int cmd_ca_audit(const std::string& dir) {
+    try {
+        const auto log = tlsrelay::pki::read_audit(dir);
+        for (const auto& e : log.entries) {
+            std::cout << e.date << "  " << e.operator_name << "  " << e.operation << "  " << e.details << '\n';
+        }
+        if (log.broken_line) {
+            std::cerr << "journal d'audit altéré à la ligne " << *log.broken_line << " : " << log.problem << '\n';
+            return kExitRuntime;
+        }
+        std::cout << log.entries.size() << " opération(s), chaîne d'empreintes intacte\n";
     } catch (const std::exception& e) {
         std::cerr << "erreur : " << e.what() << '\n';
         return kExitRuntime;
@@ -551,6 +666,10 @@ int main(int argc, char** argv) {
     pki_install->add_option("--chain", chain, "AC intermédiaire qui l'a signé");
     pki_install->add_option("--roots", roots, "Racines de confiance (défaut : celles de la génération courante)");
     pki_install->add_option("--issuer", issuer, "AC attendue chez les pairs (défaut : celle de la génération courante)");
+    std::string crl_file;
+    auto* pki_crl = pki->add_subcommand("crl", "Contrôle et installe les CRL publiées par l'AC (<pki_root>/crl.pem)");
+    pki_crl->add_option("-c,--config", config_path, "Fichier de configuration")->required();
+    pki_crl->add_option("file", crl_file, "Fichier de CRL (ca crl --out)")->required();
 
     // Mini-AC (poste d'administration).
     std::string ca_dir, organization, passphrase_file, role, csr_path, out;
@@ -573,6 +692,22 @@ int main(int argc, char** argv) {
     ca_sign->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
     auto* ca_list = ca->add_subcommand("list", "Inventaire des certificats émis");
     ca_list->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
+    std::string serial, reason = "unspecified";
+    int crl_days = 30;
+    auto* ca_revoke = ca->add_subcommand("revoke", "Révoque un certificat émis et publie les CRL");
+    ca_revoke->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
+    ca_revoke->add_option("--serial", serial, "Numéro de série (ca list)")->required();
+    ca_revoke->add_option("--reason", reason, "unspecified, keyCompromise, superseded ou cessationOfOperation");
+    ca_revoke->add_option("--days", crl_days, "Validité des CRL en jours (défaut : 30)")->check(CLI::Range(1, 366));
+    ca_revoke->add_option("--out", out, "Copie des CRL à déployer (crl.pem)");
+    ca_revoke->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
+    auto* ca_crl = ca->add_subcommand("crl", "Publie les CRL des AC Serveurs et Clients");
+    ca_crl->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
+    ca_crl->add_option("--days", crl_days, "Validité des CRL en jours (défaut : 30)")->check(CLI::Range(1, 366));
+    ca_crl->add_option("--out", out, "Copie des CRL à déployer (crl.pem)");
+    ca_crl->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
+    auto* ca_audit = ca->add_subcommand("audit", "Journal d'audit de l'AC et contrôle de son intégrité");
+    ca_audit->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
 
     auto* version = app.add_subcommand("version", "Affiche la version de tlsrelay et d'OpenSSL");
 
@@ -639,6 +774,7 @@ int main(int argc, char** argv) {
     if (*check_pki) return cmd_check_pki(config_path, generation);
     if (*activate) return cmd_pki_activate(config_path, generation, force);
     if (*gen_csr) return cmd_gen_csr(config_path, subject, sans);
+    if (*pki_crl) return cmd_pki_crl(config_path, crl_file);
     if (*pki_install) {
         auto opt = [](const std::string& v) -> std::optional<std::filesystem::path> {
             return v.empty() ? std::nullopt : std::optional<std::filesystem::path>(v);
@@ -649,6 +785,9 @@ int main(int argc, char** argv) {
     if (*ca_init) return cmd_ca_init(ca_dir, organization, passphrase_file);
     if (*ca_sign) return cmd_ca_sign(ca_dir, role, csr_path, sans, days, renew, out, passphrase_file);
     if (*ca_list) return cmd_ca_list(ca_dir);
+    if (*ca_revoke) return cmd_ca_revoke(ca_dir, serial, reason, crl_days, out, passphrase_file);
+    if (*ca_crl) return publish_crl(ca_dir, crl_days, out, passphrase_file);
+    if (*ca_audit) return cmd_ca_audit(ca_dir);
 
     if (*version) {
         std::cout << "tlsrelay " << tlsrelay::kVersion << '\n'

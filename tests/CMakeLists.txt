@@ -14,6 +14,8 @@ add_executable(tlsrelay_tests
     test_admin.cpp
     test_ca.cpp
     test_attacks.cpp
+    test_writer.cpp
+    test_crl.cpp
     support/test_pki.cpp)
 
 target_link_libraries(tlsrelay_tests PRIVATE

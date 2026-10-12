@@ -2,7 +2,9 @@
 // signature, installation d'une génération. La PKI produite par la mini-AC
 // sert ensuite à une vraie chaîne mTLS.
 
+#include "tlsrelay/pki/audit.hpp"
 #include "tlsrelay/pki/authority.hpp"
+#include "tlsrelay/pki/revocation.hpp"
 #include "tlsrelay/pki/request.hpp"
 
 #include "support/net_helpers.hpp"
@@ -337,4 +339,175 @@ TEST(SubjectAltNames, ParsesTypedAndBareValues) {
     EXPECT_EQ(sans->to_openssl(), "DNS:relay.essai,DNS:agence.essai,IP:10.0.0.1,IP:::1");
     EXPECT_FALSE(pki::parse_sans({"ip:relay.essai"}, error));
     EXPECT_FALSE(pki::parse_sans({"nom invalide!"}, error));
+}
+
+namespace {
+
+using CrlPtr = std::unique_ptr<X509_CRL, decltype(&X509_CRL_free)>;
+
+std::vector<CrlPtr> crls_of(const std::string& pem) {
+    std::vector<CrlPtr> out;
+    tls::BioPtr bio(BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())));
+    while (X509_CRL* crl = PEM_read_bio_X509_CRL(bio.get(), nullptr, nullptr, nullptr)) out.emplace_back(crl, X509_CRL_free);
+    tls::take_openssl_errors();
+    return out;
+}
+
+std::string serial_hex(const ASN1_INTEGER* serial) {
+    BIGNUM* bn = ASN1_INTEGER_to_BN(serial, nullptr);
+    char* hex = BN_bn2hex(bn);
+    std::string out(hex);
+    OPENSSL_free(hex);
+    BN_free(bn);
+    return out;
+}
+
+}  // namespace
+
+TEST_F(CaTest, RevocationIsPublishedInSignedCrls) {
+    pki::SignRequest request;
+    request.role = Role::client;
+    request.csr_pem = custom_csr("EC", "P-256", "perdu.essai");
+    const auto lost = pki::sign_request(ca(), kPass, request);
+    request.csr_pem = custom_csr("EC", "P-256", "garde.essai");
+    const auto kept = pki::sign_request(ca(), kPass, request);
+
+    // Série en minuscules acceptée ; double révocation et série inconnue refusées.
+    std::string lower = lost.serial;
+    for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const auto entry = pki::revoke_certificate(ca(), lower, pki::RevocationReason::key_compromise);
+    EXPECT_EQ(entry.status, "révoqué");
+    EXPECT_EQ(entry.reason, "keyCompromise");
+    EXPECT_THROW(pki::revoke_certificate(ca(), lost.serial, pki::RevocationReason::unspecified), std::runtime_error);
+    EXPECT_THROW(pki::revoke_certificate(ca(), "ABCDEF", pki::RevocationReason::unspecified), std::runtime_error);
+    const auto entries = pki::list_issued(ca());
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].status, "révoqué");
+    EXPECT_FALSE(entries[0].revoked_at.empty());
+    EXPECT_EQ(entries[1].status, "valide");
+
+    EXPECT_THROW(pki::publish_crl(ca(), "mauvaise phrase de passe", 30), std::runtime_error);
+    const auto crl = pki::publish_crl(ca(), kPass, 30);
+    EXPECT_EQ(crl.number, 1u);
+    EXPECT_EQ(crl.revoked, 1u);
+    EXPECT_EQ(read(ca() / "crl.pem"), crl.pem);
+    const auto list = crls_of(crl.pem);
+    ASSERT_EQ(list.size(), 2u);  // AC Serveurs puis AC Clients
+
+    const auto servers = cert_of(read(ca() / "servers.cert.pem"));
+    const auto clients = cert_of(read(ca() / "clients.cert.pem"));
+    EXPECT_EQ(X509_CRL_verify(list[0].get(), X509_get0_pubkey(servers.get())), 1);
+    EXPECT_EQ(X509_CRL_verify(list[1].get(), X509_get0_pubkey(clients.get())), 1);
+    EXPECT_LE(sk_X509_REVOKED_num(X509_CRL_get_REVOKED(list[0].get())), 0);  // liste absente : -1
+    STACK_OF(X509_REVOKED)* revoked = X509_CRL_get_REVOKED(list[1].get());
+    ASSERT_EQ(sk_X509_REVOKED_num(revoked), 1);
+    X509_REVOKED* r = sk_X509_REVOKED_value(revoked, 0);
+    EXPECT_EQ(serial_hex(X509_REVOKED_get0_serialNumber(r)), lost.serial);
+    auto* reason = static_cast<ASN1_ENUMERATED*>(X509_REVOKED_get_ext_d2i(r, NID_crl_reason, nullptr, nullptr));
+    ASSERT_TRUE(reason);
+    EXPECT_EQ(ASN1_ENUMERATED_get(reason), CRL_REASON_KEY_COMPROMISE);
+    ASN1_ENUMERATED_free(reason);
+    // Le certificat révoqué est reconnu par OpenSSL ; l'autre non.
+    X509_REVOKED* found = nullptr;
+    EXPECT_EQ(X509_CRL_get0_by_cert(list[1].get(), &found, cert_of(lost.cert_pem).get()), 1);
+    EXPECT_EQ(X509_CRL_get0_by_cert(list[1].get(), &found, cert_of(kept.cert_pem).get()), 0);
+
+    // Numérotation croissante.
+    EXPECT_EQ(pki::publish_crl(ca(), kPass, 7).number, 2u);
+    EXPECT_THROW(pki::publish_crl(ca(), kPass, 0), std::runtime_error);
+
+    // Après révocation, le sujet peut recevoir un nouveau certificat sans --renew.
+    request.csr_pem = custom_csr("EC", "P-256", "perdu.essai");
+    EXPECT_NO_THROW(pki::sign_request(ca(), kPass, request));
+}
+
+TEST_F(CaTest, AuditLogRecordsOperationsAndDetectsTampering) {
+    pki::SignRequest request;
+    request.role = Role::client;
+    request.csr_pem = custom_csr("EC", "P-256", "audit.essai");
+    const auto issued = pki::sign_request(ca(), kPass, request);
+    pki::revoke_certificate(ca(), issued.serial, pki::RevocationReason::superseded);
+    pki::publish_crl(ca(), kPass, 30);
+
+    auto log = pki::read_audit(ca());
+    EXPECT_FALSE(log.broken_line) << log.problem;
+    ASSERT_EQ(log.entries.size(), 4u);
+    EXPECT_EQ(log.entries[0].operation, "init");
+    EXPECT_EQ(log.entries[1].operation, "sign");
+    EXPECT_NE(log.entries[1].details.find(issued.serial), std::string::npos);
+    EXPECT_EQ(log.entries[2].operation, "revoke");
+    EXPECT_EQ(log.entries[3].operation, "crl");
+    EXPECT_EQ(log.entries[0].operator_name, pki::current_operator());
+
+    // Une ligne modifiée rompt la chaîne à partir de cette ligne.
+    auto text = read(ca() / "audit.log");
+    const auto pos = text.find("revoke");
+    text.replace(pos, 6, "revok3");
+    { std::ofstream(ca() / "audit.log", std::ios::binary | std::ios::trunc) << text; }
+    log = pki::read_audit(ca());
+    ASSERT_TRUE(log.broken_line);
+    EXPECT_EQ(*log.broken_line, 3u);
+    EXPECT_EQ(log.entries.size(), 2u);
+
+    // Une ligne supprimée aussi.
+    auto lines = read(ca() / "audit.log");
+    lines.erase(0, lines.find('\n') + 1);
+    { std::ofstream(ca() / "audit.log", std::ios::binary | std::ios::trunc) << lines; }
+    log = pki::read_audit(ca());
+    ASSERT_TRUE(log.broken_line);
+    EXPECT_EQ(*log.broken_line, 1u);
+
+    // Champs nettoyés : une tabulation ou une fin de ligne ne casse pas le format.
+    std::filesystem::remove(ca() / "audit.log");
+    pki::append_audit(ca(), "test", "a\tb\nc");
+    log = pki::read_audit(ca());
+    ASSERT_FALSE(log.broken_line) << log.problem;
+    ASSERT_EQ(log.entries.size(), 1u);
+    EXPECT_EQ(log.entries[0].details, "a b c");
+}
+
+TEST_F(CaTest, IndexWithoutRevocationColumnsIsStillRead) {
+    // Inventaire écrit par la livraison 1 : cinq colonnes.
+    { std::ofstream(ca() / "index.tsv", std::ios::binary | std::ios::trunc)
+          << "# série\trôle\tétat\tfin de validité\tsujet\n"
+          << "0A1B\tclient\tvalide\t2099-01-01 00:00:00Z\tCN=ancien,O=Essai\n"; }
+    const auto entries = pki::list_issued(ca());
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].subject, "CN=ancien,O=Essai");
+    EXPECT_TRUE(entries[0].revoked_at.empty());
+    const auto revoked = pki::revoke_certificate(ca(), "0a1b", pki::RevocationReason::cessation_of_operation);
+    EXPECT_EQ(revoked.subject, "CN=ancien,O=Essai");
+    EXPECT_EQ(pki::list_issued(ca())[0].reason, "cessationOfOperation");
+    EXPECT_EQ(pki::publish_crl(ca(), kPass, 30).revoked, 1u);
+}
+
+TEST_F(CaTest, PublishedCrlIsAcceptedByInstancesOfBothRoles) {
+    const auto server_root = dir_.path() / "serveur";
+    const auto client_root = dir_.path() / "client";
+    provision(server_root, Role::server, "CN=relay.essai,O=Essai", {"relay.essai"});
+    provision(client_root, Role::client, "CN=agence.essai,O=Essai", {});
+    const auto client_cert = cert_of(read(client_root / "v1" / "cert.pem"));
+    const auto server_cert = cert_of(read(server_root / "v1" / "cert.pem"));
+    const auto serial = pki::list_issued(ca()).back().serial;  // certificat client
+    pki::revoke_certificate(ca(), serial, pki::RevocationReason::key_compromise);
+    const auto crl = pki::publish_crl(ca(), kPass, 30);
+    std::ofstream(dir_.path() / "crl.pem", std::ios::binary) << crl.pem;
+
+    const pki::Requirements server_req{Role::server, true, true};
+    const auto server_gen = pki::load_current_generation(server_root, server_req);
+    ASSERT_TRUE(server_gen.generation);
+    const auto on_server = pki::load_revocations(dir_.path() / "crl.pem", *server_gen.generation);
+    ASSERT_TRUE(on_server.list);
+    EXPECT_TRUE(on_server.warnings.empty()) << on_server.warnings.front().message;
+    EXPECT_TRUE(on_server.list->is_revoked(client_cert.get()));
+
+    const pki::Requirements client_req{Role::client, true, true};
+    const auto client_gen = pki::load_current_generation(client_root, client_req);
+    ASSERT_TRUE(client_gen.generation);
+    const auto on_client = pki::load_revocations(dir_.path() / "crl.pem", *client_gen.generation);
+    ASSERT_TRUE(on_client.list);
+    EXPECT_FALSE(on_client.list->is_revoked(server_cert.get()));
+    // Le client apprend que son propre certificat est révoqué.
+    ASSERT_FALSE(on_client.warnings.empty());
+    EXPECT_NE(on_client.warnings.front().message.find("cette instance"), std::string::npos);
 }

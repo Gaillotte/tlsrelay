@@ -2,6 +2,8 @@
 
 #include "files.hpp"
 
+#include "tlsrelay/pki/audit.hpp"
+
 #include <openssl/bn.h>
 #include <openssl/core_names.h>
 #include <openssl/pkcs12.h>
@@ -33,7 +35,10 @@ constexpr CaFiles kRoot{"root.key.pem", "root.cert.pem"};
 constexpr CaFiles kServers{"servers.key.pem", "servers.cert.pem"};
 constexpr CaFiles kClients{"clients.key.pem", "clients.cert.pem"};
 constexpr const char* kIndex = "index.tsv";
-constexpr const char* kIndexHeader = "# série\trôle\tétat\tfin de validité\tsujet\n";
+constexpr const char* kIndexHeader =
+    "# série\trôle\tétat\tfin de validité\tsujet\tdate de révocation\tmotif de révocation\n";
+constexpr const char* kCrlFile = "crl.pem";
+constexpr const char* kCrlNumberFile = "crlnumber";
 
 // Paramètres scrypt : 16 Mio de mémoire (sous la limite par défaut d'OpenSSL au déchiffrement).
 constexpr std::uint64_t kScryptN = 1 << 14;
@@ -193,7 +198,8 @@ std::string now_text() {
 void write_index(const fs::path& dir, const std::vector<IndexEntry>& entries) {
     std::string out = kIndexHeader;
     for (const auto& e : entries) {
-        out += e.serial + "\t" + e.role + "\t" + e.status + "\t" + e.not_after + "\t" + e.subject + "\n";
+        out += e.serial + "\t" + e.role + "\t" + e.status + "\t" + e.not_after + "\t" + e.subject + "\t" +
+               e.revoked_at + "\t" + e.reason + "\n";
     }
     const auto tmp = dir / (std::string(kIndex) + ".tmp");
     detail::write_file(tmp, out);
@@ -244,6 +250,8 @@ void init_authority(const fs::path& dir, const std::string& passphrase, const Au
     make_ca("AC Serveurs", "serverAuth", kServers);
     make_ca("AC Clients", "clientAuth", kClients);
     write_index(dir, {});
+    append_audit(dir, "init", "organisation=" + org + " racine=" + tls::subject_of(root.get()) + " fin=" +
+                                  tls::not_after_of(root.get()));
 }
 
 std::vector<IndexEntry> list_issued(const fs::path& dir) {
@@ -251,13 +259,21 @@ std::vector<IndexEntry> list_issued(const fs::path& dir) {
     std::istringstream in(detail::read_file(dir / kIndex));
     for (std::string line; std::getline(in, line);) {
         if (line.empty() || line[0] == '#') continue;
-        IndexEntry e;
-        std::istringstream fields(line);
-        std::getline(fields, e.serial, '\t');
-        std::getline(fields, e.role, '\t');
-        std::getline(fields, e.status, '\t');
-        std::getline(fields, e.not_after, '\t');
-        std::getline(fields, e.subject);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::vector<std::string> fields;
+        for (std::size_t start = 0;;) {
+            const auto tab = line.find('\t', start);
+            fields.push_back(line.substr(start, tab - start));
+            if (tab == std::string::npos) break;
+            start = tab + 1;
+        }
+        if (fields.size() < 5) continue;
+        IndexEntry e{fields[0], fields[1], fields[2], fields[3], fields[4], {}, {}};
+        // Inventaire d'avant la livraison 1.1 : cinq colonnes, sans révocation.
+        if (fields.size() >= 7) {
+            e.revoked_at = fields[5];
+            e.reason = fields[6];
+        }
         entries.push_back(std::move(e));
     }
     return entries;
@@ -367,8 +383,10 @@ IssuedCertificate sign_request(const fs::path& dir, const std::string& passphras
     issued.issuer_pem = detail::read_file(dir / peer_files.cert);
 
     detail::write_file(dir / "issued" / (issued.serial + ".pem"), issued.cert_pem);
-    entries.push_back({issued.serial, role_name(request.role), "valide", issued.not_after, subject_text});
+    entries.push_back({issued.serial, role_name(request.role), "valide", issued.not_after, subject_text, {}, {}});
     write_index(dir, entries);
+    append_audit(dir, "sign", "série=" + issued.serial + " rôle=" + role_name(request.role) + " sujet=" + subject_text +
+                                  " fin=" + issued.not_after + (request.renew ? " renouvellement" : ""));
     return issued;
 }
 
@@ -380,6 +398,153 @@ void write_bundle(const fs::path& out, const IssuedCertificate& issued) {
     detail::write_file(out / "chain.pem", issued.chain_pem);
     detail::write_file(out / "trust-roots.pem", issued.roots_pem);
     detail::write_file(out / "trust-issuer.pem", issued.issuer_pem);
+}
+
+std::string_view to_string(RevocationReason reason) {
+    switch (reason) {
+        case RevocationReason::unspecified: return "unspecified";
+        case RevocationReason::key_compromise: return "keyCompromise";
+        case RevocationReason::superseded: return "superseded";
+        case RevocationReason::cessation_of_operation: return "cessationOfOperation";
+    }
+    return "unspecified";
+}
+
+std::optional<RevocationReason> parse_revocation_reason(std::string_view text) {
+    for (auto r : {RevocationReason::unspecified, RevocationReason::key_compromise, RevocationReason::superseded,
+                   RevocationReason::cessation_of_operation}) {
+        if (text == to_string(r)) return r;
+    }
+    return std::nullopt;
+}
+
+IndexEntry revoke_certificate(const fs::path& dir, const std::string& serial, RevocationReason reason) {
+    std::string wanted = serial;
+    for (auto& c : wanted) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    auto entries = list_issued(dir);
+    for (auto& e : entries) {
+        if (e.serial != wanted) continue;
+        if (e.status == "révoqué") throw std::runtime_error("certificat " + e.serial + " déjà révoqué le " + e.revoked_at);
+        e.status = "révoqué";
+        e.revoked_at = now_text();
+        e.reason = std::string(to_string(reason));
+        write_index(dir, entries);
+        append_audit(dir, "revoke", "série=" + e.serial + " rôle=" + e.role + " sujet=" + e.subject + " motif=" + e.reason);
+        return e;
+    }
+    throw std::runtime_error("série " + serial + " inconnue de l'inventaire");
+}
+
+namespace {
+
+using CrlPtr = std::unique_ptr<X509_CRL, decltype(&X509_CRL_free)>;
+
+// "2026-10-12 08:00:00Z" (inventaire) vers ASN1_TIME.
+bool set_index_time(ASN1_TIME* t, const std::string& text) {
+    std::string compact;
+    for (char c : text) {
+        if (c != '-' && c != ' ' && c != ':') compact += c;
+    }
+    return ASN1_TIME_set_string_X509(t, compact.c_str()) == 1;
+}
+
+int reason_code(const std::string& reason) {
+    if (reason == "keyCompromise") return CRL_REASON_KEY_COMPROMISE;
+    if (reason == "superseded") return CRL_REASON_SUPERSEDED;
+    if (reason == "cessationOfOperation") return CRL_REASON_CESSATION_OF_OPERATION;
+    return CRL_REASON_UNSPECIFIED;
+}
+
+std::string build_crl(X509* ca, EVP_PKEY* key, const std::vector<IndexEntry>& revoked, std::uint64_t number, int days,
+                      std::string& next_update) {
+    CrlPtr crl(X509_CRL_new(), X509_CRL_free);
+    if (!crl || !X509_CRL_set_version(crl.get(), 1) || !X509_CRL_set_issuer_name(crl.get(), X509_get_subject_name(ca))) {
+        fail("création de la CRL impossible");
+    }
+    std::unique_ptr<ASN1_TIME, decltype(&ASN1_TIME_free)> last(X509_gmtime_adj(nullptr, -60), ASN1_TIME_free);
+    std::unique_ptr<ASN1_TIME, decltype(&ASN1_TIME_free)> next(X509_time_adj_ex(nullptr, days, 0, nullptr),
+                                                               ASN1_TIME_free);
+    if (!last || !next) fail("dates de la CRL invalides");
+    if (ASN1_TIME_compare(next.get(), X509_get0_notAfter(ca)) > 0) next.reset(ASN1_STRING_dup(X509_get0_notAfter(ca)));
+    if (!X509_CRL_set1_lastUpdate(crl.get(), last.get()) || !X509_CRL_set1_nextUpdate(crl.get(), next.get())) {
+        fail("dates de la CRL invalides");
+    }
+
+    for (const auto& e : revoked) {
+        X509_REVOKED* r = X509_REVOKED_new();
+        BIGNUM* bn = nullptr;
+        ASN1_INTEGER* serial = BN_hex2bn(&bn, e.serial.c_str()) ? BN_to_ASN1_INTEGER(bn, nullptr) : nullptr;
+        BN_free(bn);
+        std::unique_ptr<ASN1_TIME, decltype(&ASN1_TIME_free)> when(ASN1_TIME_new(), ASN1_TIME_free);
+        bool ok = r && serial && when && set_index_time(when.get(), e.revoked_at) &&
+                  X509_REVOKED_set_serialNumber(r, serial) && X509_REVOKED_set_revocationDate(r, when.get());
+        ASN1_INTEGER_free(serial);
+        if (ok && reason_code(e.reason) != CRL_REASON_UNSPECIFIED) {
+            ASN1_ENUMERATED* code = ASN1_ENUMERATED_new();
+            ok = code && ASN1_ENUMERATED_set(code, reason_code(e.reason)) &&
+                 X509_REVOKED_add1_ext_i2d(r, NID_crl_reason, code, 0, 0) == 1;
+            ASN1_ENUMERATED_free(code);
+        }
+        if (!ok || !X509_CRL_add0_revoked(crl.get(), r)) {
+            X509_REVOKED_free(r);
+            fail("entrée de CRL invalide pour la série " + e.serial);
+        }
+    }
+    X509_CRL_sort(crl.get());
+
+    ASN1_INTEGER* crl_number = ASN1_INTEGER_new();
+    const bool numbered = crl_number && ASN1_INTEGER_set_uint64(crl_number, number) &&
+                          X509_CRL_add1_ext_i2d(crl.get(), NID_crl_number, crl_number, 0, 0) == 1;
+    ASN1_INTEGER_free(crl_number);
+    if (!numbered) fail("numéro de CRL invalide");
+    X509V3_CTX ctx;
+    X509V3_set_ctx(&ctx, ca, nullptr, nullptr, crl.get(), 0);
+    X509_EXTENSION* aki = X509V3_EXT_conf_nid(nullptr, &ctx, NID_authority_key_identifier, "keyid:always");
+    const bool aki_ok = aki && X509_CRL_add_ext(crl.get(), aki, -1) == 1;
+    X509_EXTENSION_free(aki);
+    if (!aki_ok) fail("identifiant de clé de l'AC dans la CRL");
+
+    if (X509_CRL_sign(crl.get(), key, EVP_sha384()) <= 0) fail("signature de la CRL impossible");
+    next_update = tls::time_to_string(X509_CRL_get0_nextUpdate(crl.get()));
+    tls::BioPtr bio(BIO_new(BIO_s_mem()));
+    if (!PEM_write_bio_X509_CRL(bio.get(), crl.get())) fail("encodage de la CRL impossible");
+    return detail::bio_text(bio.get());
+}
+
+}  // namespace
+
+CrlInfo publish_crl(const fs::path& dir, const std::string& passphrase, int days) {
+    if (days < 1 || days > 366) throw std::runtime_error("durée de validité de la CRL invalide (1 à 366 jours)");
+    const auto entries = list_issued(dir);
+    std::uint64_t number = 1;
+    if (fs::exists(dir / kCrlNumberFile)) {
+        const auto text = detail::read_file(dir / kCrlNumberFile);
+        number = std::strtoull(text.c_str(), nullptr, 10) + 1;
+    }
+
+    CrlInfo info;
+    info.number = number;
+    for (const auto* files : {&kServers, &kClients}) {
+        const std::string role = files == &kServers ? "server" : "client";
+        std::vector<IndexEntry> revoked;
+        for (const auto& e : entries) {
+            if (e.role == role && e.status == "révoqué") revoked.push_back(e);
+        }
+        auto ca_cert = load_cert(dir / files->cert);
+        auto ca_key = load_key(dir / files->key, passphrase);
+        if (X509_check_private_key(ca_cert.get(), ca_key.get()) != 1) fail("clé et certificat de l'AC incohérents");
+        std::string next;
+        info.pem += build_crl(ca_cert.get(), ca_key.get(), revoked, number, days, next);
+        info.revoked += revoked.size();
+        if (info.next_update.empty() || next < info.next_update) info.next_update = next;
+    }
+    const auto tmp = dir / (std::string(kCrlFile) + ".tmp");
+    detail::write_file(tmp, info.pem);
+    fs::rename(tmp, dir / kCrlFile);
+    detail::write_file(dir / kCrlNumberFile, std::to_string(number) + "\n");
+    append_audit(dir, "crl", "numéro=" + std::to_string(number) + " révoqués=" + std::to_string(info.revoked) +
+                                 " prochaine=" + info.next_update);
+    return info;
 }
 
 }  // namespace tlsrelay::pki

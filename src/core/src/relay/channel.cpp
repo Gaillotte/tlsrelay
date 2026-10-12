@@ -51,7 +51,8 @@ CloseCode code_for(CloseReason r) {
         case CloseReason::dial_failed: return CloseCode::dest_unreachable;
         case CloseReason::not_authorized:
         case CloseReason::resume_refused: return CloseCode::not_authorized;
-        case CloseReason::peer_revoked: return CloseCode::peer_revoked;
+        case CloseReason::peer_revoked:
+        case CloseReason::certificate_revoked: return CloseCode::peer_revoked;
         case CloseReason::lifetime_exceeded: return CloseCode::lifetime_exceeded;
         case CloseReason::protocol_error: return CloseCode::protocol_error;
         case CloseReason::tls_failed:
@@ -83,6 +84,7 @@ std::string_view to_string(CloseReason r) {
         case CloseReason::tls_failed: return "tls_refuse";
         case CloseReason::not_authorized: return "non_autorise";
         case CloseReason::peer_revoked: return "pair_retire";
+        case CloseReason::certificate_revoked: return "certificat_revoque";
         case CloseReason::generation_retired: return "generation_retiree";
         case CloseReason::io_error: return "erreur_reseau";
         case CloseReason::lifetime_exceeded: return "duree_de_vie_depassee";
@@ -967,6 +969,19 @@ void Channel::close_if_retired(std::shared_ptr<const tls::Context> tls, std::sha
         if (self->closing_ || !self->transport_) return;
         const auto* ctx = self->transport_->stream->context();
         if (ctx && ctx != tls.get() && ctx != mtls.get()) self->stop(CloseReason::generation_retired);
+    });
+}
+
+void Channel::close_if_revoked() {
+    asio::post(executor_, [self = shared_from_this()] {
+        if (self->closing_ || !self->transport_) return;
+        const auto& stream = *self->transport_->stream;
+        const auto* ctx = stream.context();
+        if (!ctx || !ctx->is_revoked(stream.peer_certificate())) return;
+        ++self->stats_.certificates_revoked;
+        logging::activity().info("canal={} certificat du pair révoqué ({}) : fermeture du canal", self->id_,
+                                 stream.peer_subject());
+        self->stop(CloseReason::certificate_revoked);
     });
 }
 
