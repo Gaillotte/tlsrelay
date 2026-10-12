@@ -14,6 +14,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(TLSRELAY_BUILD_TESTS "Compiler les tests" ON)
 option(TLSRELAY_FUZZ "Compiler les cibles de fuzzing libFuzzer (clang)" OFF)
 option(TLSRELAY_WARNINGS_AS_ERRORS "Traiter les avertissements comme des erreurs" OFF)
+option(TLSRELAY_MSVC_ANALYZE "Analyse statique MSVC (/analyze) du code du projet" OFF)
 set(TLSRELAY_SANITIZERS "" CACHE STRING "Sanitizers à activer (ex. address,undefined), GCC/Clang uniquement")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Configuration TLS des ports 2 et 3 vue de l'extérieur (PLAN §5, sslyze) :
-# seul TLS 1.3 est accepté, avec les seules suites autorisées (SPEC §3) ;
-# pas de reprise de session ; certificat présenté conforme.
+# Configuration TLS des ports 2 et 3 vue de l'extérieur (PLAN §5.4, sslyze et
+# testssl.sh) : seul TLS 1.3 est accepté, avec les seules suites autorisées
+# (SPEC §3) ; pas de reprise de session ; certificat présenté conforme ;
+# aucune vulnérabilité connue signalée.
 # Usage : tls-scan.sh <chemin de tlsrelay>
+# TESTSSL=<chemin de testssl.sh> : ajoute l'analyse testssl.sh.
 set -euo pipefail
 
 bin=$(realpath "$1")
@@ -74,4 +76,42 @@ if problems:
     print("\n".join(problems)); sys.exit(1)
 PY
 done
+
+if [ -n "${TESTSSL:-}" ]; then
+  cat pki/client/v1/cert.pem pki/client/v1/key.pem > client-identity.pem
+  for p in $tls $mtls; do
+    mtls_opt=()
+    [ "$p" = "$mtls" ] && mtls_opt=(--mtls "$work/client-identity.pem")
+    "$TESTSSL" --quiet --warnings off --color 0 --sneaky "${mtls_opt[@]}" --add-ca "$work/pki/client/v1/trust-roots.pem" \
+      --protocols --server-defaults \
+      --vulnerable --server-preference --jsonfile "testssl-$p.json" "127.0.0.1:$p" >"testssl-$p.txt" 2>&1 || true
+    python3 - "testssl-$p.json" <<'PY' || { cat "testssl-$p.txt"; fail "testssl.sh, port $p"; }
+import json, sys
+findings = json.load(open(sys.argv[1]))
+by_id = {f["id"]: f for f in findings}
+problems = []
+# Protocoles : TLS 1.3 offert, tous les autres refusés.
+for pid in ["SSLv2", "SSLv3", "TLS1", "TLS1_1", "TLS1_2"]:
+    f = by_id.get(pid)
+    if f is None or not f["finding"].startswith("not offered"):
+        problems.append(f"{pid} : {f['finding'] if f else 'absent du rapport'}")
+if not by_id.get("TLS1_3", {}).get("finding", "").startswith("offered"):
+    problems.append(f"TLS1_3 : {by_id.get('TLS1_3', {}).get('finding')}")
+# Aucune constatation de sévérité élevée ou critique, ni d'erreur d'analyse.
+# Écart accepté (docs/PENTEST.md) : pas de CRL ni d'OCSP, la révocation passe par
+# la liste blanche et le retrait des générations PKI (SPEC §6 et §7).
+accepted = {"cert_revocation"}
+for f in findings:
+    if f["id"] in accepted:
+        continue
+    if f["severity"] in ("HIGH", "CRITICAL") or (f["severity"] == "FATAL" and f["id"] != "scanProblem"):
+        problems.append(f"{f['id']} [{f['severity']}] : {f['finding']}")
+    if f["id"] == "scanProblem":
+        problems.append(f"analyse incomplète : {f['finding']}")
+print(f"{sys.argv[1]} : {len(findings)} constatations, aucune de sévérité élevée" if not problems else "")
+if problems:
+    print("\n".join(problems)); sys.exit(1)
+PY
+  done
+fi
 echo "configuration TLS des ports tls et mtls : OK"

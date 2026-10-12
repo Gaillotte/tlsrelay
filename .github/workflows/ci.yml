@@ -54,12 +54,17 @@ jobs:
         if: matrix.name == 'GCC Release'
         run: sudo bash tests/lifecycle/systemd.sh build/src/app/tlsrelay
 
-      - name: Configuration TLS vue de l'extérieur (sslyze)
+      - name: Configuration TLS vue de l'extérieur (sslyze, testssl.sh)
         if: matrix.name == 'GCC Release'
         run: |
           python3 -m venv /tmp/sslyze
           /tmp/sslyze/bin/pip install -q sslyze
-          PATH="/tmp/sslyze/bin:$PATH" bash tests/lifecycle/tls-scan.sh build/src/app/tlsrelay
+          git clone -q --depth 1 --branch v3.2.1 https://github.com/testssl/testssl.sh.git /tmp/testssl
+          TESTSSL=/tmp/testssl/testssl.sh PATH="/tmp/sslyze/bin:$PATH" bash tests/lifecycle/tls-scan.sh build/src/app/tlsrelay
+
+      - name: Vulnérabilités des dépendances
+        if: matrix.name == 'GCC Release'
+        run: bash tools/check-deps.sh
 
   perf:
     name: Performances (1 000 canaux) et endurance (4 min)
@@ -194,6 +199,34 @@ jobs:
         with:
           name: fuzz-crashes
           path: build/fuzz-artifacts/
+
+  windows-analyze:
+    name: Windows MSVC /analyze
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\vcpkg-cache
+          key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json', 'vcpkg-overlays/**') }}
+          restore-keys: vcpkg-x64-windows-
+
+      - name: Préparation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configuration (/analyze, alertes en erreurs)
+        run: cmake --preset windows-msvc -DTLSRELAY_BUILD_TESTS=OFF -DTLSRELAY_MSVC_ANALYZE=ON -DTLSRELAY_WARNINGS_AS_ERRORS=ON
+
+      - name: Analyse (relais et testkit)
+        run: cmake --build --preset windows-release
 
   windows:
     name: Windows MSVC Release

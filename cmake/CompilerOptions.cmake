@@ -19,6 +19,12 @@ if(MSVC)
     if(TLSRELAY_WARNINGS_AS_ERRORS)
         target_compile_options(tlsrelay_options INTERFACE /WX)
     endif()
+    if(TLSRELAY_MSVC_ANALYZE)
+        # Code du projet seulement : les en-têtes des dépendances (inclusions
+        # système de vcpkg) ne sont ni analysés ni signalés.
+        target_compile_options(tlsrelay_options INTERFACE
+            /analyze /analyze:external- /external:anglebrackets /external:W0)
+    endif()
 else()
     target_compile_options(tlsrelay_options INTERFACE
         -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor
