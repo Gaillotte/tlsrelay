@@ -639,7 +639,7 @@ int main(int argc, char** argv) {
 
     if (*version) {
         std::cout << "tlsrelay " << tlsrelay::kVersion << '\n'
-                  << "OpenSSL " << tlsrelay::openssl_runtime_version() << '\n';
+                  << "bibliothèque : " << tlsrelay::openssl_runtime_version() << '\n';
         return kExitOk;
     }
     if (*check) return cmd_check_config(config_path);

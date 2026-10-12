@@ -57,6 +57,16 @@ private:
                 continue;
             }
             auto link = std::make_shared<Link>(Link{std::move(in), tcp::socket(strand)});
+            if (options_.source) {
+                // Le relais en aval voit l'adresse du vrai client (liste blanche par IP).
+                std::error_code bec;
+                link->out.open(target_.protocol(), bec);
+                if (!bec) link->out.bind(tcp::endpoint(*options_.source, 0), bec);
+                if (bec) {
+                    std::cerr << "adresse source " << *options_.source << " : " << bec.message() << '\n';
+                    continue;
+                }
+            }
             auto [cec] = co_await link->out.async_connect(target_, use_tuple);
             if (cec) continue;
             std::error_code ignored;

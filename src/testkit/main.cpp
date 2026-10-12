@@ -97,6 +97,8 @@ int main(int argc, char** argv) {
     proxy->add_option("--rate", proxy_options.rate_mbps, "Débit maximal en Mbit/s par sens");
     proxy->add_option("--cut-every", cut_every, "Coupure (RST) de toutes les connexions à cet intervalle");
     proxy->add_flag("--freeze", proxy_options.freeze, "Lien muet au lieu d'une coupure");
+    std::string proxy_source;
+    proxy->add_option("--source", proxy_source, "Adresse source des connexions vers la destination");
 
     testkit::PkiOptions pki_options;
     auto* pki = app.add_subcommand("pki", "PKI de test ; relancée, ajoute une génération et l'active");
@@ -136,6 +138,14 @@ int main(int argc, char** argv) {
         if (!l || !d || !c) return 2;
         proxy_options.delay = *d;
         proxy_options.cut_every = *c;
+        if (!proxy_source.empty()) {
+            std::error_code ec;
+            proxy_options.source = asio::ip::make_address(proxy_source, ec);
+            if (ec) {
+                std::cerr << "adresse source invalide : " << proxy_source << '\n';
+                return 2;
+            }
+        }
         return testkit::run_proxy(*l, *ep, proxy_options, threads);
     }
     return 2;

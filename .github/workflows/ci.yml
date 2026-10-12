@@ -66,6 +66,25 @@ jobs:
         if: matrix.name == 'GCC Release'
         run: bash tools/check-deps.sh
 
+      - name: Durcissement des exécutables
+        if: matrix.name == 'GCC Release'
+        run: bash tools/check-hardening.sh build/src/app/tlsrelay build/src/testkit/tlsrelay-testkit
+
+      - name: Recette automatisée (mode console)
+        if: matrix.name == 'GCC Release'
+        shell: pwsh
+        run: ./tools/recette.ps1 -BuildDir build/src/app -TestkitDir build/src/testkit -Quick -WorkDir recette
+
+      - name: Rapport de recette (Linux)
+        if: always() && matrix.name == 'GCC Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: recette-linux
+          path: |
+            recette/rapport.md
+            recette/logs/
+          if-no-files-found: ignore
+
   perf:
     name: Performances (1 000 canaux) et endurance (4 min)
     runs-on: ubuntu-24.04
@@ -259,6 +278,10 @@ jobs:
       - name: Tests
         run: ctest --preset windows-release -j 2
 
+      - name: Durcissement des exécutables
+        shell: pwsh
+        run: .\tools\check-hardening.ps1 build\windows-msvc\src\app\Release\tlsrelay.exe build\windows-msvc\src\testkit\Release\tlsrelay-testkit.exe
+
       - name: Version d'OpenSSL embarquée (3.5 LTS attendue)
         shell: pwsh
         run: |
@@ -273,3 +296,17 @@ jobs:
       - name: PKI en ligne de commande (mini-AC)
         shell: pwsh
         run: .\tests\lifecycle\windows-pki.ps1 -BuildDir build\windows-msvc\src\app\Release
+
+      - name: Recette automatisée (services Windows)
+        shell: pwsh
+        run: .\tools\recette.ps1 -BuildDir build\windows-msvc\src\app\Release -TestkitDir build\windows-msvc\src\testkit\Release -Services -Quick -WorkDir "$env:ProgramData\tlsrelay\recette-ci"
+
+      - name: Rapport de recette (Windows)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recette-windows
+          path: |
+            C:\ProgramData\tlsrelay\recette-ci\rapport.md
+            C:\ProgramData\tlsrelay\recette-ci\logs\
+          if-no-files-found: ignore
