@@ -128,8 +128,8 @@ std::string readme(const ExportRequest& r, const std::string& conf) {
           << "     " << tool << "pki activate -c " << conf << " v1\n";
     }
     s << step++ << ". Droits des fichiers : docs/INSTALLATION.md §4.4"
-      << (windows ? " (icacls, après l'installation du service)" : "") << ".\n"
-      << step++ << ". Service :\n"
+      << (windows ? " (icacls, après l'installation du service)" : "") << ".\n";
+    s << step++ << ". Service :\n"
       << "     " << tool << "service install --instance " << c.instance << " --boot\n"
       << "     " << tool << "start --instance " << c.instance << "\n"
       << "     " << tool << "status --instance " << c.instance << "\n";
