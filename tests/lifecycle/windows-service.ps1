@@ -105,6 +105,15 @@ try {
     if ($code -ne 0) { Fail "kill" }
     (Get-Service tlsrelay-ci).WaitForStatus('Stopped', '00:00:20')
 
+    Step "configuration devenue invalide : cause du refus dans le journal du service"
+    $good = Get-Content "$data\ci.yaml" -Raw
+    "$good`ninconnu: 1" | Set-Content -Encoding utf8 "$data\ci.yaml"
+    Run @('start', '--instance', 'ci') | Out-Null
+    $good | Set-Content -NoNewline -Encoding utf8 "$data\ci.yaml"
+    if ($code -eq 0) { Fail "démarrage accepté avec une configuration invalide" }
+    $log = Get-Content "$data\logs\ci.log" -Raw
+    if ($log -notmatch 'configuration .* refusée' -or $log -notmatch 'inconnu') { Fail "cause du refus absente du journal du service" }
+
     Step "désinstallation"
     Run @('service', 'uninstall', '--instance', 'ci') | Out-Null
     if ($code -ne 0) { Fail "désinstallation" }

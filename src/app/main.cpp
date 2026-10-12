@@ -270,13 +270,26 @@ int run_instance(const std::string& path, std::optional<tlsrelay::LogLevel> cli_
 
     const auto result = load_config_file(path);
     print_issues(result);
-    if (!result.config) return kExitConfig;
-    Config config = *result.config;
-    if (!instance.empty() && instance != config.instance) {
-        std::cerr << "erreur : la configuration " << path << " est celle de l'instance « " << config.instance
-                  << " » et non de « " << instance << " »\n";
+    std::string refusal;
+    if (result.config && !instance.empty() && instance != result.config->instance) {
+        refusal = "la configuration " + path + " est celle de l'instance « " + result.config->instance +
+                  " » et non de « " + instance + " »";
+        std::cerr << "erreur : " << refusal << '\n';
+    }
+    if (!result.config || !refusal.empty()) {
+#ifdef _WIN32
+        // Un service n'a pas de console : la cause de l'échec va dans son journal par défaut,
+        // dont le répertoire lui est ouvert à l'installation.
+        if (control) {
+            std::ofstream log(app::default_service_log(instance), std::ios::app);
+            log << "erreur : démarrage impossible, configuration " << path << " refusée\n";
+            for (const auto& e : result.errors) log << "erreur : " << e.path << " : " << e.message << '\n';
+            if (!refusal.empty()) log << "erreur : " << refusal << '\n';
+        }
+#endif
         return kExitConfig;
     }
+    Config config = *result.config;
 #ifdef _WIN32
     // Un service Windows n'a pas de console : journal dans %ProgramData%.
     std::string stderr_replacement;

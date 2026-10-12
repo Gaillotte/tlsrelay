@@ -444,7 +444,7 @@ admin:
 ### 10.3 Services
 
 - **Linux (systemd)** : unité modèle `/etc/systemd/system/tlsrelay@.service` et complément par instance (`tlsrelay@N.service.d/10-tlsrelay.conf` : configuration, délai d'arrêt = `shutdown_timeout` + 15 s). `Type=notify` (prêt quand les ports sont ouverts), compte système `tlsrelay`, `ProtectSystem=strict`, `ProtectHome`, seule capacité `CAP_NET_BIND_SERVICE`, relance en cas d'échec. Configuration par défaut : `/etc/tlsrelay/<instance>.yaml`. Le binaire doit être installé hors de `/home`.
-- **Windows** : service `tlsrelay-N` exécuté sous le compte virtuel `NT SERVICE\tlsrelay-N` (seul privilège : `SeChangeNotifyPrivilege`), arrêt du système notifié (`PRESHUTDOWN`) avec le délai de drain, relance en cas d'échec. Configuration par défaut : `%ProgramData%\tlsrelay\<instance>.yaml` ; si `logging.output` vaut `stderr`, journal dans `%ProgramData%\tlsrelay\logs\<instance>.log`.
+- **Windows** : service `tlsrelay-N` exécuté sous le compte virtuel `NT SERVICE\tlsrelay-N` (seul privilège : `SeChangeNotifyPrivilege`), arrêt du système notifié (`PRESHUTDOWN`) avec le délai de drain, relance en cas d'échec. Configuration par défaut : `%ProgramData%\tlsrelay\<instance>.yaml` ; si `logging.output` vaut `stderr`, journal dans `%ProgramData%\tlsrelay\logs\<instance>.log`. Une configuration illisible ou invalide au démarrage du service y est aussi consignée (le service n'a pas de console).
 - Le compte du service doit pouvoir lire la configuration, la liste blanche et la PKI ; ces fichiers ne doivent être lisibles que par lui et par les administrateurs.
 - Sockets d'écoute : `SO_REUSEADDR` (Linux), `SO_EXCLUSIVEADDRUSE` (Windows).
 - Au démarrage : contrôle de la version d'OpenSSL chargée (≥ 3.0), écrite dans les logs.

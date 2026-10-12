@@ -288,6 +288,8 @@ function Start-Relay([string]$role) {
             foreach ($path in (Config $role), (Join-Path $WorkDir "pki/$role"), (Join-Path $WorkDir 'logs'), (Join-Path $WorkDir 'whitelist.yaml')) {
                 if (Test-Path $path) { Note "  droits de ${path} :"; (& icacls $path 2>&1 | Out-String) -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { Note "    $($_.Trim())" } }
             }
+            $serviceLog = Join-Path $env:ProgramData "tlsrelay\logs\$role.log"
+            if (Test-Path $serviceLog) { Get-Content $serviceLog -Tail 10 | ForEach-Object { Note "  journal du service : $_" } }
             $console = Relay @('check-config', '-c', (Config $role))
             Note "  check-config (administrateur) : $console"
             throw "démarrage du service $role : $out"
