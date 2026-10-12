@@ -110,6 +110,8 @@ std::string encode_pong(std::uint64_t nonce);
 Open read_open(const Frame& f);
 Data read_data(const Frame& f);
 std::uint64_t read_u64(const Frame& f);  // ACK, SHUTDOWN_WR, RESUMED, PING, PONG
+// Le message vient de l'autre tlsrelay et finit dans les journaux : ses
+// caractères de contrôle sont échappés (\xNN), une ligne ne peut en devenir deux.
 Status read_status(const Frame& f);      // OPEN_FAIL, CLOSE
 Resume read_resume(const Frame& f);
 std::uint16_t read_code(const Frame& f);  // RESUME_FAIL

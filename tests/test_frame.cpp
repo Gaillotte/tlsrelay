@@ -97,6 +97,14 @@ TEST(Frame, StatusMessageIsTruncated) {
     EXPECT_EQ(read_status(f[0]).message.size(), kMaxMessage);
 }
 
+TEST(Frame, StatusMessageControlCharactersAreEscaped) {
+    // Message venu de l'autre tlsrelay, destiné aux journaux : pas de nouvelle ligne
+    // ni de séquence d'échappement de terminal.
+    const auto f = decode_all(encode_close(6, "fin\n2026-01-01 info  [config] faux\x1b[31m\\"));
+    ASSERT_EQ(f.size(), 1u);
+    EXPECT_EQ(read_status(f[0]).message, "fin\\x0a2026-01-01 info  [config] faux\\x1b[31m\\x5c");
+}
+
 TEST(Frame, WaitsForCompleteFrame) {
     const auto bytes = encode_ack(1);
     Decoder d;

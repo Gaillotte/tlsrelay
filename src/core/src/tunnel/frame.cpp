@@ -210,7 +210,18 @@ std::uint64_t read_u64(const Frame& f) { return get_u64(f.payload.data()); }
 Status read_status(const Frame& f) {
     Status s;
     s.code = get_u16(f.payload.data());
-    s.message.assign(reinterpret_cast<const char*>(f.payload.data()) + 2, f.payload.size() - 2);
+    static const char* digits = "0123456789abcdef";
+    for (std::size_t i = 2; i < f.payload.size(); ++i) {
+        const auto c = f.payload[i];
+        if (c < 0x20 || c == 0x7f || c == '\\') {
+            s.message += '\\';
+            s.message += 'x';
+            s.message += digits[c >> 4];
+            s.message += digits[c & 0xf];
+        } else {
+            s.message += static_cast<char>(c);
+        }
+    }
     return s;
 }
 

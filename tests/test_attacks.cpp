@@ -298,3 +298,33 @@ TEST_F(AttackTest, TraceLogsContainNoSecretsNorRelayedData) {
         }
     }
 }
+
+TEST_F(AttackTest, PeerMessageCannotInjectLogLines) {
+    const auto log_path = dir_ / "injection.log";
+    tlsrelay::LogConfig log;
+    log.output = log_path.string();
+    tlsrelay::logging::init(log);
+    {
+        EchoServer echo;
+        RunningService server(server_config(echo.port(), PortKind::tls));
+        RawTlsClient raw(server.port(PortKind::tls), TLS1_3_VERSION, "tlsrelay/1", h_->root.cert.get());
+        ASSERT_TRUE(raw.handshake());
+        TunnelProbe probe(raw);
+        ASSERT_TRUE(probe.open(PortKind::tls));
+        // CLOSE d'un code autre que NORMAL : le serveur journalise le message du pair.
+        ASSERT_TRUE(raw.write(tlsrelay::tunnel::encode_close(
+            static_cast<std::uint16_t>(CloseCode::internal_error), "fin\nINJECTE [config] faux\r\x1b[2J")));
+        EXPECT_TRUE(eventually([&] { return server.stats().channels_closed.load() == 1; }));
+    }
+    tlsrelay::logging::init_default();
+
+    const auto logs = read_file(log_path);
+    ASSERT_NE(logs.find("fermé par l'autre tlsrelay"), std::string::npos) << logs;
+    std::istringstream lines(logs);
+    std::string line;
+    while (std::getline(lines, line)) {
+        EXPECT_FALSE(line.starts_with("INJECTE")) << "ligne injectée : " << line;
+        EXPECT_EQ(line.find('\x1b'), std::string::npos) << "séquence d'échappement dans les journaux";
+        EXPECT_EQ(line.find('\r'), std::string::npos);
+    }
+}
