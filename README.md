@@ -21,6 +21,8 @@ Principales caractéristiques :
 
 ## Documentation
 
+- [Installation](docs/INSTALLATION.md) : paquets `.deb`, `.rpm` et `.msi`, première instance, mise à jour, désinstallation
+- [Exploitation](docs/EXPLOITATION.md) : commandes courantes, journaux, supervision, PKI, sauvegarde, dépannage
 - [Plan de développement](docs/PLAN.md) : décisions, architecture, planning, stratégie de tests, recette
 - [Spécification technique](docs/SPEC.md) : TLS, protocole de tunnel, liste blanche, PKI, configuration, cycle de vie
 - [Grille de test d'intrusion](docs/PENTEST.md) : points de contrôle, méthode, résultat attendu, couverture automatisée
@@ -41,6 +43,7 @@ Principales caractéristiques :
 | 8 | Durcissement : PING périodique (lien muet), fuzzing libFuzzer (6 cibles, nuit de 1 h), clang-tidy et cppcheck sans alerte, scan TLS (sslyze), OpenSSL 3.5 sous Linux | Terminée |
 | 9 | Outillage de test `tlsrelay-testkit` (charge, débit, latence, perturbations réseau, PKI de test), objectifs de performance mesurés, endurance | Terminée |
 | 10 | Campagne de sécurité : cas d'attaque automatisés, testssl.sh, MSVC `/analyze`, durcissement et dépendances vérifiés en CI, grille de test d'intrusion ; kit de recette (`recette.ps1`, cahier, procès-verbal) | Terminée |
+| 11 | Paquets `.deb`, `.rpm` et `.msi` (OpenSSL 3.5 LTS sous Windows), testés à l'installation sur Ubuntu 22.04 et 24.04, Debian 12, RHEL 9 et équivalents, Windows ; guides d'installation et d'exploitation | Terminée |
 
 Les trois ports sont disponibles. Le client et le serveur dialoguent avec le protocole de tunnel (SPEC §4) : sur les ports `tls` et `mtls`, le client renégocie la session à l'échéance de `session_lifetime` (nouvelle connexion, handshake complet avec la génération PKI courante) sans que l'application ne voie de coupure, et reprend la session si la connexion tombe. Le serveur n'accepte que des tlsrelay clients : une application ne peut pas s'y connecter directement.
 
@@ -74,6 +77,22 @@ cmake --preset linux-fuzz && cmake --build --preset linux-fuzz
 tools/run-fuzz.sh build/linux-fuzz 60                # 60 s par cible libFuzzer
 tests/lifecycle/tls-scan.sh build/linux-release/src/app/tlsrelay   # configuration TLS (sslyze)
 ```
+
+### Paquets
+
+```sh
+# Linux, dans un conteneur de la distribution la plus ancienne visée (dépendances embarquées) :
+docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 packaging/build-linux.sh paquets   # .deb
+docker run --rm -v "$PWD:/src" -w /src rockylinux:9 packaging/build-linux.sh paquets   # .rpm
+docker run --rm -v "$PWD:/src" -w /src debian:12 packaging/test-linux-package.sh paquets   # test d'installation
+```
+
+```bat
+rem Windows, après la compilation :
+cd build\windows-msvc && cpack -C Release -G WIX
+```
+
+`-DTLSRELAY_FETCH_DEPS=ON` remplace les dépendances du système (Asio, CLI11, spdlog, yaml-cpp) par des versions épinglées, liées statiquement ; seul OpenSSL reste celui de la distribution. Licence : [LICENSE](LICENSE) ; composants tiers : [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
 
 ### Windows (x64)
 

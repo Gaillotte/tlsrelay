@@ -45,7 +45,9 @@ set(CPACK_PACKAGE_DESCRIPTION
     "renégociation transparente, service systemd ou Windows, mini-AC en ligne de commande.")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/Gaillotte/tlsrelay")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
-set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_SOURCE_DIR}/LICENSE")
+# WiX n'accepte qu'une licence .txt ou .rtf : copie avec extension.
+configure_file("${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_BINARY_DIR}/LICENSE.txt" COPYONLY)
+set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_BINARY_DIR}/LICENSE.txt")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY tlsrelay)
 set(CPACK_COMPONENTS_ALL service testkit)
 set(CPACK_COMPONENT_SERVICE_DISPLAY_NAME "tlsrelay")
