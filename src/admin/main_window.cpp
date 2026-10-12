@@ -32,11 +32,13 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent),
       form_(new ConfigForm),
       whitelist_(new WhitelistEditor),
+      pki_(new PkiPanel),
       tabs_(new QTabWidget),
       issues_(new QListWidget),
       status_(new QLabel) {
     tabs_->addTab(form_, tr("Configuration"));
     tabs_->addTab(whitelist_, tr("Liste blanche"));
+    tabs_->addTab(pki_, tr("PKI (autorité de certification)"));
     auto* split = new QSplitter(Qt::Vertical);
     split->addWidget(tabs_);
     split->addWidget(issues_);
@@ -62,6 +64,8 @@ MainWindow::MainWindow(QWidget* parent)
         set_modified(true);
         revalidate();
     });
+    // La liste des erreurs concerne la configuration et la liste blanche, pas la PKI.
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) { issues_->setVisible(index != 2); });
     connect(issues_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) { go_to_issue(issues_->row(item)); });
     build_menus();
     new_document(Mode::server);

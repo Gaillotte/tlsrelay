@@ -111,4 +111,40 @@ struct CrlInfo {
 // Lève std::runtime_error (phrase de passe incorrecte, etc.).
 CrlInfo publish_crl(const std::filesystem::path& dir, const std::string& passphrase, int days = 30);
 
+// Vue d'ensemble d'une AC (éditeur tlsrelay-admin).
+struct CaCertificate {
+    std::string subject;
+    std::string not_after;
+    std::string fingerprint;  // SHA-256, hexadécimal par paires séparées par « : »
+};
+
+struct AuthorityInfo {
+    CaCertificate root;
+    CaCertificate servers;
+    CaCertificate clients;
+    std::size_t issued = 0;
+    std::size_t valid = 0;    // état valide et non expiré
+    std::size_t revoked = 0;
+    std::uint64_t crl_number = 0;  // 0 : aucune CRL publiée
+    std::string crl_next_update;   // vide si aucune CRL
+};
+
+// Lit les certificats et l'inventaire d'un répertoire d'AC. Lève
+// std::runtime_error si ce n'est pas un répertoire d'AC lisible.
+AuthorityInfo describe_authority(const std::filesystem::path& dir);
+
+// Vrai si la date de l'inventaire (« 2027-01-31 12:00:00Z ») est passée.
+bool is_past(const std::string& date);
+
+// Changement de racine (SPEC §7.5) entre l'AC en service (old_dir) et la
+// nouvelle (new_dir). Écrit dans out :
+//   serveur/trust-roots.pem, serveur/trust-issuer.pem   étapes 1 et 2, instances serveur
+//   client/trust-roots.pem, client/trust-issuer.pem     étapes 1 et 2, instances client
+//   crl.pem                                             CRL des deux AC (si publiées)
+//   LISEZMOI.txt                                        les trois étapes, commandes comprises
+// Les deux racines doivent différer. L'opération est tracée dans le journal
+// d'audit des deux AC. Lève std::runtime_error.
+void write_root_transition(const std::filesystem::path& old_dir, const std::filesystem::path& new_dir,
+                           const std::filesystem::path& out);
+
 }  // namespace tlsrelay::pki

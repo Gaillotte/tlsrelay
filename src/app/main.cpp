@@ -12,6 +12,7 @@
 //   tlsrelay ca revoke --dir <ac> --serial S [--reason motif] [--days N] [--out crl.pem]
 //   tlsrelay ca crl --dir <ac> [--days N] [--out crl.pem]
 //   tlsrelay ca audit --dir <ac>
+//   tlsrelay ca root-change --dir <ancienne ac> --new <nouvelle ac> --out <répertoire>
 //   tlsrelay status|channels|metrics|kill|log-reopen [cible]
 //   tlsrelay stop [cible] [--timeout durée]
 //   tlsrelay reload [cible] [--kill-old]
@@ -357,6 +358,19 @@ int cmd_ca_revoke(const std::string& dir, const std::string& serial, const std::
         return kExitRuntime;
     }
     return publish_crl(dir, days, out, passphrase_file);
+}
+
+int cmd_ca_root_change(const std::string& dir, const std::string& new_dir, const std::string& out) {
+    try {
+        tlsrelay::pki::write_root_transition(dir, new_dir, out);
+    } catch (const std::exception& e) {
+        std::cerr << "erreur : " << e.what() << '\n';
+        return kExitRuntime;
+    }
+    std::cout << "fichiers de confiance des étapes 1 et 2 écrits dans " << out
+              << " (serveur/, client/) ; procédure complète : " << (std::filesystem::path(out) / "LISEZMOI.txt").string()
+              << '\n';
+    return kExitOk;
 }
 
 int cmd_ca_audit(const std::string& dir) {
@@ -708,6 +722,11 @@ int main(int argc, char** argv) {
     ca_crl->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
     auto* ca_audit = ca->add_subcommand("audit", "Journal d'audit de l'AC et contrôle de son intégrité");
     ca_audit->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
+    std::string new_ca_dir;
+    auto* ca_root_change = ca->add_subcommand("root-change", "Prépare le changement de racine (fichiers de confiance, étapes)");
+    ca_root_change->add_option("--dir", ca_dir, "AC en service (ancienne racine)")->required();
+    ca_root_change->add_option("--new", new_ca_dir, "Nouvelle AC (ca init)")->required();
+    ca_root_change->add_option("--out", out, "Répertoire à produire")->required();
 
     auto* version = app.add_subcommand("version", "Affiche la version de tlsrelay et d'OpenSSL");
 
@@ -788,6 +807,7 @@ int main(int argc, char** argv) {
     if (*ca_revoke) return cmd_ca_revoke(ca_dir, serial, reason, crl_days, out, passphrase_file);
     if (*ca_crl) return publish_crl(ca_dir, crl_days, out, passphrase_file);
     if (*ca_audit) return cmd_ca_audit(ca_dir);
+    if (*ca_root_change) return cmd_ca_root_change(ca_dir, new_ca_dir, out);
 
     if (*version) {
         std::cout << "tlsrelay " << tlsrelay::kVersion << '\n'

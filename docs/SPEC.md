@@ -308,6 +308,7 @@ Un échec conserve la génération courante et produit une erreur dans la catég
 | `tlsrelay ca revoke --dir <ac> --serial S [--reason motif] [--days 30] [--out crl.pem]` | Révoque un certificat émis (motifs RFC 5280 : `unspecified`, `keyCompromise`, `superseded`, `cessationOfOperation`) puis publie les CRL (§7.7) |
 | `tlsrelay ca crl --dir <ac> [--days 30] [--out crl.pem]` | Publie les CRL des AC Serveurs et Clients (à refaire avant leur échéance) |
 | `tlsrelay ca audit --dir <ac>` | Affiche le journal d'audit de l'AC et vérifie sa chaîne d'empreintes |
+| `tlsrelay ca root-change --dir <ancienne> --new <nouvelle> --out <répertoire>` | Prépare le changement de racine (§7.5) : fichiers de confiance des étapes 1 et 2 par rôle (`serveur/`, `client/` : deux racines, AC attendue des deux racines), CRL des deux AC, `LISEZMOI.txt` avec les commandes de chaque étape |
 | `tlsrelay pki crl -c <config> <fichier>` | Contrôle des CRL pour la génération courante, puis installation dans `<pki_root>/crl.pem` (renommage atomique) |
 
 **Politique de `ca sign`**
@@ -321,7 +322,7 @@ Un échec conserve la génération courante et produit une erreur dans la catég
 
 **Clé d'une instance sous Windows** : `key.pem` hérite des droits du répertoire `pki_root`, qui doit être réservé aux Administrateurs et au compte du service (par exemple `icacls <pki_root> /inheritance:r /grant:r "Administrateurs:(OI)(CI)F" "NT SERVICE\tlsrelay-N:(OI)(CI)R"`).
 
-**Journal d'audit** (`<ac>/audit.log`) : une ligne par opération (`init`, `sign`, `revoke`, `crl`), champs séparés par des tabulations : date UTC, compte de l'opérateur, opération, détails, empreinte. L'empreinte est le SHA-256 de « empreinte précédente, tabulation, ligne sans empreinte » (64 zéros pour la première ligne) : une ligne modifiée, supprimée ou insérée rompt la chaîne, ce que `ca audit` signale. Un répertoire d'AC créé avant la livraison 1.1 reçoit son journal à la première opération.
+**Journal d'audit** (`<ac>/audit.log`) : une ligne par opération (`init`, `sign`, `revoke`, `crl`, `root-transition`), champs séparés par des tabulations : date UTC, compte de l'opérateur, opération, détails, empreinte. L'empreinte est le SHA-256 de « empreinte précédente, tabulation, ligne sans empreinte » (64 zéros pour la première ligne) : une ligne modifiée, supprimée ou insérée rompt la chaîne, ce que `ca audit` signale. Un répertoire d'AC créé avant la livraison 1.1 reçoit son journal à la première opération.
 
 L'inventaire graphique et les assistants de renouvellement et de changement de racine relèvent de l'éditeur `tlsrelay-admin` (livraison 1.1).
 

@@ -478,15 +478,13 @@ try {
         $ac = Join-Path $WorkDir 'ac'
         $ac2 = Join-Path $WorkDir 'ac2'
         $out = Relay @('ca', 'init', '--dir', $ac2, '--org', 'Recette'); Check ($exitCode -eq 0) 'nouvelle AC (racine, AC Serveurs, AC Clients)'
-        $roots = Join-Path $WorkDir 'racines-ancienne-et-nouvelle.pem'
-        (Get-Content (Join-Path $ac 'root.cert.pem') -Raw) + (Get-Content (Join-Path $ac2 'root.cert.pem') -Raw) | Set-Content -NoNewline -Encoding ascii $roots
-        # AC attendue chez le pair : AC Clients pour le serveur, AC Serveurs pour le client.
-        $issuers = @{}
-        foreach ($pair in @(@('rc-server', 'clients'), @('rc-client', 'servers'))) {
-            $file = Join-Path $WorkDir "emetteurs-$($pair[0]).pem"
-            (Get-Content (Join-Path $ac "$($pair[1]).cert.pem") -Raw) + (Get-Content (Join-Path $ac2 "$($pair[1]).cert.pem") -Raw) |
-                Set-Content -NoNewline -Encoding ascii $file
-            $issuers[$pair[0]] = $file
+        # Fichiers de confiance des étapes 1 et 2 (deux racines ; AC attendue chez le pair des deux racines).
+        $transition = Join-Path $WorkDir 'changement-de-racine'
+        $out = Relay @('ca', 'root-change', '--dir', $ac, '--new', $ac2, '--out', $transition); Check ($exitCode -eq 0) 'fichiers de transition (ca root-change)'
+        $trust = @{}
+        foreach ($pair in @(@('rc-server', 'serveur'), @('rc-client', 'client'))) {
+            $trust[$pair[0]] = @('--roots', (Join-Path $transition "$($pair[1])/trust-roots.pem"),
+                                 '--issuer', (Join-Path $transition "$($pair[1])/trust-issuer.pem"))
         }
         $instances = @(@{ Role = 'rc-server'; Kind = 'server'; Subject = 'CN=relay.recette,O=Recette'; San = @('--san', 'relay.recette') },
                        @{ Role = 'rc-client'; Kind = 'client'; Subject = 'CN=rc-client,O=Recette'; San = @() })
@@ -515,9 +513,9 @@ try {
         Start-Background 'flux-racine' $kit @('throughput', '--target', "$($A.Client):$($P.ClientMtls)", '--duration', "${fluxSeconds}s", '--rate', '20', '--json') | Out-Null
         Start-Sleep -Seconds 1
 
-        foreach ($spec in $instances) { $g = & $nextGeneration $spec $ac $true @('--roots', $roots, '--issuer', $issuers[$spec.Role]) 'etape1' }
+        foreach ($spec in $instances) { $g = & $nextGeneration $spec $ac $true $trust[$spec.Role] 'etape1' }
         Check (Test-Load $P.ClientMtls 20 '64KiB') 'étape 1 (pré-confiance : deux racines, ancienne PKI) : canaux mtls'
-        foreach ($spec in $instances) { $g = & $nextGeneration $spec $ac2 $false @('--roots', $roots, '--issuer', $issuers[$spec.Role]) 'etape2' }
+        foreach ($spec in $instances) { $g = & $nextGeneration $spec $ac2 $false $trust[$spec.Role] 'etape2' }
         Check (Test-Load $P.ClientMtls 20 '64KiB') 'étape 2 (bascule : nouvelle PKI, deux racines) : canaux mtls'
         Check (Test-Load $P.ClientTls 20 '64KiB') 'étape 2 : canaux tls'
         foreach ($spec in $instances) { $g = & $nextGeneration $spec $ac2 $true @() 'etape3' }

@@ -7,6 +7,7 @@
 #include "config_form.hpp"
 #include "deployment.hpp"
 #include "document.hpp"
+#include "pki_panel.hpp"
 #include "whitelist_editor.hpp"
 
 #include <QMainWindow>
@@ -45,6 +46,7 @@ public:
     ConfigForm* config_form() const { return form_; }
     WhitelistEditor* whitelist_editor() const { return whitelist_; }
     QListWidget* issues() const { return issues_; }
+    PkiPanel* pki_panel() const { return pki_; }
 
     // Points d'interaction remplaçables (tests) : confirmation de
     // l'enregistrement (aperçu des différences) et message d'erreur.
@@ -66,6 +68,7 @@ private:
 
     ConfigForm* form_;
     WhitelistEditor* whitelist_;
+    PkiPanel* pki_;
     QTabWidget* tabs_;
     QListWidget* issues_;
     QLabel* status_;

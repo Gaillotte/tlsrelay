@@ -11,7 +11,9 @@ add_library(tlsrelay_admin_lib STATIC
     export_dialog.cpp
     main_window.cpp
     deployment.cpp
-    document.cpp)
+    document.cpp
+    pki_panel.cpp
+    sign_dialog.cpp)
 target_include_directories(tlsrelay_admin_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(tlsrelay_admin_lib
     PUBLIC tlsrelay::core Qt6::Widgets

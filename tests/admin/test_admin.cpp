@@ -5,8 +5,13 @@
 #include "diff_dialog.hpp"
 #include "document.hpp"
 #include "main_window.hpp"
+#include "pki_panel.hpp"
+#include "sign_dialog.hpp"
+#include "tlsrelay/pki/audit.hpp"
+#include "tlsrelay/pki/request.hpp"
 #include "whitelist_editor.hpp"
 
+#include <QLabel>
 #include <QListWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -57,6 +62,10 @@ private slots:
     void new_document_is_saved_normalized();
     void export_package_for_linux_and_windows();
     void diff_preview_lists_changes();
+    void pki_panel_full_cycle();
+    void pki_panel_refuses_wrong_passphrase_and_bad_directory();
+    void sign_dialog_inspects_request();
+    void pki_root_change_preparation();
 };
 
 void AdminTest::form_round_trips_examples() {
@@ -339,6 +348,169 @@ void AdminTest::diff_preview_lists_changes() {
     QVERIFY(html.contains("+ port: 2"));
     QVERIFY(html.contains("b.yaml"));
     QVERIFY(!html.contains("c.yaml"));
+}
+
+namespace {
+
+const std::string kPass = "phrase de passe d'essai";
+
+// Instance factice : génération avec demande de signature, comme « pki gen-csr ».
+std::filesystem::path make_request(const std::filesystem::path& pki_root, const std::string& subject) {
+    return pki::generate_csr(pki_root, subject, {}).csr;
+}
+
+int rows_with(QTableWidget* table, int column, const QString& text) {
+    int n = 0;
+    for (int r = 0; r < table->rowCount(); ++r) n += table->item(r, column)->text() == text;
+    return n;
+}
+
+}  // namespace
+
+void AdminTest::pki_panel_full_cycle() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    PkiPanel panel;
+    QStringList reports;
+    panel.report = [&](const QString& m) { reports << m; };
+    panel.inform = [](const QString&) {};
+    int asked = 0;
+    panel.ask_passphrase = [&](const QString&, bool) -> std::optional<std::string> {
+        ++asked;
+        return kPass;
+    };
+    QVERIFY(panel.create_authority(dir / "ac", "Essai"));
+    QVERIFY(panel.info().has_value());
+    QCOMPARE(QString::fromStdString(panel.info()->root.subject), QString("CN=Essai AC Racine,O=Essai"));
+
+    // Signature d'un serveur et d'un client.
+    SignOptions server{make_request(dir / "srv", "CN=relay.essai,O=Essai"), pki::Role::server, {"relay.essai"}, 365,
+                       false, dir / "kit-srv"};
+    const auto s = panel.sign(server);
+    QVERIFY2(s.has_value(), qPrintable(reports.join("\n")));
+    QVERIFY(std::filesystem::exists(dir / "kit-srv" / "trust-issuer.pem"));
+    SignOptions client{make_request(dir / "cli", "CN=agence.essai,O=Essai"), pki::Role::client, {}, 30, false,
+                       dir / "kit-cli"};
+    const auto c = panel.sign(client);
+    QVERIFY(c.has_value());
+    QCOMPARE(panel.inventory()->rowCount(), 2);
+    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status, "valide"), 2);
+
+    // Même sujet sans renouvellement : refusé ; avec : l'ancien est remplacé.
+    client.csr = make_request(dir / "cli", "CN=agence.essai,O=Essai");
+    QVERIFY(!panel.sign(client).has_value());
+    QVERIFY(reports.last().contains("déjà attribué"));
+    client.renew = true;
+    client.out = dir / "kit-cli2";
+    QVERIFY(panel.sign(client).has_value());
+    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status, "remplacé"), 1);
+
+    // Filtres : le certificat de 30 jours expire bientôt.
+    panel.set_filter(PkiPanel::expiring);
+    QCOMPARE(panel.inventory()->rowCount(), 1);
+    panel.set_filter(PkiPanel::retired);
+    QCOMPARE(panel.inventory()->rowCount(), 1);
+    panel.set_filter(PkiPanel::all);
+
+    // Révocation : inventaire, CRL publiées et copie à déployer.
+    QVERIFY(panel.revoke(s->serial, pki::RevocationReason::key_compromise, 30, dir / "deploy" / "crl.pem"));
+    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status, "révoqué"), 1);
+    QCOMPARE(panel.info()->revoked, size_t(1));
+    QCOMPARE(panel.info()->crl_number, std::uint64_t(1));
+    QVERIFY(read(dir / "deploy" / "crl.pem").find("BEGIN X509 CRL") != std::string::npos);
+    QVERIFY(!panel.revoke(s->serial, pki::RevocationReason::unspecified, 30, std::nullopt));  // déjà révoqué
+    QVERIFY(panel.publish_crl(7, std::nullopt).has_value());
+    QCOMPARE(panel.info()->crl_number, std::uint64_t(2));
+
+    // Journal d'audit : création, 3 signatures, révocation, 2 CRL.
+    QCOMPARE(panel.audit()->rowCount(), 7);
+    QVERIFY(panel.audit_status()->text().contains("intacte"));
+
+    // Un autre panneau reprend le même répertoire (mini-AC de la ligne de commande).
+    PkiPanel other;
+    other.report = [](const QString& m) { QFAIL(qPrintable(m)); };
+    QVERIFY(other.open_authority(dir / "ac"));
+    QCOMPARE(other.inventory()->rowCount(), 3);
+
+    // Journal altéré : signalé.
+    auto log = read(dir / "ac" / "audit.log");
+    log.replace(log.find("sign"), 4, "s1gn");
+    write(dir / "ac" / "audit.log", log);
+    other.refresh();
+    QVERIFY(other.audit_status()->text().contains("altéré"));
+    QVERIFY(asked >= 6);
+}
+
+void AdminTest::pki_panel_refuses_wrong_passphrase_and_bad_directory() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    PkiPanel panel;
+    QStringList reports;
+    panel.report = [&](const QString& m) { reports << m; };
+    QVERIFY(!panel.open_authority(dir / "rien"));
+    QVERIFY(reports.last().contains("n'est pas un répertoire d'AC"));
+    panel.ask_passphrase = [](const QString&, bool) -> std::optional<std::string> { return std::string("courte"); };
+    QVERIFY(!panel.create_authority(dir / "ac", "Essai"));
+    QVERIFY(reports.last().contains("trop courte"));
+    panel.ask_passphrase = [](const QString&, bool) -> std::optional<std::string> { return kPass; };
+    QVERIFY(panel.create_authority(dir / "ac", "Essai"));
+    panel.ask_passphrase = [](const QString&, bool) -> std::optional<std::string> { return std::string("mauvaise phrase !"); };
+    const SignOptions options{make_request(dir / "srv", "CN=x.essai"), pki::Role::server, {"x.essai"}, 365, false,
+                              dir / "kit"};
+    QVERIFY(!panel.sign(options).has_value());
+    QVERIFY(reports.last().contains("phrase de passe incorrecte"));
+    QCOMPARE(panel.inventory()->rowCount(), 0);
+    // Saisie annulée : rien n'est fait, sans message.
+    panel.ask_passphrase = [](const QString&, bool) -> std::optional<std::string> { return std::nullopt; };
+    const auto count = reports.size();
+    QVERIFY(!panel.publish_crl(30, std::nullopt).has_value());
+    QCOMPARE(reports.size(), count);
+}
+
+void AdminTest::sign_dialog_inspects_request() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    const auto csr = make_request(dir / "srv", "CN=relay.essai,O=Essai");
+    SignDialog dialog(false, {}, pki::Role::server, nullptr);
+    dialog.set_csr(to_qstring(csr));
+    QVERIFY(dialog.request_description().contains("CN=relay.essai,O=Essai"));
+    QVERIFY(!dialog.ready());  // serveur sans SAN
+    dialog.set_sans("relay.essai, ip:192.0.2.10");
+    QVERIFY(dialog.ready());
+    const auto options = dialog.options();
+    QCOMPARE(options.sans.size(), size_t(2));
+    QCOMPARE(options.out, csr.parent_path() / "kit");
+    dialog.set_sans("ip:999.1.1.1");
+    QVERIFY(!dialog.ready());
+    write(dir / "faux.csr", "pas une demande");
+    dialog.set_csr(to_qstring(dir / "faux.csr"));
+    QVERIFY(dialog.request_description().contains("refusée"));
+    QVERIFY(!dialog.ready());
+
+    // Renouvellement : un sujet différent du certificat sélectionné est signalé.
+    SignDialog renew(true, "CN=autre,O=Essai", pki::Role::client, nullptr);
+    renew.set_csr(to_qstring(make_request(dir / "cli", "CN=agence.essai,O=Essai")));
+    QVERIFY(renew.options().renew);
+    QVERIFY(renew.request_description().contains("attention"));
+    QVERIFY(renew.ready());
+}
+
+void AdminTest::pki_root_change_preparation() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    PkiPanel panel;
+    QStringList reports;
+    panel.report = [&](const QString& m) { reports << m; };
+    panel.ask_passphrase = [](const QString&, bool) -> std::optional<std::string> { return kPass; };
+    QVERIFY(panel.create_authority(dir / "ac2", "Essai"));
+    QVERIFY(panel.create_authority(dir / "ac", "Essai"));  // AC en service
+    QVERIFY(!panel.prepare_root_change(dir / "ac", dir / "x"));
+    QVERIFY(reports.last().contains("même racine"));
+    QVERIFY(panel.prepare_root_change(dir / "ac2", dir / "transition"));
+    for (const char* f : {"serveur/trust-roots.pem", "serveur/trust-issuer.pem", "client/trust-roots.pem", "LISEZMOI.txt"}) {
+        QVERIFY2(std::filesystem::exists(dir / "transition" / f), f);
+    }
+    QCOMPARE(panel.audit()->item(panel.audit()->rowCount() - 1, 2)->text(), QString("root-transition"));
 }
 
 QTEST_MAIN(AdminTest)

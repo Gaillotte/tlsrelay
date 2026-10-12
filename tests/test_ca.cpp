@@ -511,3 +511,86 @@ TEST_F(CaTest, PublishedCrlIsAcceptedByInstancesOfBothRoles) {
     ASSERT_FALSE(on_client.warnings.empty());
     EXPECT_NE(on_client.warnings.front().message.find("cette instance"), std::string::npos);
 }
+
+TEST_F(CaTest, DescribeAuthoritySummarizesCertificatesAndCrl) {
+    pki::SignRequest request;
+    request.role = Role::client;
+    request.csr_pem = custom_csr("EC", "P-256", "a.essai");
+    const auto a = pki::sign_request(ca(), kPass, request);
+    request.csr_pem = custom_csr("EC", "P-256", "b.essai");
+    pki::sign_request(ca(), kPass, request);
+    auto info = pki::describe_authority(ca());
+    EXPECT_EQ(info.root.subject, "CN=Essai AC Racine,O=Essai");
+    EXPECT_EQ(info.servers.subject, "CN=Essai AC Serveurs,O=Essai");
+    EXPECT_EQ(info.root.fingerprint.size(), 32u * 3 - 1);
+    EXPECT_EQ(info.issued, 2u);
+    EXPECT_EQ(info.valid, 2u);
+    EXPECT_EQ(info.crl_number, 0u);
+    EXPECT_TRUE(info.crl_next_update.empty());
+    pki::revoke_certificate(ca(), a.serial, pki::RevocationReason::unspecified);
+    pki::publish_crl(ca(), kPass, 10);
+    info = pki::describe_authority(ca());
+    EXPECT_EQ(info.valid, 1u);
+    EXPECT_EQ(info.revoked, 1u);
+    EXPECT_EQ(info.crl_number, 1u);
+    EXPECT_FALSE(info.crl_next_update.empty());
+    EXPECT_FALSE(pki::is_past(info.crl_next_update));
+    EXPECT_TRUE(pki::is_past("2000-01-01 00:00:00Z"));
+    EXPECT_THROW(pki::describe_authority(dir_.path() / "absent"), std::runtime_error);
+}
+
+// Changement de racine complet avec les fichiers produits par write_root_transition :
+// chaque étape passe le garde-fou de rotation (SPEC §7.3) sur un serveur et un client.
+TEST_F(CaTest, RootTransitionFilesDriveTheThreeSteps) {
+    const auto server_root = dir_.path() / "serveur";
+    const auto client_root = dir_.path() / "client";
+    provision(server_root, Role::server, "CN=relay.essai,O=Essai", {"relay.essai"});
+    provision(client_root, Role::client, "CN=agence.essai,O=Essai", {});
+    const auto new_ca = dir_.path() / "ac2";
+    pki::AuthorityOptions options;
+    options.organization = "Essai";
+    pki::init_authority(new_ca, kPass, options);
+    EXPECT_THROW(pki::write_root_transition(ca(), ca(), dir_.path() / "x"), std::runtime_error);
+    const auto out = dir_.path() / "transition";
+    pki::write_root_transition(ca(), new_ca, out);
+    EXPECT_NE(read(out / "LISEZMOI.txt").find("Étape 3"), std::string::npos);
+    EXPECT_EQ(pki::read_audit(ca()).entries.back().operation, "root-transition");
+    EXPECT_EQ(pki::read_audit(new_ca).entries.back().operation, "root-transition");
+
+    struct Instance {
+        std::filesystem::path root;
+        Role role;
+        std::string subject;
+        std::vector<std::string> sans;
+        std::string side;
+    };
+    const Instance instances[] = {{server_root, Role::server, "CN=relay.essai,O=Essai", {"relay.essai"}, "serveur"},
+                                  {client_root, Role::client, "CN=agence.essai,O=Essai", {}, "client"}};
+    auto step = [&](const Instance& inst, const std::filesystem::path& authority, bool renew, bool transition_trust) {
+        const auto csr = pki::generate_csr(inst.root, inst.subject, {});
+        pki::SignRequest request;
+        request.role = inst.role;
+        request.csr_pem = read(csr.csr);
+        request.sans = sans_of(inst.sans);
+        request.renew = renew;
+        const auto kit = dir_.path() / ("kit-" + inst.side + "-" + csr.generation);
+        pki::write_bundle(kit, pki::sign_request(authority, kPass, request));
+        pki::InstallFiles files;
+        files.from = kit;
+        if (transition_trust) {
+            files.roots = out / inst.side / "trust-roots.pem";
+            files.issuer = out / inst.side / "trust-issuer.pem";
+        }
+        const auto result = pki::install(inst.root, std::nullopt, files, pki::Requirements{inst.role, true, true});
+        for (const auto& e : result.check.errors) ADD_FAILURE() << inst.side << " " << csr.generation << " : " << e.message;
+        ASSERT_TRUE(result.check.generation);
+        pki::activate(inst.root, result.generation);
+    };
+    for (const auto& inst : instances) step(inst, ca(), true, true);       // étape 1 : pré-confiance
+    for (const auto& inst : instances) step(inst, new_ca, false, true);   // étape 2 : bascule
+    for (const auto& inst : instances) step(inst, new_ca, true, false);   // étape 3 : retrait
+    const auto final_gen = pki::load_current_generation(server_root, pki::Requirements{Role::server, true, true});
+    ASSERT_TRUE(final_gen.generation);
+    EXPECT_EQ(final_gen.generation->trust_roots.size(), 1u);
+    EXPECT_EQ(tls::subject_of(final_gen.generation->trust_roots.front().get()), "CN=Essai AC Racine,O=Essai");
+}

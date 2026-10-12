@@ -547,4 +547,115 @@ CrlInfo publish_crl(const fs::path& dir, const std::string& passphrase, int days
     return info;
 }
 
+bool is_past(const std::string& date) { return !date.empty() && date <= now_text(); }
+
+namespace {
+
+CaCertificate ca_certificate(const fs::path& path) {
+    const auto cert = load_cert(path);
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int size = 0;
+    if (X509_digest(cert.get(), EVP_sha256(), digest, &size) != 1) fail("empreinte de " + path.string());
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string fingerprint;
+    for (unsigned i = 0; i < size; ++i) {
+        if (i) fingerprint += ':';
+        fingerprint += hex[digest[i] >> 4];
+        fingerprint += hex[digest[i] & 0xf];
+    }
+    return {tls::subject_of(cert.get()), tls::not_after_of(cert.get()), fingerprint};
+}
+
+}  // namespace
+
+AuthorityInfo describe_authority(const fs::path& dir) {
+    std::error_code ec;
+    if (!fs::is_regular_file(dir / kRoot.cert, ec) || !fs::is_regular_file(dir / kIndex, ec)) {
+        throw std::runtime_error(dir.string() + " n'est pas un répertoire d'AC tlsrelay (root.cert.pem, index.tsv)");
+    }
+    AuthorityInfo info;
+    info.root = ca_certificate(dir / kRoot.cert);
+    info.servers = ca_certificate(dir / kServers.cert);
+    info.clients = ca_certificate(dir / kClients.cert);
+    for (const auto& e : list_issued(dir)) {
+        ++info.issued;
+        if (e.status == "révoqué") ++info.revoked;
+        else if (e.status == "valide" && !is_past(e.not_after)) ++info.valid;
+    }
+    if (fs::exists(dir / kCrlNumberFile, ec)) {
+        info.crl_number = std::strtoull(detail::read_file(dir / kCrlNumberFile).c_str(), nullptr, 10);
+    }
+    if (fs::exists(dir / kCrlFile, ec)) {
+        const auto pem = detail::read_file(dir / kCrlFile);
+        tls::BioPtr bio(BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())));
+        while (X509_CRL* crl = PEM_read_bio_X509_CRL(bio.get(), nullptr, nullptr, nullptr)) {
+            const auto next = tls::time_to_string(X509_CRL_get0_nextUpdate(crl));
+            if (info.crl_next_update.empty() || next < info.crl_next_update) info.crl_next_update = next;
+            X509_CRL_free(crl);
+        }
+        tls::take_openssl_errors();
+    }
+    return info;
+}
+
+void write_root_transition(const fs::path& old_dir, const fs::path& new_dir, const fs::path& out) {
+    const auto old_info = describe_authority(old_dir);
+    const auto new_info = describe_authority(new_dir);
+    if (old_info.root.fingerprint == new_info.root.fingerprint) {
+        throw std::runtime_error("les deux AC ont la même racine : choisir la nouvelle AC");
+    }
+    auto both = [&](const char* file) { return detail::read_file(old_dir / file) + detail::read_file(new_dir / file); };
+    for (const auto* sub : {"serveur", "client"}) detail::make_private_dir(out / sub);
+    // Racines : les deux. AC attendue chez le pair : l'AC Clients des deux
+    // racines pour un serveur, l'AC Serveurs des deux racines pour un client.
+    detail::write_file(out / "serveur" / "trust-roots.pem", both(kRoot.cert));
+    detail::write_file(out / "client" / "trust-roots.pem", both(kRoot.cert));
+    detail::write_file(out / "serveur" / "trust-issuer.pem", both(kClients.cert));
+    detail::write_file(out / "client" / "trust-issuer.pem", both(kServers.cert));
+    std::error_code ec;
+    std::string crl;
+    for (const auto* dir : {&old_dir, &new_dir}) {
+        if (fs::exists(*dir / kCrlFile, ec)) crl += detail::read_file(*dir / kCrlFile);
+    }
+    if (!crl.empty()) detail::write_file(out / kCrlFile, crl);
+
+    const auto old_ac = old_dir.string();
+    const auto new_ac = new_dir.string();
+    std::ostringstream text;
+    text << "Changement de racine (SPEC §7.5)\n"
+         << "  ancienne racine : " << old_info.root.subject << "\n    empreinte SHA-256 " << old_info.root.fingerprint
+         << "\n  nouvelle racine : " << new_info.root.subject << "\n    empreinte SHA-256 " << new_info.root.fingerprint
+         << "\n\nChaque étape se termine sur TOUTES les instances avant de passer à la suivante. Pour chaque "
+            "instance (<conf> : sa configuration ; <rôle> : serveur ou client ; <role> : server ou client) :\n\n"
+         << "Étape 1 — pré-confiance (deux racines, ancienne PKI)\n"
+         << "  instance : tlsrelay pki gen-csr -c <conf> --subject \"<sujet actuel>\" [--san ...]\n"
+         << "  AC       : tlsrelay ca sign --dir " << old_ac << " --role <role> --csr request.csr --renew --out kit1"
+         << " [--san ...]\n"
+         << "  instance : tlsrelay pki install -c <conf> --from kit1 --roots <rôle>/trust-roots.pem "
+            "--issuer <rôle>/trust-issuer.pem\n"
+         << "             tlsrelay pki activate -c <conf> <génération>\n\n"
+         << "Étape 2 — bascule (nouvelle PKI, deux racines)\n"
+         << "  instance : tlsrelay pki gen-csr -c <conf> --subject \"<sujet actuel>\" [--san ...]\n"
+         << "  AC       : tlsrelay ca sign --dir " << new_ac << " --role <role> --csr request.csr --out kit2 [--san ...]\n"
+         << "  instance : tlsrelay pki install -c <conf> --from kit2 --roots <rôle>/trust-roots.pem "
+            "--issuer <rôle>/trust-issuer.pem\n"
+         << "             tlsrelay pki activate -c <conf> <génération>\n\n"
+         << "Étape 3 — retrait de l'ancienne racine\n"
+         << "  instance : tlsrelay pki gen-csr -c <conf> --subject \"<sujet actuel>\" [--san ...]\n"
+         << "  AC       : tlsrelay ca sign --dir " << new_ac << " --role <role> --csr request.csr --renew --out kit3"
+         << " [--san ...]\n"
+         << "  instance : tlsrelay pki install -c <conf> --from kit3   (confiance : nouvelle racine seule)\n"
+         << "             tlsrelay pki activate -c <conf> <génération>\n\n";
+    if (!crl.empty()) {
+        text << "CRL : pendant les étapes 1 et 2, installer crl.pem (CRL des deux AC) sur chaque instance "
+                "(tlsrelay pki crl -c <conf> crl.pem) ; après l'étape 3, celles de la nouvelle AC seule.\n";
+    }
+    text << "Après l'étape 3, l'ancienne AC n'est plus utilisée : l'archiver hors ligne.\n";
+    detail::write_file(out / "LISEZMOI.txt", text.str());
+    const auto details = "ancienne=" + old_info.root.fingerprint + " nouvelle=" + new_info.root.fingerprint +
+                         " paquet=" + out.string();
+    append_audit(old_dir, "root-transition", details);
+    append_audit(new_dir, "root-transition", details);
+}
+
 }  // namespace tlsrelay::pki
