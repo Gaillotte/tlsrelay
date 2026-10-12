@@ -269,10 +269,29 @@ peers:
 # ---------------------------------------------------------------------------
 # Démarrage et arrêt des relais
 
+# Droits Windows (icacls) : échec signalé, jamais ignoré.
+function Set-Acl-Checked([string]$path, [string[]]$arguments) {
+    $out = & icacls $path @arguments 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "icacls $path $($arguments -join ' ') : $out" }
+}
+# Accès réservé aux Administrateurs, à SYSTEM et au compte donné (sans héritage du parent).
+function Grant-Only([string]$path, [string]$account, [string]$rights) {
+    $inherit = if ((Get-Item $path) -is [System.IO.DirectoryInfo]) { '(OI)(CI)' } else { '' }
+    Set-Acl-Checked $path @('/inheritance:r', '/grant:r', "*S-1-5-32-544:${inherit}F", "*S-1-5-18:${inherit}F", "${account}:$rights")
+}
+
 function Start-Relay([string]$role) {
     if ($Services) {
         $out = Relay @('start', '--instance', $role)
-        if ($exitCode -ne 0) { throw "démarrage du service $role : $out" }
+        if ($exitCode -ne 0) {
+            # Diagnostic : droits des fichiers de l'instance, puis même configuration en console.
+            foreach ($path in (Config $role), (Join-Path $WorkDir "pki/$role"), (Join-Path $WorkDir 'logs'), (Join-Path $WorkDir 'whitelist.yaml')) {
+                if (Test-Path $path) { Note "  droits de ${path} :"; (& icacls $path 2>&1 | Out-String) -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { Note "    $($_.Trim())" } }
+            }
+            $console = Relay @('check-config', '-c', (Config $role))
+            Note "  check-config (administrateur) : $console"
+            throw "démarrage du service $role : $out"
+        }
     } else {
         Start-Background $role $bin @('run', '-c', (Config $role)) | Out-Null
     }
@@ -369,12 +388,12 @@ try {
                 $out = Relay @('service', 'install', '--instance', $role, '-c', (Config $role)); Check ($exitCode -eq 0) "$role : service installé"
                 $account = "NT SERVICE\tlsrelay-$role"
                 # Fichiers de l'instance lisibles par son seul compte et les administrateurs (SPEC §10.3).
-                foreach ($path in (Join-Path $WorkDir "pki/$role"), (Config $role)) {
-                    & icacls $path /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' "${account}:(OI)(CI)R" | Out-Null
-                }
+                Grant-Only (Join-Path $WorkDir "pki/$role") $account '(OI)(CI)RX'
+                Grant-Only (Config $role) $account 'R'
+                Set-Acl-Checked (Join-Path $WorkDir 'logs') @('/grant', "${account}:(OI)(CI)M")
+                Set-Acl-Checked $WorkDir @('/grant', "${account}:RX")
             }
-            & icacls (Join-Path $WorkDir 'whitelist.yaml') /grant 'NT SERVICE\tlsrelay-rc-server:R' | Out-Null
-            & icacls (Join-Path $WorkDir 'logs') /grant 'NT SERVICE\tlsrelay-rc-server:(OI)(CI)M' 'NT SERVICE\tlsrelay-rc-client:(OI)(CI)M' | Out-Null
+            Set-Acl-Checked (Join-Path $WorkDir 'whitelist.yaml') @('/grant', 'NT SERVICE\tlsrelay-rc-server:R')
         }
         Start-Relay 'rc-server'
         Start-Relay 'rc-client'
