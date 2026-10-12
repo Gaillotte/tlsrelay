@@ -49,8 +49,8 @@ Livraison 1.1 (éditeur `tlsrelay-admin`, [PLAN §4](docs/PLAN.md)) :
 
 | Phase | Contenu | État |
 |---|---|---|
-| 12 | Socle de l'éditeur : écriture normalisée de la configuration et de la liste blanche, différences ; mini-AC : révocation (`ca revoke`), CRL (`ca crl`), journal d'audit chaîné (`ca audit`) ; CRL appliquées par le service (`pki crl`, rechargement à chaud) | En cours |
-| 13 | Application Qt : configuration, liste blanche, validation, différences, export des paquets de déploiement | À faire |
+| 12 | Socle de l'éditeur : écriture normalisée de la configuration et de la liste blanche, différences ; mini-AC : révocation (`ca revoke`), CRL (`ca crl`), journal d'audit chaîné (`ca audit`) ; CRL appliquées par le service (`pki crl`, rechargement à chaud) | Terminée |
+| 13 | Application Qt `tlsrelay-admin` : formulaire de configuration et liste blanche validés par les règles du service, aperçu des différences et copie `.bak` à l'enregistrement, export des paquets de déploiement (Linux, Windows) | En cours |
 | 14 | Module PKI de l'éditeur : AC, signatures, inventaire, révocation, assistants de renouvellement et de changement de racine | À faire |
 | 15 | Tests Qt, intégration au MSI, documentation, recette de l'éditeur | À faire |
 
@@ -86,6 +86,20 @@ cmake --preset linux-fuzz && cmake --build --preset linux-fuzz
 tools/run-fuzz.sh build/linux-fuzz 60                # 60 s par cible libFuzzer
 tests/lifecycle/tls-scan.sh build/linux-release/src/app/tlsrelay   # configuration TLS (sslyze)
 ```
+
+### Éditeur tlsrelay-admin (Qt 6)
+
+L'éditeur se compile avec l'option `-DTLSRELAY_BUILD_ADMIN=ON` (Qt 6.4 ou plus récent, liaison dynamique) :
+
+```sh
+sudo apt-get install qt6-base-dev          # Linux (paquet de la distribution)
+cmake --preset linux-release -DTLSRELAY_BUILD_ADMIN=ON
+cmake --build --preset linux-release && build/linux-release/src/admin/tlsrelay-admin examples/server.yaml
+```
+
+Sous Windows, Qt 6.8 LTS (msvc2022_64) est indiqué par `-DCMAKE_PREFIX_PATH=<répertoire de Qt>`. Les tests de l'éditeur (Qt Test) tournent sans affichage (`QT_QPA_PLATFORM=offscreen`) et vérifient notamment que l'éditeur et le service signalent exactement les mêmes erreurs.
+
+L'éditeur ouvre une configuration et, en mode serveur, sa liste blanche ; chaque saisie est validée par le chargeur du service. L'enregistrement montre les différences, réécrit les fichiers sous une forme normalisée (les commentaires ne sont pas conservés) et garde l'original en `.bak`. « Exporter le paquet de déploiement » crée un répertoire à copier sur la machine de l'instance : configuration, liste blanche, kit PKI et CRL éventuels, `install.sh` ou `install.ps1` et `LISEZMOI.txt`.
 
 ### Paquets
 

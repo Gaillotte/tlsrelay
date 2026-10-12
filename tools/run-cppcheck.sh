@@ -10,7 +10,8 @@
 set -euo pipefail
 build=${1:?usage : $0 <répertoire de build>}
 root=$(cd "$(dirname "$0")/.." && pwd)
-cppcheck --project="$build/compile_commands.json" --file-filter="*/src/*" \
+# Code généré par moc (répertoires *_autogen du build) : hors analyse.
+cppcheck --project="$build/compile_commands.json" --file-filter="*/src/*" --suppress="*:*_autogen/*" \
   --enable=warning,performance,portability --check-level=exhaustive --inline-suppr \
   --suppressions-list="$root/tools/cppcheck-suppressions.txt" \
   --error-exitcode=1 --quiet -j "$(nproc)"

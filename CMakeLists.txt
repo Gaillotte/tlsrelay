@@ -15,6 +15,7 @@ option(TLSRELAY_BUILD_TESTS "Compiler les tests" ON)
 option(TLSRELAY_FUZZ "Compiler les cibles de fuzzing libFuzzer (clang)" OFF)
 option(TLSRELAY_WARNINGS_AS_ERRORS "Traiter les avertissements comme des erreurs" OFF)
 option(TLSRELAY_MSVC_ANALYZE "Analyse statique MSVC (/analyze) du code du projet" OFF)
+option(TLSRELAY_BUILD_ADMIN "Compiler l'éditeur tlsrelay-admin (Qt 6)" OFF)
 option(TLSRELAY_FETCH_DEPS "Dépendances embarquées (Asio, CLI11, spdlog, yaml-cpp), liées statiquement" OFF)
 set(TLSRELAY_SANITIZERS "" CACHE STRING "Sanitizers à activer (ex. address,undefined), GCC/Clang uniquement")
 
@@ -37,6 +38,11 @@ endif()
 if(TLSRELAY_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# Après enable_testing() : les tests Qt de l'éditeur s'enregistrent dans CTest.
+if(TLSRELAY_BUILD_ADMIN)
+    add_subdirectory(src/admin)
 endif()
 
 include(Packaging)

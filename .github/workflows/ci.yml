@@ -31,7 +31,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
-            libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev libclang-rt-18-dev
+            libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev libclang-rt-18-dev qt6-base-dev
 
       - name: Configuration
         run: >
@@ -39,6 +39,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
           -DTLSRELAY_WARNINGS_AS_ERRORS=ON
+          -DTLSRELAY_BUILD_ADMIN=ON
           -DTLSRELAY_SANITIZERS=${{ matrix.sanitizers }}
 
       - name: Compilation
@@ -180,10 +181,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
-            libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev clang-tidy-18 cppcheck
+            libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev clang-tidy-18 cppcheck qt6-base-dev
 
       - name: Base de compilation
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_BUILD_ADMIN=ON
 
       - name: clang-tidy
         run: tools/run-clang-tidy.sh build
@@ -269,8 +270,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Qt 6.8 LTS (éditeur tlsrelay-admin)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+
       - name: Configuration
-        run: cmake --preset windows-msvc -DTLSRELAY_WARNINGS_AS_ERRORS=ON
+        shell: pwsh
+        run: cmake --preset windows-msvc -DTLSRELAY_WARNINGS_AS_ERRORS=ON -DTLSRELAY_BUILD_ADMIN=ON "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"
 
       - name: Compilation
         run: cmake --build --preset windows-release
