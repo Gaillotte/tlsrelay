@@ -394,7 +394,7 @@ void AdminTest::pki_panel_full_cycle() {
     const auto c = panel.sign(client);
     QVERIFY(c.has_value());
     QCOMPARE(panel.inventory()->rowCount(), 2);
-    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status, "valide"), 2);
+    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status_column, "valide"), 2);
 
     // Même sujet sans renouvellement : refusé ; avec : l'ancien est remplacé.
     client.csr = make_request(dir / "cli", "CN=agence.essai,O=Essai");
@@ -403,7 +403,7 @@ void AdminTest::pki_panel_full_cycle() {
     client.renew = true;
     client.out = dir / "kit-cli2";
     QVERIFY(panel.sign(client).has_value());
-    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status, "remplacé"), 1);
+    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status_column, "remplacé"), 1);
 
     // Filtres : le certificat de 30 jours expire bientôt.
     panel.set_filter(PkiPanel::expiring);
@@ -414,7 +414,7 @@ void AdminTest::pki_panel_full_cycle() {
 
     // Révocation : inventaire, CRL publiées et copie à déployer.
     QVERIFY(panel.revoke(s->serial, pki::RevocationReason::key_compromise, 30, dir / "deploy" / "crl.pem"));
-    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status, "révoqué"), 1);
+    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status_column, "révoqué"), 1);
     QCOMPARE(panel.info()->revoked, size_t(1));
     QCOMPARE(panel.info()->crl_number, std::uint64_t(1));
     QVERIFY(read(dir / "deploy" / "crl.pem").find("BEGIN X509 CRL") != std::string::npos);

@@ -40,7 +40,8 @@ class PkiPanel : public QWidget {
     Q_OBJECT
 
 public:
-    enum InventoryColumn { serial = 0, role, status, not_after, subject, revocation, inventory_columns };
+    enum InventoryColumn { serial_column = 0, role_column, status_column, not_after_column, subject_column,
+                           revocation_column, inventory_columns };
     enum Filter { all = 0, in_service, revoked, expiring, retired };
 
     explicit PkiPanel(QWidget* parent = nullptr);

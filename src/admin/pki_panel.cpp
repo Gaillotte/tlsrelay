@@ -90,10 +90,10 @@ PkiPanel::PkiPanel(QWidget* parent)
 
     inventory_->setHorizontalHeaderLabels(
         {tr("Série"), tr("Rôle"), tr("État"), tr("Fin de validité"), tr("Sujet"), tr("Révocation")});
-    for (int c : {serial, role, status, not_after, revocation}) {
+    for (int c : {serial_column, role_column, status_column, not_after_column, revocation_column}) {
         inventory_->horizontalHeader()->setSectionResizeMode(c, QHeaderView::ResizeToContents);
     }
-    inventory_->horizontalHeader()->setSectionResizeMode(subject, QHeaderView::Stretch);
+    inventory_->horizontalHeader()->setSectionResizeMode(subject_column, QHeaderView::Stretch);
     inventory_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     inventory_->setSelectionBehavior(QAbstractItemView::SelectRows);
     inventory_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -326,7 +326,7 @@ void PkiPanel::set_filter(Filter filter) {
 std::string PkiPanel::selected_serial() const {
     const auto rows = inventory_->selectionModel() ? inventory_->selectionModel()->selectedRows() : QModelIndexList();
     if (rows.isEmpty()) return {};
-    return inventory_->item(rows.front().row(), serial)->text().toStdString();
+    return inventory_->item(rows.front().row(), serial_column)->text().toStdString();
 }
 
 void PkiPanel::update_buttons() {
