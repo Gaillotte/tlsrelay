@@ -679,15 +679,18 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
         ++stats_.peers_rejected;
         logging::activity().info("port={} pair refusé par la liste blanche : ip={}{}", kind, peer.endpoint,
                                  peer.subject ? " sujet=" + tls::name_to_string(peer.subject.get()) : std::string());
-        co_await reject(stream, resume ? tunnel::encode_resume_fail(code(tunnel::CloseCode::not_authorized))
-                                       : tunnel::encode_open_fail(code(tunnel::CloseCode::not_authorized),
-                                                                  "pair non autorisé"));
+        // Trame calculée hors du co_await : GCC 12 détruit deux fois les temporaires
+        // d'un opérateur ternaire placé dans l'argument d'un co_await.
+        auto refusal = resume ? tunnel::encode_resume_fail(code(tunnel::CloseCode::not_authorized))
+                              : tunnel::encode_open_fail(code(tunnel::CloseCode::not_authorized), "pair non autorisé");
+        co_await reject(stream, std::move(refusal));
         co_return;
     }
     peer.name = *name;
     if (stopping_) {
-        co_await reject(stream, resume ? tunnel::encode_resume_fail(code(tunnel::CloseCode::shutdown))
-                                       : tunnel::encode_open_fail(code(tunnel::CloseCode::shutdown), "arrêt en cours"));
+        auto refusal = resume ? tunnel::encode_resume_fail(code(tunnel::CloseCode::shutdown))
+                              : tunnel::encode_open_fail(code(tunnel::CloseCode::shutdown), "arrêt en cours");
+        co_await reject(stream, std::move(refusal));
         co_return;
     }
 
@@ -754,7 +757,10 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
         co_return;
     }
 
-    auto channel = std::make_shared<Channel>(id, co_await asio::this_coro::executor, settings_for(port), stats_,
+    // co_await jamais au milieu d'autres arguments ou d'un initialiseur : GCC 12
+    // détruit alors deux fois certains temporaires (paquets Ubuntu 22.04).
+    const auto executor = co_await asio::this_coro::executor;
+    auto channel = std::make_shared<Channel>(id, executor, settings_for(port), stats_,
                                              [this, &port](Channel& ch) { on_channel_closed(port, ch); });
     const auto key = tunnel::to_hex(open.session.data(), open.session.size());
     bool duplicate = false;
@@ -1172,9 +1178,13 @@ asio::awaitable<admin::Reply> Service::handle(admin::Request request, std::strin
     if (cmd == "ping" && argc == 0) co_return admin::Reply{true, "pong\n"};
     if (cmd == "status" && argc == 0) co_return admin::Reply{true, status_text()};
     if (cmd == "metrics" && argc == 0) co_return admin::Reply{true, metrics_text()};
-    if (cmd == "channels" && argc == 0) co_return admin::Reply{true, co_await channels_text()};
+    if (cmd == "channels" && argc == 0) {
+        std::string text = co_await channels_text();
+        co_return admin::Reply{true, std::move(text)};
+    }
     if (cmd == "reload" && (argc == 0 || (argc == 1 && request.args[0] == "--kill-old"))) {
-        co_return admin::Reply{true, co_await asio::co_spawn(control_, reload_now(argc == 1), asio::use_awaitable)};
+        std::string summary = co_await asio::co_spawn(control_, reload_now(argc == 1), asio::use_awaitable);
+        co_return admin::Reply{true, std::move(summary)};
     }
     if (cmd == "stop" && argc <= 1) {
         Duration timeout = config_.limits.shutdown_timeout;

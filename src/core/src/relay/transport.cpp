@@ -49,7 +49,8 @@ asio::awaitable<FrameRead> read_frame(Transport& t, Duration timeout) {
     auto expired = std::make_shared<bool>(false);
     FrameRead result;
     {
-        Deadline deadline(co_await asio::this_coro::executor, expired, t.stream, timeout);
+        const auto executor = co_await asio::this_coro::executor;  // hors des arguments (GCC 12)
+        Deadline deadline(executor, expired, t.stream, timeout);
         result = co_await read_frame(t);
     }
     if (*expired) result = FrameRead{std::nullopt, asio::error::timed_out, tunnel::Decoder::Error::none};
@@ -60,11 +61,15 @@ asio::awaitable<std::string> secure(std::shared_ptr<Stream> stream, Duration tim
     auto expired = std::make_shared<bool>(false);
     std::error_code ec;
     {
-        Deadline deadline(co_await asio::this_coro::executor, expired, stream, timeout);
+        const auto executor = co_await asio::this_coro::executor;  // hors des arguments (GCC 12)
+        Deadline deadline(executor, expired, stream, timeout);
         ec = co_await stream->handshake();
     }
     if (*expired) co_return "délai de handshake dépassé (" + format_duration(timeout) + ")";
-    if (ec) co_return stream->failure_reason().empty() ? ec.message() : stream->failure_reason();
+    if (ec) {
+        std::string reason = stream->failure_reason().empty() ? ec.message() : stream->failure_reason();
+        co_return reason;
+    }
     co_return std::string();
 }
 

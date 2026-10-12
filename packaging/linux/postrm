@@ -1,0 +1,11 @@
+#!/bin/sh
+# Paquet Debian tlsrelay : purge, unités systemd écrites par « tlsrelay service
+# install » retirées. /etc/tlsrelay (configurations, listes blanches, PKI) et le
+# compte tlsrelay sont conservés.
+set -e
+if [ "$1" = purge ]; then
+    rm -f /etc/systemd/system/tlsrelay@.service
+    rm -rf /etc/systemd/system/tlsrelay@*.service.d
+    [ -d /run/systemd/system ] && systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+exit 0

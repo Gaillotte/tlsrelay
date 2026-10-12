@@ -36,6 +36,12 @@ else()
     if(TLSRELAY_WARNINGS_AS_ERRORS)
         target_compile_options(tlsrelay_options INTERFACE -Werror)
     endif()
+    # GCC 12 (paquets Ubuntu 22.04) : faux positif -Wrestrict sur « littéral + std::string »
+    # (bogue GCC 105329, corrigé dans GCC 13).
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12
+       AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13)
+        target_compile_options(tlsrelay_options INTERFACE -Wno-restrict)
+    endif()
     if(TLSRELAY_SANITIZERS)
         target_compile_options(tlsrelay_options INTERFACE
             -fsanitize=${TLSRELAY_SANITIZERS} -fno-omit-frame-pointer -fno-sanitize-recover=all)

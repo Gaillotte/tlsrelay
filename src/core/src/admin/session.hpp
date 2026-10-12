@@ -41,12 +41,15 @@ asio::awaitable<void> serve_session(Stream stream, Handler& handler, std::string
     std::string request;
     auto [rec, n] = co_await asio::async_read_until(stream, asio::dynamic_buffer(request, kMaxRequest), '\n', use_tuple);
     timer.cancel();
+    if (rec && rec != asio::error::not_found) co_return;  // client parti ou délai dépassé
+    // Variables hors des conditions : GCC 12 gère mal une variable déclarée dans
+    // la condition d'un if dont le bloc contient un co_await.
+    std::optional<Request> parsed;
+    if (!rec) parsed = parse_request(std::string_view(request).substr(0, n));
     Reply reply;
     if (rec == asio::error::not_found) {
         reply = {false, "requête trop longue\n"};
-    } else if (rec) {
-        co_return;  // client parti ou délai dépassé
-    } else if (auto parsed = parse_request(std::string_view(request).substr(0, n))) {
+    } else if (parsed) {
         reply = co_await handler.handle(std::move(*parsed), caller);
     } else {
         reply = {false, "requête invalide\n"};

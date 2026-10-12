@@ -297,9 +297,40 @@ jobs:
         shell: pwsh
         run: .\tests\lifecycle\windows-pki.ps1 -BuildDir build\windows-msvc\src\app\Release
 
-      - name: Recette automatisée (services Windows)
+      - name: Paquet MSI
         shell: pwsh
-        run: .\tools\recette.ps1 -BuildDir build\windows-msvc\src\app\Release -TestkitDir build\windows-msvc\src\testkit\Release -Services -Quick -WorkDir "$env:ProgramData\tlsrelay\recette-ci"
+        run: |
+          Set-Location build\windows-msvc
+          cpack -C Release -G WIX
+          if ($LASTEXITCODE -ne 0) { throw "cpack" }
+          Get-ChildItem *.msi | ForEach-Object { $_.Name; (Get-FileHash -Algorithm SHA256 $_).Hash }
+
+      - name: Installation du MSI
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem build\windows-msvc\*.msi).FullName
+          $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn ADDLOCAL=ALL /l*v `"$env:RUNNER_TEMP\msi-install.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\msi-install.log" -Tail 40; throw "installation du MSI : $($p.ExitCode)" }
+          Get-ChildItem "$env:ProgramFiles\tlsrelay" -Recurse | Select-Object -ExpandProperty FullName
+          & "$env:ProgramFiles\tlsrelay\bin\tlsrelay.exe" version
+
+      - name: Recette automatisée sur les binaires installés (services Windows)
+        shell: pwsh
+        run: .\tools\recette.ps1 -BuildDir "$env:ProgramFiles\tlsrelay\bin" -Services -Quick -WorkDir "$env:ProgramData\tlsrelay\recette-ci"
+
+      - name: Désinstallation du MSI
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem build\windows-msvc\*.msi).FullName
+          $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "désinstallation du MSI : $($p.ExitCode)" }
+          if (Test-Path "$env:ProgramFiles\tlsrelay\bin\tlsrelay.exe") { throw "tlsrelay.exe encore présent" }
+
+      - name: Paquet MSI (artefact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: paquet-msi
+          path: build/windows-msvc/*.msi
 
       - name: Rapport de recette (Windows)
         if: always()
@@ -310,3 +341,76 @@ jobs:
             C:\ProgramData\tlsrelay\recette-ci\rapport.md
             C:\ProgramData\tlsrelay\recette-ci\logs\
           if-no-files-found: ignore
+
+  linux-packages:
+    name: Paquets ${{ matrix.kind }} (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: "ubuntu:22.04", kind: deb }
+          - { image: "rockylinux:9", kind: rpm }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construction et tests sur la distribution
+        run: docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }} packaging/build-linux.sh paquets
+
+      - name: Paquets
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" paquets
+          ls -l paquets
+          sha256sum paquets/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paquets-${{ matrix.kind }}
+          path: paquets/
+
+  linux-packages-install:
+    name: Installation ${{ matrix.kind }} (${{ matrix.image }})
+    needs: linux-packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: "ubuntu:22.04", kind: deb }
+          - { image: "ubuntu:24.04", kind: deb }
+          - { image: "debian:12", kind: deb }
+          - { image: "rockylinux:9", kind: rpm }
+          - { image: "almalinux:9", kind: rpm }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: paquets-${{ matrix.kind }}
+          path: paquets
+
+      - name: Installation, échange mTLS, désinstallation
+        run: docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }} packaging/test-linux-package.sh paquets
+
+  release-files:
+    name: Paquets de la livraison
+    needs: [linux-packages-install, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: livraison
+          pattern: paquet*
+          merge-multiple: true
+
+      - name: Empreintes
+        working-directory: livraison
+        run: |
+          sha256sum * | tee SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tlsrelay-livraison
+          path: livraison/
