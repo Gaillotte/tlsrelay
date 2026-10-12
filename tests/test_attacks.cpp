@@ -323,6 +323,7 @@ TEST_F(AttackTest, PeerMessageCannotInjectLogLines) {
     std::istringstream lines(logs);
     std::string line;
     while (std::getline(lines, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();  // fin de ligne CRLF sous Windows
         EXPECT_FALSE(line.starts_with("INJECTE")) << "ligne injectée : " << line;
         EXPECT_EQ(line.find('\x1b'), std::string::npos) << "séquence d'échappement dans les journaux";
         EXPECT_EQ(line.find('\r'), std::string::npos);

@@ -140,6 +140,7 @@ Pendant toute la renégociation, les données continuent de circuler sur l'ancie
 
 - Fin d'un sens : `SHUTDOWN_WR(final_seq)`, puis `shutdown(SD_SEND)` côté application ou destination une fois toutes les données livrées.
 - Le canal est fermé quand les deux sens sont terminés et acquittés, ou sur `CLOSE`.
+- Le message des trames `CLOSE` et `OPEN_FAIL` vient de l'autre tlsrelay et peut être journalisé : ses caractères de contrôle et la barre oblique inverse sont échappés (`\xNN`) au décodage.
 - Codes de fermeture :
 
 | Code | Nom | Cause |
@@ -403,6 +404,7 @@ admin:
 
 - Champs de contexte : `instance`, `channel_id`, `session_id` (tronqué), `generation`, `peer`, `port`.
 - Jamais journalisés : clés privées, jetons, secrets dérivés, contenu des données relayées.
+- Données venues d'un pair (sujet de certificat, message de `CLOSE`) : caractères de contrôle échappés ; une ligne de journal ne peut pas en devenir plusieurs.
 - Changement à chaud : `tlsrelay log-level <niveau>` ou `tlsrelay log-level <catégorie>=<niveau>`.
 - `tlsrelay log-reopen` (et `SIGUSR1` sous Linux) rouvre le fichier de log.
 

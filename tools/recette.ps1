@@ -32,6 +32,10 @@
 .PARAMETER Services
     Installe les relais comme services Windows (nécessite les droits d'administrateur).
 
+.PARAMETER Keep
+    Laisse les instances, l'écho et le proxy en service après les scénarios automatisés, pour
+    les étapes manuelles du cahier ; arret-recette.ps1 (dans WorkDir) arrête tout ensuite.
+
 .PARAMETER Quick
     Durées réduites (contrôle rapide, CI).
 
@@ -57,6 +61,7 @@ param(
     [string]$TestkitDir,
     [string]$WorkDir,
     [switch]$Services,
+    [switch]$Keep,
     [switch]$Quick,
     [string]$LinuxHost,
     [string]$LinuxBuildDir,
@@ -307,7 +312,18 @@ function Test-Load([int]$port, [int]$count, [string]$bytes = '256KiB') {
 # ---------------------------------------------------------------------------
 # Scénarios
 
+$aborted = $null
 $cleanup = {
+    if ($Keep -and -not $aborted) {
+        # Étapes manuelles : tout reste en service ; script d'arrêt pour la suite.
+        $lines = @('# Arrêt de la recette tlsrelay (généré par recette.ps1 -Keep)')
+        foreach ($entry in @($processes | Where-Object { -not $_.Process.HasExited })) { $lines += "Stop-Process -Id $($entry.Process.Id) -Force -ErrorAction SilentlyContinue  # $($entry.Name)" }
+        if ($Services) { foreach ($role in 'rc-client', 'rc-server') { $lines += "& '$bin' service uninstall --instance $role" } }
+        if ($socketDir) { $lines += "Remove-Item -Recurse -Force '$socketDir' -ErrorAction SilentlyContinue" }
+        $lines | Set-Content -Encoding utf8 (Join-Path $WorkDir 'arret-recette.ps1')
+        Write-Host "Instances laissées en service ; arrêt : $(Join-Path $WorkDir 'arret-recette.ps1')"
+        return
+    }
     foreach ($entry in @($processes)) {
         if (-not $entry.Process.HasExited) { Stop-Process -Id $entry.Process.Id -Force -ErrorAction SilentlyContinue }
     }
@@ -437,7 +453,66 @@ try {
         Check ((Metric 'rc-server' 'pki_rotations_total') -ge 1) 'bascule comptée'
     }
 
-    Scenario 'R09' 'Journalisation : niveaux à chaud, aucune donnée relayée dans les journaux' {
+    Scenario 'R09' 'Changement de racine en trois étapes, sans interruption (SPEC §7.5)' {
+        $ac = Join-Path $WorkDir 'ac'
+        $ac2 = Join-Path $WorkDir 'ac2'
+        $out = Relay @('ca', 'init', '--dir', $ac2, '--org', 'Recette'); Check ($exitCode -eq 0) 'nouvelle AC (racine, AC Serveurs, AC Clients)'
+        $roots = Join-Path $WorkDir 'racines-ancienne-et-nouvelle.pem'
+        (Get-Content (Join-Path $ac 'root.cert.pem') -Raw) + (Get-Content (Join-Path $ac2 'root.cert.pem') -Raw) | Set-Content -NoNewline -Encoding ascii $roots
+        # AC attendue chez le pair : AC Clients pour le serveur, AC Serveurs pour le client.
+        $issuers = @{}
+        foreach ($pair in @(@('rc-server', 'clients'), @('rc-client', 'servers'))) {
+            $file = Join-Path $WorkDir "emetteurs-$($pair[0]).pem"
+            (Get-Content (Join-Path $ac "$($pair[1]).cert.pem") -Raw) + (Get-Content (Join-Path $ac2 "$($pair[1]).cert.pem") -Raw) |
+                Set-Content -NoNewline -Encoding ascii $file
+            $issuers[$pair[0]] = $file
+        }
+        $instances = @(@{ Role = 'rc-server'; Kind = 'server'; Subject = 'CN=relay.recette,O=Recette'; San = @('--san', 'relay.recette') },
+                       @{ Role = 'rc-client'; Kind = 'client'; Subject = 'CN=rc-client,O=Recette'; San = @() })
+        # Nouvelle génération pour une instance : demande, signature par l'AC donnée, installation, activation.
+        $nextGeneration = {
+            param($spec, [string]$caDir, [bool]$renew, [string[]]$trust, [string]$step)
+            $cfg = Config $spec.Role
+            $out = Relay (@('pki', 'gen-csr', '-c', $cfg, '--subject', $spec.Subject) + $spec.San)
+            $generation = [regex]::Match($out, 'génération « (v\d+) »').Groups[1].Value
+            if (-not $generation) { $generation = (Get-ChildItem (Join-Path $WorkDir "pki/$($spec.Role)") -Directory | Sort-Object { [int]($_.Name.TrimStart('v')) } | Select-Object -Last 1).Name }
+            $kitDir = Join-Path $WorkDir "kit-$($spec.Role)-$step"
+            $sign = @('ca', 'sign', '--dir', $caDir, '--role', $spec.Kind, '--csr', (Join-Path $WorkDir "pki/$($spec.Role)/$generation/request.csr"), '--out', $kitDir) + $spec.San
+            if ($renew) { $sign += '--renew' }
+            $out = Relay $sign
+            if ($exitCode -ne 0) { throw "$($spec.Role) : signature ($step) : $out" }
+            $out = Relay (@('pki', 'install', '-c', $cfg, '--from', $kitDir) + $trust)
+            if ($exitCode -ne 0) { throw "$($spec.Role) : installation ($step) : $out" }
+            $out = Relay @('pki', 'activate', '-c', $cfg, $generation)
+            if ($exitCode -ne 0) { throw "$($spec.Role) : activation ($step) : $out" }
+            $out = Relay @('reload', '-c', $cfg)
+            if ($exitCode -ne 0) { throw "$($spec.Role) : rechargement ($step) : $out" }
+            return $generation
+        }
+        # Flux continu pendant toute la procédure.
+        $fluxSeconds = if ($Quick) { 20 } else { 40 }
+        Start-Background 'flux-racine' $kit @('throughput', '--target', "$($A.Client):$($P.ClientMtls)", '--duration', "${fluxSeconds}s", '--rate', '20', '--json') | Out-Null
+        Start-Sleep -Seconds 1
+
+        foreach ($spec in $instances) { $g = & $nextGeneration $spec $ac $true @('--roots', $roots, '--issuer', $issuers[$spec.Role]) 'etape1' }
+        Check (Test-Load $P.ClientMtls 20 '64KiB') 'étape 1 (pré-confiance : deux racines, ancienne PKI) : canaux mtls'
+        foreach ($spec in $instances) { $g = & $nextGeneration $spec $ac2 $false @('--roots', $roots, '--issuer', $issuers[$spec.Role]) 'etape2' }
+        Check (Test-Load $P.ClientMtls 20 '64KiB') 'étape 2 (bascule : nouvelle PKI, deux racines) : canaux mtls'
+        Check (Test-Load $P.ClientTls 20 '64KiB') 'étape 2 : canaux tls'
+        foreach ($spec in $instances) { $g = & $nextGeneration $spec $ac2 $true @() 'etape3' }
+        Check (Test-Load $P.ClientMtls 20 '64KiB') 'étape 3 (retrait de l''ancienne racine) : canaux mtls'
+        $status = Relay @('status', '-c', (Config 'rc-server'))
+        Note "  serveur : $(($status -split "`n" | Where-Object { $_ -match 'génération PKI' }))"
+
+        $flux = $processes | Where-Object { $_.Name -eq 'flux-racine' } | Select-Object -First 1
+        $flux.Process.WaitForExit(($fluxSeconds + 30) * 1000) | Out-Null
+        $line = Get-Content (Join-Path $WorkDir 'flux-racine.out.log') | Where-Object { $_.TrimStart().StartsWith('{') } | Select-Object -Last 1
+        $t = if ($line) { $line | ConvertFrom-Json } else { $null }
+        Check ($t -and $t.intact -eq 1) 'flux continu intègre pendant les trois étapes'
+        Check ((Metric 'rc-server' 'pki_reload_failures_total') -eq 0 -and (Metric 'rc-client' 'pki_reload_failures_total') -eq 0) 'aucune génération refusée'
+    }
+
+    Scenario 'R10' 'Journalisation : niveaux à chaud, aucune donnée relayée dans les journaux' {
         $out = Relay @('log-level', '-c', (Config 'rc-server'), 'debug'); Check ($exitCode -eq 0) 'niveau debug à chaud'
         $marker = "DONNEE-DE-RECETTE-$stamp"
         Check ((Send-Text $P.ClientTls $marker) -eq $marker) 'marqueur relayé et renvoyé par l''écho'
@@ -451,13 +526,13 @@ try {
         Check (-not $all.Contains($env:TLSRELAY_CA_PASSPHRASE)) 'aucune phrase de passe dans les journaux'
     }
 
-    Scenario 'R10' 'Administration : status, channels, metrics' {
+    Scenario 'R11' 'Administration : status, channels, metrics' {
         $out = Relay @('status', '-c', (Config 'rc-client')); Check ($exitCode -eq 0 -and $out -match 'instance : rc-client') 'status'
         $out = Relay @('channels', '-c', (Config 'rc-server')); Check ($exitCode -eq 0 -and $out -match 'canal\(aux\)') 'channels'
         $out = Relay @('metrics', '-c', (Config 'rc-server')); Check ($exitCode -eq 0 -and $out -match 'tlsrelay_channels_opened_total') 'metrics (Prometheus)'
     }
 
-    Scenario 'R11' 'Cycle de vie : arrêt avec drain, redémarrage, arrêt immédiat' {
+    Scenario 'R12' 'Cycle de vie : arrêt avec drain, redémarrage, arrêt immédiat' {
         Stop-Relay 'rc-client' 'stop'
         Note '  client arrêté proprement'
         Start-Relay 'rc-client'
@@ -476,7 +551,7 @@ try {
     }
 
     if ($LinuxHost) {
-        Scenario 'R12' "Tests croisés avec Linux ($LinuxHost)" {
+        Scenario 'R13' "Tests croisés avec Linux ($LinuxHost)" {
             $out = & (Join-Path $PSScriptRoot 'recette-linux.ps1') -LinuxHost $LinuxHost -LinuxBuildDir $LinuxBuildDir `
                 -LocalAddress $LocalAddress -WorkDir $WorkDir -Bin $bin -Kit $kit -SshPort $SshPort 6>&1 | Out-String
             $code = $LASTEXITCODE
@@ -489,7 +564,7 @@ try {
     $aborted = $_.Exception.Message
 } finally {
     & $cleanup
-    if ($socketDir) { Remove-Item -Recurse -Force $socketDir -ErrorAction SilentlyContinue }
+    if ($socketDir -and -not $Keep) { Remove-Item -Recurse -Force $socketDir -ErrorAction SilentlyContinue }
 }
 
 # ---------------------------------------------------------------------------

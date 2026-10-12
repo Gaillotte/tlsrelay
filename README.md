@@ -23,6 +23,8 @@ Principales caractéristiques :
 
 - [Plan de développement](docs/PLAN.md) : décisions, architecture, planning, stratégie de tests, recette
 - [Spécification technique](docs/SPEC.md) : TLS, protocole de tunnel, liste blanche, PKI, configuration, cycle de vie
+- [Grille de test d'intrusion](docs/PENTEST.md) : points de contrôle, méthode, résultat attendu, couverture automatisée
+- [Cahier de recette](docs/RECETTE.md) et [procès-verbal](docs/PV-RECETTE.md) : scénarios automatisés (`tools/recette.ps1`) et étapes manuelles
 
 ## État
 
@@ -38,7 +40,7 @@ Principales caractéristiques :
 | 7 | PKI en ligne de commande : `pki gen-csr`, `pki install`, mini-AC (`ca init`, `ca sign`, `ca list`) | Terminée |
 | 8 | Durcissement : PING périodique (lien muet), fuzzing libFuzzer (6 cibles, nuit de 1 h), clang-tidy et cppcheck sans alerte, scan TLS (sslyze), OpenSSL 3.5 sous Linux | Terminée |
 | 9 | Outillage de test `tlsrelay-testkit` (charge, débit, latence, perturbations réseau, PKI de test), objectifs de performance mesurés, endurance | Terminée |
-| 10 | Campagne de sécurité et kit de recette | À venir |
+| 10 | Campagne de sécurité : cas d'attaque automatisés, testssl.sh, MSVC `/analyze`, durcissement et dépendances vérifiés en CI, grille de test d'intrusion ; kit de recette (`recette.ps1`, cahier, procès-verbal) | Terminée |
 
 Les trois ports sont disponibles. Le client et le serveur dialoguent avec le protocole de tunnel (SPEC §4) : sur les ports `tls` et `mtls`, le client renégocie la session à l'échéance de `session_lifetime` (nouvelle connexion, handshake complet avec la génération PKI courante) sans que l'application ne voie de coupure, et reprend la session si la connexion tombe. Le serveur n'accepte que des tlsrelay clients : une application ne peut pas s'y connecter directement.
 
@@ -181,6 +183,23 @@ Mesures (Linux, poste de développement, chaîne mTLS complète client → serve
 En CI, `perf.sh` mesure le débit cadencé à 500 Mbit/s (variable `RATE`, 0 : sans limite) et le flux continu de l'endurance tourne à 200 Mbit/s (`STREAM_RATE`).
 
 **Limite connue : flux saturé sur la boucle locale.** Un canal poussé à son maximum dans les deux sens à la fois (≈ 1 Gbit/s, relais et destination sur la même machine) peut se figer plusieurs dizaines de secondes, sans perte ni corruption de données. Le relais applique alors sa contre-pression et suspend la lecture d'une socket ; le noyau jette des segments en réception (`TCPRcvQDrop` dans `nstat`) au lieu de fermer la fenêtre à temps, et l'émetteur attend entre deux retransmissions un délai qui double à chaque essai (jusqu'à 25 s et plus). Observé sur les machines de CI GitHub, non reproduit sur un poste de développement ; l'analyse continue hors de la CI de chaque push. `tlsrelay channels` (état du contrôle de flux de chaque canal) et le workflow « Stress performances » servent au diagnostic.
+
+### Sécurité et recette
+
+| Outil | Vérifie |
+|---|---|
+| `tests/test_attacks.cpp` | Certificats expirés ou pas encore valides, mauvais usage, faux serveur, trames hostiles, inondation sans handshake, injection et secrets dans les journaux |
+| `tests/lifecycle/tls-scan.sh` | Configuration TLS vue de l'extérieur (sslyze ; testssl.sh avec `TESTSSL=<chemin>`) |
+| `tools/check-hardening.sh`, `tools/check-hardening.ps1` | PIE, RELRO, NX, protection de pile, FORTIFY ; ASLR, DEP, CFG |
+| `tools/check-deps.sh` | OpenSSL livré sous Windows à la dernière version corrective de la branche 3.5 |
+| `cmake -DTLSRELAY_MSVC_ANALYZE=ON` | Analyse statique MSVC (`/analyze`) |
+| `tools/recette.ps1` | Recette automatisée sur une station (voir le [cahier de recette](docs/RECETTE.md)) |
+
+```powershell
+.\tools\recette.ps1 -BuildDir 'C:\Program Files\tlsrelay' -Services -Keep   # rapport.md dans %ProgramData%\tlsrelay\recette-<date>
+```
+
+Sous Linux (PowerShell 7), en mode console : `pwsh tools/recette.ps1 -BuildDir build/linux-release/src/app -TestkitDir build/linux-release/src/testkit`.
 
 ### Service et administration
 
