@@ -26,7 +26,7 @@ Principales caractéristiques :
 - [Installation](docs/INSTALLATION.md) : paquets `.deb`, `.rpm` et `.msi`, première instance, mise à jour, désinstallation
 - [Exploitation](docs/EXPLOITATION.md) : commandes courantes, journaux, supervision, PKI, sauvegarde, dépannage
 - [Plan de développement](docs/PLAN.md) : décisions, architecture, planning, stratégie de tests, recette
-- [Spécification technique](docs/SPEC.md) : TLS, protocole de tunnel, liste blanche, PKI, configuration, cycle de vie
+- [Spécification technique](docs/SPEC.md) (en anglais) : TLS, protocole de tunnel, liste blanche, PKI, configuration, cycle de vie
 - [Grille de test d'intrusion](docs/PENTEST.md) : points de contrôle, méthode, résultat attendu, couverture automatisée
 - [Cahier de recette](docs/RECETTE.md) et [procès-verbal](docs/PV-RECETTE.md) : scénarios automatisés (`tools/recette.ps1`) et étapes manuelles
 

@@ -139,7 +139,7 @@ Décisions de la livraison 1.1 :
 
 ### 5.1 Principes
 
-- **Traçabilité** : chaque exigence est reliée aux tests qui la vérifient (matrice de traçabilité ; liste complète des exigences : [SPEC §11](SPEC.md#11-exigences)). Une exigence sans test vert n'est pas livrée.
+- **Traçabilité** : chaque exigence est reliée aux tests qui la vérifient (matrice de traçabilité ; liste complète des exigences : [SPEC §11](SPEC.md#11-requirements)). Une exigence sans test vert n'est pas livrée.
 - **Tests écrits avec le code** : une phase n'est terminée que si ses tests passent.
 - **Double plateforme** : tous les tests automatisés passent sous Windows et Linux, contre OpenSSL 3.0 et 3.5.
 - **Intégrité de bout en bout** : un générateur envoie un flux pseudo-aléatoire reproductible ; le récepteur compare l'empreinte SHA-256. Cela prouve l'absence de perte, de doublon et de réordonnancement, notamment pendant les renégociations.

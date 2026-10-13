@@ -1,7 +1,7 @@
 # tlsrelay — Design document
 
 > English design reference for the complete solution: the `tlsrelay` service, the `tlsrelay-testkit` test tool and the `tlsrelay-admin` editor (deliveries 1.0 and 1.1).
-> The normative behaviour is specified in [SPEC.md](SPEC.md) (French); the project plan, decisions and test strategy are in [PLAN.md](PLAN.md). Where this document and the SPEC differ, the SPEC prevails.
+> The normative behaviour is specified in [SPEC.md](SPEC.md); the project plan, decisions and test strategy are in [PLAN.md](PLAN.md). Where this document and the SPEC differ, the SPEC prevails.
 > A 10-slide overview with the main flows and diagrams is in [tlsrelay-design-slides.pdf](tlsrelay-design-slides.pdf).
 
 ## Contents
