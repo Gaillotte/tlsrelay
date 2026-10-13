@@ -21,7 +21,7 @@ Principales caractéristiques :
 
 ## Documentation
 
-- [Design document (English)](docs/DESIGN.md) : architecture, sécurité, protocole, PKI, éditeur, qualité
+- [Design document (English)](docs/DESIGN.md) : architecture, sécurité, protocole, PKI, éditeur, qualité ; en 10 slides : [tlsrelay-design-slides.pdf](docs/tlsrelay-design-slides.pdf)
 - [Éditeur tlsrelay-admin](docs/EDITEUR.md) : configuration, liste blanche, paquets de déploiement, mini-AC (livraison 1.1)
 - [Installation](docs/INSTALLATION.md) : paquets `.deb`, `.rpm` et `.msi`, première instance, mise à jour, désinstallation
 - [Exploitation](docs/EXPLOITATION.md) : commandes courantes, journaux, supervision, PKI, sauvegarde, dépannage
