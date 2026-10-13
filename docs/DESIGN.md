@@ -664,6 +664,8 @@ tlsrelay is proprietary (`LICENSE`). `THIRD-PARTY-NOTICES.txt` reproduces the li
 
 ### 13.1 Test levels
 
+The test strategy, environments, the description of every test and the requirements coverage matrix are in [TESTS.md](TESTS.md).
+
 | Level | Content |
 |---|---|
 | Unit and integration (GoogleTest, ~190 tests) | Units and formats, configuration and whitelist (including round trips), frames, TLS and mTLS chains, rotation and guard, tunnel (renegotiation, resume after cut, back-pressure, keepalive), CRL, mini-CA (policy, revocation, CRL content, audit tampering, root change through the three steps), administration, attack cases (expired/foreign certificates, fake servers, hostile frames, floods, log injection) |

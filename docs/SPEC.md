@@ -490,7 +490,7 @@ Prometheus text format (version 0.0.4), read by `tlsrelay metrics` over the admi
 
 ## 11. Requirements
 
-Full list of the solution's requirements, deliveries 1.0 (service) and 1.1 (editor), with how each is verified. A requirement is met when all its verifications pass (PLAN §5.1). Test names refer to the GoogleTest suites (`tests/`) and Qt Test cases (`tests/admin/`); scripts are in `tests/lifecycle/`, `tests/perf/` and `tools/`; R01 to R13, M01 to M09 and E01 to E10 are the acceptance-test scenarios ([RECETTE.md](RECETTE.md)).
+Full list of the solution's requirements, deliveries 1.0 (service) and 1.1 (editor), with how each is verified. A requirement is met when all its verifications pass (PLAN §5.1). Test names refer to the GoogleTest suites (`tests/`) and Qt Test cases (`tests/admin/`); scripts are in `tests/lifecycle/`, `tests/perf/` and `tools/`; R01 to R13, M01 to M09 and E01 to E10 are the acceptance-test scenarios ([RECETTE.md](RECETTE.md)). Each test is described, and the coverage of each requirement detailed, in [TESTS.md](TESTS.md).
 
 ### 11.1 General and platforms
 

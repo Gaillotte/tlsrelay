@@ -27,6 +27,7 @@ Principales caractéristiques :
 - [Exploitation](docs/EXPLOITATION.md) : commandes courantes, journaux, supervision, PKI, sauvegarde, dépannage
 - [Plan de développement](docs/PLAN.md) : décisions, architecture, planning, stratégie de tests, recette
 - [Spécification technique](docs/SPEC.md) (en anglais) : TLS, protocole de tunnel, liste blanche, PKI, configuration, cycle de vie
+- [Plan et rapport de tests](docs/TESTS.md) (en anglais) : stratégie, environnements, description de tous les tests, couverture des exigences
 - [Grille de test d'intrusion](docs/PENTEST.md) : points de contrôle, méthode, résultat attendu, couverture automatisée
 - [Cahier de recette](docs/RECETTE.md) et [procès-verbal](docs/PV-RECETTE.md) : scénarios automatisés (`tools/recette.ps1`) et étapes manuelles
 
