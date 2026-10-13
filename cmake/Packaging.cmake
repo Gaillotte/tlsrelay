@@ -94,6 +94,10 @@ set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/share/doc)
 # --- Windows (WiX) ------------------------------------------------------------
 set(CPACK_WIX_UPGRADE_GUID "24d7e243-22e9-4987-8ef5-33ee37650b55")  # fixe : mises à jour en place
 set(CPACK_WIX_ARCHITECTURE x64)
+# Installation pour toute la machine (service système) : raccourcis dans le menu
+# Démarrer commun. À fixer avant toute installation réelle : changer de portée
+# empêcherait ensuite les mises à jour en place.
+set(CPACK_WIX_INSTALL_SCOPE perMachine)
 set(CPACK_WIX_PRODUCT_URL "https://github.com/Gaillotte/tlsrelay")
 
 if(WIN32)

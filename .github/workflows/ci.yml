@@ -336,9 +336,10 @@ jobs:
             if (-not (Test-Path $f)) { throw "$f absent" }
           }
           if (-not (Get-ChildItem $root -Recurse -Filter qwindows.dll)) { throw "module de plateforme qwindows.dll absent" }
-          $shortcut = Get-ChildItem "$env:ProgramData\Microsoft\Windows\Start Menu\Programs", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" `
+          # Installation pour toute la machine : raccourci dans le menu Démarrer commun.
+          $shortcut = Get-ChildItem "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" `
             -Recurse -Filter 'tlsrelay-admin.lnk' -ErrorAction SilentlyContinue
-          if (-not $shortcut) { throw "raccourci tlsrelay-admin absent du menu Démarrer" }
+          if (-not $shortcut) { throw "raccourci tlsrelay-admin absent du menu Démarrer commun" }
           $shortcut.FullName
           $report = "$env:RUNNER_TEMP\admin-check.txt"
           $p = Start-Process $admin -ArgumentList '--check', "`"$PWD\examples\client.yaml`"", '--report', "`"$report`"" -Wait -PassThru

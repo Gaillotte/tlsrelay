@@ -53,7 +53,7 @@ Livraison 1.1 (éditeur `tlsrelay-admin`, [PLAN §4](docs/PLAN.md)) :
 | 12 | Socle de l'éditeur : écriture normalisée de la configuration et de la liste blanche, différences ; mini-AC : révocation (`ca revoke`), CRL (`ca crl`), journal d'audit chaîné (`ca audit`) ; CRL appliquées par le service (`pki crl`, rechargement à chaud) | Terminée |
 | 13 | Application Qt `tlsrelay-admin` : formulaire de configuration et liste blanche validés par les règles du service, aperçu des différences et copie `.bak` à l'enregistrement, export des paquets de déploiement (Linux, Windows) | Terminée |
 | 14 | Module PKI de l'éditeur : reprise ou création de la mini-AC, inventaire (filtres, expirations), signature et renouvellement des demandes, révocation et CRL, journal d'audit, assistant de changement de racine (`ca root-change` en ligne de commande) | Terminée |
-| 15 | Éditeur dans le MSI (fonctionnalité « tlsrelay-admin » : DLL Qt déployées, raccourci, textes LGPL et GPL), contrôle sans fenêtre (`--check`), guide de l'éditeur, scénarios de recette E01 à E10 | En cours |
+| 15 | Éditeur dans le MSI (fonctionnalité « tlsrelay-admin » : DLL Qt déployées, raccourci, textes LGPL et GPL), contrôle sans fenêtre (`--check`), guide de l'éditeur, scénarios de recette E01 à E10 | Terminée |
 
 Les trois ports sont disponibles. Le client et le serveur dialoguent avec le protocole de tunnel (SPEC §4) : sur les ports `tls` et `mtls`, le client renégocie la session à l'échéance de `session_lifetime` (nouvelle connexion, handshake complet avec la génération PKI courante) sans que l'application ne voie de coupure, et reprend la session si la connexion tombe. Le serveur n'accepte que des tlsrelay clients : une application ne peut pas s'y connecter directement.
 
