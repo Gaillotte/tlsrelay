@@ -21,6 +21,14 @@ set(TLSRELAY_SANITIZERS "" CACHE STRING "Sanitizers à activer (ex. address,unde
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CompilerOptions)
+
+# Emplacement de la documentation installée (paquets).
+include(GNUInstallDirs)
+if(WIN32)
+    set(TLSRELAY_DOC_DIR doc)
+else()
+    set(TLSRELAY_DOC_DIR ${CMAKE_INSTALL_DOCDIR})
+endif()
 if(TLSRELAY_FETCH_DEPS)
     include(FetchDependencies)
 else()

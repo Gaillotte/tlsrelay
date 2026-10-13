@@ -10,7 +10,7 @@ Installation des paquets de la livraison, mise en service d'une première instan
 | `tlsrelay-testkit_<version>-1_amd64.deb` | idem | `tlsrelay-testkit` (outillage de test et de recette) |
 | `tlsrelay-<version>-1.el9.x86_64.rpm` | RHEL 9, Rocky Linux 9, AlmaLinux 9 | `tlsrelay`, documentation, exemples |
 | `tlsrelay-testkit-<version>-1.el9.x86_64.rpm` | idem | `tlsrelay-testkit` |
-| `tlsrelay-<version>-win64.msi` | Windows 10 et 11, Windows Server 2019 et plus récent (64 bits) | `tlsrelay`, OpenSSL 3.5 LTS, runtime MSVC, documentation ; fonctionnalité facultative « tlsrelay-testkit » (outillage et scripts de recette) |
+| `tlsrelay-<version>-win64.msi` | Windows 10 et 11, Windows Server 2019 et plus récent (64 bits) | `tlsrelay`, OpenSSL 3.5 LTS, runtime MSVC, documentation ; fonctionnalités facultatives « tlsrelay-testkit » (outillage et scripts de recette) et « tlsrelay-admin » (éditeur graphique, Qt 6 sous LGPLv3, [EDITEUR.md](EDITEUR.md)) |
 
 - Linux : `tlsrelay` utilise l'OpenSSL de la distribution (3.0 ou plus récent), mis à jour par ses correctifs de sécurité ; les autres bibliothèques sont intégrées au binaire.
 - Windows : OpenSSL 3.5 LTS est livré dans le paquet ; une mise à jour corrective d'OpenSSL passe par une nouvelle version du paquet.
@@ -42,7 +42,7 @@ Double-cliquer sur le MSI, ou en mode silencieux depuis un PowerShell administra
 
 ```powershell
 msiexec /i tlsrelay-0.1.0-win64.msi /qn                    # tlsrelay seul
-msiexec /i tlsrelay-0.1.0-win64.msi /qn ADDLOCAL=ALL       # avec tlsrelay-testkit et les scripts de recette
+msiexec /i tlsrelay-0.1.0-win64.msi /qn ADDLOCAL=ALL       # avec tlsrelay-testkit, les scripts de recette et tlsrelay-admin
 ```
 
 Arborescence : `C:\Program Files\tlsrelay\bin` (exécutables et DLL), `doc` (documentation, exemples), `tools` (scripts de recette, avec testkit). Le répertoire `bin` n'est pas ajouté au `PATH` : les commandes ci-dessous utilisent `tlsrelay` pour `& 'C:\Program Files\tlsrelay\bin\tlsrelay.exe'`.

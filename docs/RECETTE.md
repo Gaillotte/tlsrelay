@@ -93,6 +93,23 @@ Durée : environ 10 minutes (3 minutes avec `-Quick`). Le rapport `rapport.md` d
 | M08 | **Rapport.** Relire `$rc\rapport.md` | Versions de tlsrelay et d'OpenSSL (3.5 LTS) et empreintes conformes à la livraison ; tous les scénarios OK | |
 | M09 | **Fin.** `& $rc\arret-recette.ps1` | Services désinstallés, processus arrêtés | |
 
-## 6. Hors du périmètre d'une station unique
+## 6. Éditeur tlsrelay-admin (livraison 1.1)
+
+Sur la station de recette, MSI installé avec la fonctionnalité « tlsrelay-admin » (`ADDLOCAL=ALL`), après les scénarios automatisés (la PKI et les configurations de recette sont dans `$rc`). Les comportements détaillés de l'éditeur sont aussi couverts par ses tests automatisés (Qt Test, en CI) ; ces étapes vérifient l'installation et l'utilisation réelles. Guide : [EDITEUR.md](EDITEUR.md).
+
+| N° | Étape | Résultat attendu | OK |
+|---|---|---|---|
+| E01 | **Installation.** Lancer « tlsrelay-admin » depuis le menu Démarrer ; « Aide > À propos » | Fenêtre ouverte sans erreur de DLL ; versions de tlsrelay, d'OpenSSL (3.5 LTS) et de Qt affichées, mention LGPLv3 ; `doc\LICENSES` présent | |
+| E02 | **Ouverture et validation.** Ouvrir une copie de `$rc\rc-server.yaml` ; vider le port d'écoute mtls, puis saisir `cinq minutes` dans « Inactivité » | Liste blanche affichée ; chaque erreur apparaît aussitôt, champ encadré, message identique à `tlsrelay check-config` sur le même contenu | |
+| E03 | **Enregistrement.** Corriger, modifier `max_channels` et ajouter un pair à la liste blanche ; Ctrl+S | Aperçu des différences des deux fichiers ; après confirmation, `.bak` créés ; `tlsrelay check-config -c <copie>` valide | |
+| E04 | **Prise en compte par une instance.** Ouvrir `$rc\rc-server.yaml` lui-même, retirer le pair `rc-client` de la liste blanche, enregistrer | Dans les 2 s, le journal de `rc-server` indique « liste blanche rechargée » et le pair retiré ; les canaux mtls sont refusés ; remettre le pair : ils sont rétablis | |
+| E05 | **Paquet de déploiement.** Fichier > Exporter, machine cible Windows, avec un kit et des CRL | Répertoire au nom de l'instance ; `install.ps1` exécuté sur une instance de test : configuration copiée, `check-config` réussi | |
+| E06 | **Reprise de la mini-AC.** Onglet PKI > Ouvrir une AC : `$rc\ac` | Résumé (racine, AC Serveurs et Clients, empreintes) ; inventaire identique à `tlsrelay ca list --dir $rc\ac` ; journal d'audit « intact » | |
+| E07 | **Signature et renouvellement.** Sur `rc-client` : `tlsrelay pki gen-csr` ; dans l'éditeur : Renouveler (certificat de `rc-client` sélectionné) ; installer le kit, activer, `reload` | Demande examinée (sujet, extensions ignorées) ; kit produit ; l'ancien certificat est « remplacé » ; `rc-client` bascule sans coupure | |
+| E08 | **Révocation.** Révoquer le certificat d'un poste de test (motif « clé compromise ») avec une copie des CRL ; sur `rc-server` : `tlsrelay pki crl -c $rc\rc-server.yaml <copie des CRL>` | CRL publiées ; le certificat est refusé au handshake (« révoqué » dans le journal) ; `status` de `rc-server` indique la CRL | |
+| E09 | **Phrase de passe.** Lancer une signature avec une phrase de passe erronée, puis annuler une saisie | Refus « phrase de passe incorrecte », rien n'est signé ni écrit ; l'annulation n'effectue aucune opération | |
+| E10 | **Audit et changement de racine.** Assistant de changement de racine vers une nouvelle AC (créée par l'assistant) ; puis modifier une ligne de `$rc\ac\audit.log` dans un éditeur de texte et rouvrir l'AC | Fichiers des étapes et `LISEZMOI.txt` produits ; opération tracée dans l'audit des deux AC ; après modification : « journal altéré » en rouge (restaurer ensuite le fichier) | |
+
+## 7. Hors du périmètre d'une station unique
 
 Une seule station ne couvre pas un vrai réseau entre machines (NAT, pare-feu, MTU, latence) : les tests croisés de la CI et R13 (VM sur un commutateur interne) le compensent en partie. Un essai complémentaire entre deux machines physiques est recommandé avant la mise en production (PLAN §6), par exemple avec `tools/recette-linux.ps1` depuis une seconde machine.

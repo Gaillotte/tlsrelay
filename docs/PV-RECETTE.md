@@ -21,6 +21,7 @@
 | Scénarios automatisés R01 à R12 | … / 12 OK | |
 | Tests croisés R13 | OK / KO / non réalisés | |
 | Étapes manuelles M01 à M09 | … / 9 OK | |
+| Éditeur tlsrelay-admin E01 à E10 (livraison 1.1) | … / 10 OK | |
 | Test d'intrusion interne ([PENTEST.md](PENTEST.md)) | OK / KO / non réalisé | |
 
 ## 3. Réserves

@@ -1,0 +1,2 @@
+mode: server
+ports: { plain: { listen: "0.0.0.0:99999" } }

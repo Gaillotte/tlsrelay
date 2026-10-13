@@ -323,6 +323,31 @@ jobs:
           Get-ChildItem "$env:ProgramFiles\tlsrelay" -Recurse | Select-Object -ExpandProperty FullName
           & "$env:ProgramFiles\tlsrelay\bin\tlsrelay.exe" version
 
+      - name: Éditeur installé (DLL Qt déployées, contrôle sans fenêtre)
+        shell: pwsh
+        run: |
+          # Sans le Qt du runner : l'éditeur ne doit dépendre que des fichiers installés.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and $_ -notmatch '[\\/]Qt[\\/]' }) -join ';'
+          foreach ($v in 'QT_PLUGIN_PATH', 'QT_ROOT_DIR', 'QML2_IMPORT_PATH') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
+          $root = "$env:ProgramFiles\tlsrelay"
+          $admin = "$root\bin\tlsrelay-admin.exe"
+          foreach ($f in "$root\bin\Qt6Core.dll", "$root\bin\Qt6Widgets.dll", "$root\doc\LICENSES\LGPL-3.0.txt",
+                         "$root\doc\LICENSES\GPL-3.0.txt", "$root\doc\EDITEUR.md") {
+            if (-not (Test-Path $f)) { throw "$f absent" }
+          }
+          if (-not (Get-ChildItem $root -Recurse -Filter qwindows.dll)) { throw "module de plateforme qwindows.dll absent" }
+          $shortcut = Get-ChildItem "$env:ProgramData\Microsoft\Windows\Start Menu\Programs", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" `
+            -Recurse -Filter 'tlsrelay-admin.lnk' -ErrorAction SilentlyContinue
+          if (-not $shortcut) { throw "raccourci tlsrelay-admin absent du menu Démarrer" }
+          $shortcut.FullName
+          $report = "$env:RUNNER_TEMP\admin-check.txt"
+          $p = Start-Process $admin -ArgumentList '--check', "`"$PWD\examples\client.yaml`"", '--report', "`"$report`"" -Wait -PassThru
+          if (Test-Path $report) { Get-Content $report }
+          if ($p.ExitCode -ne 0) { throw "tlsrelay-admin --check : code $($p.ExitCode)" }
+          $p = Start-Process $admin -ArgumentList '--check', "`"$PWD\tests\admin\invalide.yaml`"", '--report', "`"$report`"" -Wait -PassThru
+          Get-Content $report
+          if ($p.ExitCode -ne 1) { throw "fichier invalide : code $($p.ExitCode), 1 attendu" }
+
       - name: Recette automatisée sur les binaires installés (services Windows)
         shell: pwsh
         run: .\tools\recette.ps1 -BuildDir "$env:ProgramFiles\tlsrelay\bin" -Services -Quick -WorkDir "$env:ProgramData\tlsrelay\recette-ci"
@@ -334,6 +359,7 @@ jobs:
           $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "désinstallation du MSI : $($p.ExitCode)" }
           if (Test-Path "$env:ProgramFiles\tlsrelay\bin\tlsrelay.exe") { throw "tlsrelay.exe encore présent" }
+          if (Test-Path "$env:ProgramFiles\tlsrelay\bin\tlsrelay-admin.exe") { throw "tlsrelay-admin.exe encore présent" }
 
       - name: Paquet MSI (artefact)
         uses: actions/upload-artifact@v4

@@ -5,13 +5,7 @@
 # « testkit » (tlsrelay-testkit et scripts de recette). Sous Linux, un paquet
 # par composant : tlsrelay et tlsrelay-testkit.
 
-include(GNUInstallDirs)
-
-if(WIN32)
-    set(TLSRELAY_DOC_DIR doc)
-else()
-    set(TLSRELAY_DOC_DIR ${CMAKE_INSTALL_DOCDIR})
-endif()
+# TLSRELAY_DOC_DIR : défini dans le CMakeLists.txt principal (utilisé aussi par src/admin).
 
 install(FILES README.md LICENSE THIRD-PARTY-NOTICES.txt DESTINATION ${TLSRELAY_DOC_DIR} COMPONENT service)
 install(FILES docs/INSTALLATION.md docs/EXPLOITATION.md docs/SPEC.md docs/RECETTE.md docs/PV-RECETTE.md docs/PENTEST.md
@@ -50,6 +44,15 @@ configure_file("${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_BINARY_DIR}/LICENSE.tx
 set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_BINARY_DIR}/LICENSE.txt")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY tlsrelay)
 set(CPACK_COMPONENTS_ALL service testkit)
+if(WIN32 AND TLSRELAY_BUILD_ADMIN)
+    # Éditeur (livraison 1.1) : fonctionnalité du MSI, avec Qt (LGPLv3) et un raccourci.
+    list(APPEND CPACK_COMPONENTS_ALL admin)
+    set(CPACK_COMPONENT_ADMIN_DISPLAY_NAME "tlsrelay-admin")
+    set(CPACK_COMPONENT_ADMIN_DESCRIPTION
+        "Éditeur graphique : configuration, liste blanche, paquets de déploiement, mini-AC (Qt 6, LGPLv3).")
+    set(CPACK_COMPONENT_ADMIN_DEPENDS service)
+    set(CPACK_PACKAGE_EXECUTABLES "tlsrelay-admin" "tlsrelay-admin")
+endif()
 set(CPACK_COMPONENT_SERVICE_DISPLAY_NAME "tlsrelay")
 set(CPACK_COMPONENT_SERVICE_DESCRIPTION "Service tlsrelay, mini-AC, documentation et exemples de configuration.")
 set(CPACK_COMPONENT_SERVICE_REQUIRED ON)

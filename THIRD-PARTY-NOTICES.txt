@@ -340,3 +340,27 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+------------------------------------------------------------------------------
+Qt 6 (éditeur tlsrelay-admin, livré dans le paquet Windows uniquement)
+https://www.qt.io — GNU Lesser General Public License v3 (LGPL-3.0-only)
+------------------------------------------------------------------------------
+
+L'éditeur tlsrelay-admin utilise les bibliothèques Qt 6 (Qt Core, Qt Gui,
+Qt Widgets et leurs modules d'extension), Copyright (C) The Qt Company Ltd. et
+autres contributeurs, sous licence GNU LGPL version 3.
+
+- Qt est lié dynamiquement : les bibliothèques Qt sont livrées sous forme de
+  DLL non modifiées, à côté de tlsrelay-admin.exe, et peuvent être remplacées
+  par une autre version compatible de Qt construite par l'utilisateur.
+- Textes des licences : LICENSES/LGPL-3.0.txt et LICENSES/GPL-3.0.txt (la LGPL
+  complète la GPL version 3).
+- Sources de Qt : la version livrée est indiquée dans « Aide > À propos » de
+  l'éditeur ; ses sources complètes sont disponibles à l'adresse
+  https://download.qt.io/archive/qt/ (archive « single » de la version), et
+  sont fournies sur simple demande, pendant au moins trois ans, à l'adresse du
+  dépôt https://github.com/Gaillotte/tlsrelay.
+- Qt intègre lui-même des composants tiers (par exemple zlib, libpng,
+  FreeType, HarfBuzz, PCRE2, double-conversion) dont les licences sont
+  recensées dans la documentation de Qt :
+  https://doc.qt.io/qt-6/licenses-used-in-qt.html
