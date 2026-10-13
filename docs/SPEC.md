@@ -2,6 +2,7 @@
 
 > Version 0.1 (brouillon de la phase 0). Le plan de développement est dans [`PLAN.md`](PLAN.md).
 > Les valeurs marquées « par défaut » sont modifiables dans la configuration.
+> La liste complète des exigences et de leur vérification est en [section 11](#11-exigences).
 
 ## 1. Vocabulaire
 
@@ -486,7 +487,177 @@ Format texte Prometheus (version 0.0.4), lu par `tlsrelay metrics` sur le canal 
 | `tlsrelay_renegotiations_total`, `tlsrelay_resume_failures_total`, `tlsrelay_protocol_errors_total` | counter |
 | `tlsrelay_bytes_{upstream,downstream}_total` (canaux fermés) | counter |
 
-## 11. Points ouverts
+## 11. Exigences
+
+Liste complète des exigences de la solution, livraisons 1.0 (service) et 1.1 (éditeur), avec leur vérification. Une exigence est satisfaite quand toutes ses vérifications passent (PLAN §5.1). Les noms de tests renvoient aux suites GoogleTest (`tests/`) et Qt Test (`tests/admin/`) ; les scripts sont dans `tests/lifecycle/`, `tests/perf/` et `tools/` ; R01 à R13, M01 à M09 et E01 à E10 sont les scénarios du cahier de recette ([RECETTE.md](RECETTE.md)).
+
+### 11.1 Généralités et plateformes
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| GEN-01 | Fonctionne sous Windows 10, 11 et Server 2019 ou plus récent (64 bits) et sous Linux : Ubuntu 22.04 et 24.04, Debian 12, RHEL 9 et équivalents | PLAN §2 | 1.0 | CI : Windows MSVC, Linux GCC et Clang ; paquets installés sur Ubuntu 22.04 et 24.04, Debian 12, Rocky 9, Alma 9 ; R13 (tests croisés) |
+| GEN-02 | OpenSSL 3.0 ou plus récent, lié dynamiquement ; OpenSSL 3.5 LTS livré sous Windows ; version contrôlée et journalisée au démarrage | §10.3 | 1.0 | Job « Linux OpenSSL 3.5 LTS » ; CI Windows « Version d'OpenSSL embarquée » ; R02 |
+| GEN-03 | Fonctionnement par paire : un tlsrelay client et un tlsrelay serveur ; le pair est toujours un tlsrelay (protocole de tunnel et ALPN obligatoires) | §2, §3 | 1.0 | `TlsTest.ServerRejectsMissingAlpn`, `AttackTest.ClientSendsNothingToValidFakeServerWithoutTunnelProtocol` |
+| GEN-04 | Trois ports par instance : `plain` (clair), `tls` (TLS 1.3), `mtls` (TLS 1.3 mutuel) ; un port absent de la configuration n'est pas ouvert | §2, §8 | 1.0 | `Relay.PlainChainPreservesDataIntegrity`, `TlsTest.ChainPreservesDataIntegrity`, `MtlsTest.ChainPreservesDataIntegrity`, R03 |
+| GEN-05 | Mode serveur : sortie en clair vers une destination unique (adresse et port configurables) ; mode client : entrée en clair depuis l'application | §2, §8 | 1.0 | `Relay.*`, R03 |
+
+### 11.2 TLS
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| TLS-01 | TLS 1.3 uniquement sur les ports `tls` et `mtls` : TLS 1.2 et le clair sont refusés | §3 | 1.0 | `TlsTest.ServerRejectsTls12`, `TlsTest.ServerRejectsPlaintextOnTlsPort`, `tests/lifecycle/tls-scan.sh` (sslyze, testssl.sh) |
+| TLS-02 | Suites et groupes de la section 3 seulement | §3 | 1.0 | `tls-scan.sh` |
+| TLS-03 | ALPN `tlsrelay/1` obligatoire | §3 | 1.0 | `TlsTest.ServerNegotiatesTls13WithAlpn`, `TlsTest.ServerRejectsMissingAlpn`, `TlsTest.ServerRejectsWrongAlpn` |
+| TLS-04 | Pas de reprise de session TLS : handshake complet à chaque connexion de transport | §3 | 1.0 | `tls-scan.sh` |
+| TLS-05 | Le client vérifie la chaîne du serveur jusqu'à une racine de confiance, le nom ou l'adresse IP attendus et l'AC émettrice (AC Serveurs) | §3 | 1.0 | `TlsTest.ClientRejectsServerFromAnotherPki`, `TlsTest.ClientRejectsWrongServerName`, `TlsTest.ClientAcceptsIpAddressAsServerName`, `TlsTest.ClientRejectsServerCertificateFromUnexpectedCa`, `AttackTest.ClientRejectsServerPresentingClientCertificate` |
+| TLS-06 | Le serveur exige sur le port `mtls` un certificat client émis par l'AC Clients, d'usage `clientAuth` | §3 | 1.0 | `MtlsTest.ServerRejectsClientWithoutCertificate`, `MtlsTest.ServerRejectsClientCertificateFromUnexpectedCa`, `MtlsTest.ServerRejectsServerCertificateUsedAsClientCertificate` |
+| TLS-07 | Certificats expirés ou pas encore valides refusés, des deux côtés | §3, §7.3 | 1.0 | `AttackTest.ClientRejectsExpiredServerCertificate`, `AttackTest.ClientRejectsNotYetValidServerCertificate`, `AttackTest.ServerRejectsExpiredClientCertificate`, `AttackTest.ServerRejectsNotYetValidClientCertificate` |
+| TLS-08 | Une connexion qui ne termine pas son handshake dans `handshake_timeout` est fermée ; une inondation de connexions muettes reste bornée | §5.2 | 1.0 | `TlsTest.HandshakeTimeoutClosesSilentConnection`, `AttackTest.ConnectionFloodWithoutHandshakeIsBoundedAndRecovers` |
+
+### 11.3 Protocole de tunnel
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| TUN-01 | Trames conformes à 4.1 et 4.2 ; trame inconnue, champ réservé non nul, taille incohérente ou supérieure à 16 Kio + 64 octets : fermeture | §4.1, §4.2 | 1.0 | `Frame.*`, `TunnelTest.InvalidFrameClosesChannelWithProtocolError`, `AttackTest.OversizedFrameHeaderClosesChannelBeforePayload`, fuzzing `fuzz_frame` |
+| TUN-02 | Ouverture par `OPEN` / `OPEN_OK` / `OPEN_FAIL` ; les données de l'application lues avant `OPEN_OK` sont mises en tampon | §4.3 | 1.0 | `TunnelTest.OpenIsRefusedForAnotherPortOrDuplicateSession`, `AttackTest.DataBeforeOpenIsRefused` |
+| TUN-03 | Numérotation des `DATA` par sens et acquittements cumulatifs ; un `DATA` hors séquence est une erreur de protocole | §4.4 | 1.0 | `AttackTest.DataWithUnexpectedSequenceClosesChannel` |
+| TUN-04 | Contre-pression sans perte, dans la limite de `resume_buffer` par sens et par canal | §4.4 | 1.0 | `TunnelTest.SmallResumeBufferAppliesBackpressureWithoutLoss` |
+| TUN-05 | La lecture de la connexion de transport ne dépend pas de la vitesse de l'application ou de la destination | §4.4 | 1.0 | `TunnelTest.SlowDestinationDoesNotStallAcknowledgements`, `TunnelTest.KeepaliveToleratesApplicationNotReading` |
+| TUN-06 | Renégociation transparente à `session_lifetime × (1 ± session_jitter)` : nouvelle connexion, handshake complet avec la génération PKI courante, sans coupure ni perte | §4.5 | 1.0 | `TunnelTest.RenegotiationIsTransparentUnderLoad`, `TunnelTest.RenegotiationMovesOpenChannelToNewGeneration`, R07 |
+| TUN-07 | Reprise par jeton dérivé de l'exportateur TLS de la connexion précédente, à usage unique, comparé à temps constant ; même entrée de liste blanche exigée | §4.5 | 1.0 | `TunnelTest.ResumeTokenIsBoundToConnectionAndSingleUse` |
+| TUN-08 | Le serveur ferme une session qui n'est pas renégociée dans le délai de grâce (`LIFETIME_EXCEEDED`) | §4.5 | 1.0 | `TunnelTest.ServerClosesSessionThatIsNotRenegotiated` |
+| TUN-09 | Reprise de session après une coupure, dans `renegotiation_grace`, sans perte ni duplication | §4.5 | 1.0 | `TunnelTest.SessionResumesAfterTransportLoss`, `TunnelTest.ServerWaitsForResumeOnlyDuringGrace`, R06 |
+| TUN-10 | Coupure avant `OPEN_OK`, y compris pendant le handshake : tunnel rouvert sur une nouvelle connexion, sans perte | §4.5 | 1.0 | `TunnelTest.TransportLossBeforeOpenOkReopensTunnel`, `TunnelTest.TransportLossDuringHandshakeReopensTunnel` |
+| TUN-11 | `PING` / `PONG` : un lien muet est détecté après 3 intervalles de `keepalive_interval` ; reprise sur les ports `tls` et `mtls`, fermeture sur le port `plain` | §4.2 | 1.0 | `TunnelTest.SilentTransportIsDetectedByKeepaliveAndResumed`, `TunnelTest.SilentPlainTransportClosesChannel` |
+| TUN-12 | Port `plain` : ni durée de vie ni reprise ; une coupure ferme le canal | §4.5 | 1.0 | `TunnelTest.PlainTransportLossClosesChannel` |
+| TUN-13 | Demi-fermeture propagée de bout en bout, l'autre sens continuant | §4.6 | 1.0 | `Relay.HalfClosePropagatesThroughTheChain`, `TlsTest.HalfClosePropagatesOverTls` |
+| TUN-14 | Messages de `CLOSE` et `OPEN_FAIL` venus du pair tronqués et échappés | §4.6 | 1.0 | `Frame.StatusMessageControlCharactersAreEscaped`, `Frame.StatusMessageIsTruncated`, `AttackTest.PeerMessageCannotInjectLogLines` |
+
+### 11.4 Canaux et délais
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| CAN-01 | Plusieurs canaux en parallèle par port, une session tunnel par canal | §5 | 1.0 | `Relay.ManyChannelsInParallel`, `TlsTest.ManyChannelsInParallel`, R03 |
+| CAN-02 | `max_channels` par port : les connexions excédentaires sont refusées | §5.2 | 1.0 | `Relay.MaxChannelsRejectsExtraConnections` |
+| CAN-03 | `idle_timeout` sur les trois ports ; seules les données applicatives repoussent l'échéance | §5.3 | 1.0 | `Relay.IdleTimeoutClosesChannel`, `Relay.ActivityKeepsChannelOpen` |
+| CAN-04 | Connexion à la destination : `dial_retries` essais (3 par défaut) limités par `dial_timeout`, attente doublée ; puis `OPEN_FAIL(DEST_UNREACHABLE)` | §5.4 | 1.0 | `Relay.DestinationRetrySucceeds`, `Relay.DestinationUnreachableAfterThreeAttempts` |
+| CAN-05 | Cohérence des délais : `idle_timeout` < `session_lifetime`, `renegotiation_grace` < `session_lifetime` / 2, `session_jitter` ≤ 50 % | §5.2 | 1.0 | `Validate.LimitsCoherence` |
+
+### 11.5 Liste blanche
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| WL-01 | Fichier validé strictement : clés connues, noms et sujets uniques, IP ou CIDR, DN ; liste vide acceptée avec un avertissement | §6.1, §6.2 | 1.0 | `Whitelist.*`, fuzzing `fuzz_whitelist` et `fuzz_dn` |
+| WL-02 | Adresse contrôlée à l'acceptation TCP, avant tout handshake, pour le port demandé | §6.2 | 1.0 | `MtlsTest.UnknownAddressIsRejectedBeforeHandshake`, `MtlsTest.PeerIsLimitedToItsPorts`, `Whitelist.AuthorizesByIpAndPort` |
+| WL-03 | Port `mtls` : sujet du certificat et adresse dans la même entrée ; comparaison canonique du DN | §6.2 | 1.0 | `MtlsTest.WhitelistRequiresIpAndSubjectInTheSameEntry`, `MtlsTest.WhitelistRejectsUnknownSubjectBeforeContactingDestination`, `Dn.ParsesEscapesAndMatchesCertificateForm` |
+| WL-04 | Rechargement à chaud (surveillance de 2 s, `reload`) ; fichier invalide refusé, liste en vigueur conservée ; ajouts, retraits et modifications journalisés | §6.2 | 1.0 | `MtlsTest.ReloadAddsPeer`, `MtlsTest.InvalidReloadKeepsCurrentList`, `Whitelist.DiffReportsChanges`, R05 |
+| WL-05 | Pair retiré : ses canaux sont fermés (`PEER_REVOKED`), ou refusés à la prochaine renégociation avec `revoke_mode: next_renegotiation` | §6.2 | 1.0 | `MtlsTest.ReloadRevokesActiveChannelOfRemovedPeer`, `MtlsTest.ReloadWithNextRenegotiationKeepsActiveChannel` |
+| WL-06 | Liste blanche invalide au démarrage : le service ne démarre pas | §6.2 | 1.0 | `MtlsTest.ServiceRefusesInvalidWhitelistAtStartup` |
+
+### 11.6 PKI d'une instance
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| PKI-01 | Hiérarchie : racine P-384, AC Serveurs et AC Clients (`pathlen:0`, usage du rôle), certificats d'instance P-256 | §7.1 | 1.0 | `CaTest.InitCreatesHierarchyWithEncryptedKeys`, `CaTest.ProvisionedPkiCarriesAnMtlsChain`, `pki.sh` (`openssl verify`) |
+| PKI-02 | Générations versionnées ; `current` remplacé par renommage atomique | §7.2 | 1.0 | `PkiTest.ActivateReplacesCurrentPointer`, `PkiTest.RejectsMissingOrInvalidPointer` |
+| PKI-03 | Validation complète d'une génération avant bascule : fichiers, clé et certificat, chaîne, contraintes des AC, dates, usage du rôle ; alerte d'expiration | §7.3 | 1.0 | `PkiTest.*` |
+| PKI-04 | Clé d'instance générée sur la machine, jamais chiffrée ni demandée au clavier, lisible par le seul propriétaire | §7.2, §7.6 | 1.0 | `PkiTest.RejectsEncryptedKeyWithoutPrompting`, `CaTest.GenCsrCreatesNextGenerationWithPrivateKey` |
+| PKI-05 | Rotation à chaud de la bi-clé, du certificat et des AC : nouvelles connexions sur la nouvelle génération, anciennes en drain, génération libérée à sa dernière connexion ; `reload --kill-old` | §7.4 | 1.0 | `RotationTest.NewConnectionsUseNewGenerationWhileOldOnesDrain`, `RotationTest.OldGenerationIsReleasedWhenItsLastConnectionCloses`, `RotationTest.KillOldClosesConnectionsOfRetiredGeneration`, R08 |
+| PKI-06 | Génération invalide refusée, service maintenu ; PKI invalide au démarrage : le service ne démarre pas | §7.3, §7.4 | 1.0 | `RotationTest.InvalidGenerationIsRefusedAndServiceContinues`, `TlsTest.ServiceRefusesToStartWithInvalidPki` |
+| PKI-07 | Garde-fou de rotation : racine commune et rattachement à une racine connue de la génération courante ; `pki activate --force` en urgence | §7.3 | 1.0 | `PkiTest.CheckCandidateAppliesRootGuard`, `RotationTest.GuardRefusesRootChangeWithoutPreTrust`, `RotationTest.GuardRefusesIdentityFromUnknownRootEvenWithoutMtls` |
+| PKI-08 | Changement de racine en trois étapes, sans interruption | §7.5 | 1.0 | `RotationTest.ThreeStepRootChangeKeepsServiceAvailable`, `CaTest.RootTransitionFilesDriveTheThreeSteps`, R09 |
+| PKI-09 | Prise en compte : surveillance de `current` (2 s, désactivable), `SIGHUP`, `reload` | §7.4 | 1.0 | `RotationTest.SighupTriggersReload`, `RotationTest.WatchDisabledWaitsForExplicitReload` |
+| PKI-10 | Commandes d'instance `pki gen-csr`, `pki install` (contrôles et garde-fou), `pki activate`, `check-pki` | §7.6 | 1.0 | `CaTest.InstallRejectsCertificateForAnotherKey`, `CaTest.RenewalRotatesKeyAndKeepsTrustFiles`, `pki.sh`, `windows-pki.ps1`, R01 |
+
+### 11.7 Mini-AC
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| CA-01 | `ca init` : clés d'AC chiffrées (scrypt, AES-256-CBC), phrase de passe de 12 caractères au moins, droits restreints (0600, ACL protégée) ; répertoire non vide refusé | §7.6 | 1.0 | `CaTest.InitCreatesHierarchyWithEncryptedKeys`, `windows-pki.ps1` (ACL) |
+| CA-02 | Politique de signature : preuve de possession, clé P-256, CN, extensions fixées par l'AC, SAN obligatoire pour un serveur, validité bornée par l'AC | §7.6 | 1.0 | `CaTest.SignAppliesCaPolicyAndIgnoresRequestedExtensions`, `CaTest.SignRefusesNonConformingRequests`, fuzzing `fuzz_csr` |
+| CA-03 | Un sujet n'est attribué qu'une fois, sauf renouvellement ; l'ancien certificat est alors marqué remplacé | §7.6 | 1.0 | `CaTest.SubjectIsAttributedOnceUnlessRenewed` |
+| CA-04 | Inventaire des certificats émis (`ca list`), inventaires d'avant la livraison 1.1 compris | §7.6 | 1.0 | `CaTest.IndexWithoutRevocationColumnsIsStillRead`, `CaTest.DescribeAuthoritySummarizesCertificatesAndCrl` |
+| CA-05 | Révocation (`ca revoke`, motif RFC 5280) et publication de CRL v2 signées, numérotées, une par AC intermédiaire (`ca crl`) | §7.6, §7.7 | 1.1 | `CaTest.RevocationIsPublishedInSignedCrls`, `pki.sh` (`openssl verify -crl_check`) |
+| CA-06 | Journal d'audit des opérations de l'AC, chaîné par SHA-256 ; une altération est détectée (`ca audit`) | §7.6 | 1.1 | `CaTest.AuditLogRecordsOperationsAndDetectsTampering`, `pki.sh`, `windows-pki.ps1` |
+| CA-07 | Préparation du changement de racine : fichiers de confiance par rôle, CRL des deux AC, commandes (`ca root-change`) | §7.6 | 1.1 | `CaTest.RootTransitionFilesDriveTheThreeSteps`, R09 |
+
+### 11.8 Révocation appliquée par le service
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| CRL-01 | CRL de `<pki_root>/crl.pem` vérifiées (signature de l'AC attendue) ; certificat révoqué refusé au handshake, côté serveur comme côté client | §7.7 | 1.1 | `CrlTest.ServerRefusesRevokedClientCertificate`, `CrlTest.ClientRefusesRevokedServerCertificate`, `CrlTest.CrlOfOtherCertificatesChangesNothing`, `CaTest.PublishedCrlIsAcceptedByInstancesOfBothRoles` |
+| CRL-02 | CRL rechargées à chaud (surveillance, `reload`, bascule de génération) ; canaux d'un pair révoqué fermés, sauf `next_renegotiation` | §7.7 | 1.1 | `CrlTest.PublishedCrlClosesActiveChannelAndRefusesNewOnes`, `CrlTest.NextRenegotiationKeepsActiveChannel` |
+| CRL-03 | CRL invalide : refus de démarrer, puis CRL en vigueur conservées ; CRL périmée appliquée avec un avertissement ; certificat de l'instance révoqué signalé | §7.7 | 1.1 | `CrlTest.InvalidCrlIsRefusedAtStartupAndKeptAsIsOnReload`, `CrlTest.ExpiredCrlIsStillAppliedWithWarning`, `CrlTest.RevokedInstanceCertificateIsReported` |
+| CRL-04 | `pki crl` contrôle et installe les CRL ; `check-pki`, `status` et les métriques en rendent compte | §7.6, §7.7 | 1.1 | `pki.sh` |
+
+### 11.9 Configuration
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| CFG-01 | Configuration YAML ; toutes les erreurs sont rapportées, avec leur chemin ; clé inconnue refusée à tous les niveaux | §8 | 1.0 | `Config.*`, fuzzing `fuzz_config` |
+| CFG-02 | Règles de validation de 8.3, partagées par le service et l'éditeur | §8.3 | 1.0 | `Validate.*`, Qt `validation_matches_service` |
+| CFG-03 | Formats des valeurs : durées, tailles, pourcentages, adresses IPv4, IPv6 et noms | §8 | 1.0 | `ParseDuration.*`, `ParseSize.*`, `ParsePercent.*`, `ParseEndpoint.*`, `IpRange.MatchesAddresses` |
+| CFG-04 | Écriture normalisée de la configuration et de la liste blanche, relue à l'identique | §8 | 1.1 | `ConfigWriter.*`, `WhitelistWriter.*`, `Units.FormatSizeAndPercentRoundTrip` |
+
+### 11.10 Journalisation
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| LOG-01 | Niveaux `error`, `info`, `debug`, `trace` ; catégories `activity` et `config` ; format texte ou JSON ; fichier ou sortie d'erreur | §9 | 1.0 | `Logging.*`, `JsonFormatter.WritesOneObjectPerLine`, M05 |
+| LOG-02 | Niveau modifiable à chaud ; réouverture du fichier de journal (rotation) | §9 | 1.0 | `AdminTest.LogLevelChangesAtRuntime`, `AdminTest.LogReopenStartsNewFileAfterRotation`, R10, M06 |
+| LOG-03 | Aucune clé, aucun jeton, aucun secret ni aucune donnée relayée dans les journaux ; données venues d'un pair échappées | §9 | 1.0 | `AttackTest.TraceLogsContainNoSecretsNorRelayedData`, `AttackTest.PeerMessageCannotInjectLogLines`, R10 |
+
+### 11.11 Cycle de vie et administration
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| ADM-01 | Services systemd (`tlsrelay@N`) et Windows (`tlsrelay-N`), instances nommées, démarrage avec le système | §10, §10.3 | 1.0 | `tests/lifecycle/systemd.sh`, `windows-service.ps1`, M01 |
+| ADM-02 | Arrêt propre avec drain (`shutdown_timeout`), arrêt immédiat, redémarrage ; second Ctrl+C : arrêt immédiat | §10 | 1.0 | `Relay.GracefulStopDrainsThenClosesRemainingChannels`, `Relay.SignalTriggersGracefulStop`, `Relay.SecondSignalForcesImmediateStop`, `Relay.AbortClosesChannelsImmediately`, `AdminTest.StopDrainsThenStops`, `AdminTest.KillStopsImmediately`, R12, M02, M03 |
+| ADM-03 | Canal d'administration local (socket Unix, named pipe), réservé aux administrateurs et au compte du service ; chaque commande journalisée avec l'appelant | §10.1 | 1.0 | `AdminTest.SocketIsRestrictedToOwnerAndGroup`, `AdminTest.UnknownOrMalformedCommandsAreRefused`, fuzzing `fuzz_admin`, M04 |
+| ADM-04 | Verrou d'instance : une seconde exécution de la même instance est refusée | §10.1 | 1.0 | `AdminTest.SecondExecutionOfSameInstanceIsRefused` |
+| ADM-05 | Commandes `status`, `channels`, `reload` (avec bilan) et `check-config` ; instance arrêtée signalée | §10 | 1.0 | `AdminTest.StatusDescribesInstance`, `AdminTest.ChannelsListsOpenChannels`, `AdminTest.ReloadReportsWhatChanged`, `AdminTest.UnreachableInstanceIsReported`, R11 |
+| ADM-06 | Rechargement de la configuration : niveaux de journalisation appliqués à chaud, autres changements signalés comme demandant un redémarrage | §10.2 | 1.0 | `AdminTest.ReloadReportsWhatChanged` |
+| ADM-07 | Services aux droits minimaux : compte `tlsrelay` avec la seule capacité `CAP_NET_BIND_SERVICE`, compte virtuel `NT SERVICE\tlsrelay-N` | §10.3 | 1.0 | `systemd.sh`, `windows-service.ps1`, M07 |
+| ADM-08 | Métriques au format texte Prometheus, lues par le canal d'administration (séries de 10.4) | §10.4 | 1.0 | `AdminTest.MetricsUsePrometheusTextFormat`, R11 |
+
+### 11.12 Sécurité et qualité
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| SEC-01 | Exécutables durcis : PIE, RELRO complet, protection de pile, `_FORTIFY_SOURCE` ; `/guard:cf`, DEP, ASLR sous Windows | PLAN §5.4 | 1.0 | `tools/check-hardening.sh` et `.ps1` en CI |
+| SEC-02 | Aucun défaut mémoire ni course détecté : sanitizers, fuzzing, analyse statique sans alerte | PLAN §5.4 | 1.0 | CI : ASan et UBSan, TSan, fuzzing, clang-tidy, cppcheck, MSVC `/analyze` |
+| SEC-03 | Résistance aux attaques : faux serveur, trames hostiles, inondation, injection dans les journaux | PLAN §5.4 | 1.0 | `AttackTest.*`, grille [PENTEST.md](PENTEST.md) (test d'intrusion : manuel) |
+| SEC-04 | Dépendances sans vulnérabilité connue | PLAN §5.4 | 1.0 | `tools/check-deps.sh` en CI |
+
+### 11.13 Performances
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| PERF-01 | 5 000 canaux simultanés intègres | PLAN §5.6 | 1.0 | `tests/perf/perf.sh` (CI : 1 000 canaux ; mesuré : 5 000) |
+| PERF-02 | 100 Mbit/s par canal | PLAN §5.6 | 1.0 | `perf.sh`, R04 |
+| PERF-03 | Latence ajoutée inférieure à 1 ms (local) | PLAN §5.6 | 1.0 | `perf.sh`, R04 |
+| PERF-04 | Endurance de 72 h avec rotations, renégociations et coupures : mémoire, descripteurs et générations stables | PLAN §5.6 | 1.0 | `tests/perf/soak.sh` (4 min en CI ; 72 h : manuel) |
+
+### 11.14 Livraison
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| PKG-01 | Paquets `.deb`, `.rpm` et `.msi` : installation, mise à jour en place, désinstallation | PLAN §4 | 1.0 | CI : construction des paquets, installation sur 5 distributions, MSI installé, recette sur les binaires installés, désinstallation |
+| PKG-02 | Licence et avis des composants tiers livrés avec les paquets | PLAN §4 | 1.0 | `packaging/test-linux-package.sh`, CI Windows (fichiers de licence) |
+| PKG-03 | Livraison accompagnée des empreintes SHA-256 des paquets | INSTALLATION §1 | 1.0 | CI : artefact `tlsrelay-livraison` (`SHA256SUMS`) |
+
+### 11.15 Éditeur tlsrelay-admin
+
+| Id | Exigence | Réf. | Liv. | Vérification |
+|---|---|---|---|---|
+| EDT-01 | Édition de la configuration et de la liste blanche, validées par les règles du service, champs en erreur mis en évidence | §8.3, EDITEUR §2 | 1.1 | Qt `validation_matches_service`, `invalid_fields_are_marked`, `fields_without_object_are_hidden_unless_filled`, `whitelist_editor_round_trip_and_marks`, E02 |
+| EDT-02 | Enregistrement refusé tant qu'il reste des erreurs ; aperçu des différences ; original conservé en `.bak` ; écriture atomique | EDITEUR §3 | 1.1 | Qt `open_edit_save_with_preview_and_backup`, `save_refused_while_invalid`, `new_document_is_saved_normalized`, `diff_preview_lists_changes`, E03, E04 |
+| EDT-03 | Export d'un paquet de déploiement pour Linux ou Windows (configuration, liste blanche, kit, CRL, script, instructions) | EDITEUR §4 | 1.1 | Qt `export_package_for_linux_and_windows`, E05 |
+| EDT-04 | Module PKI : reprise ou création de la mini-AC, inventaire, signature, renouvellement, révocation et CRL, journal d'audit ; phrase de passe jamais conservée | EDITEUR §5 | 1.1 | Qt `pki_panel_full_cycle`, `pki_panel_refuses_wrong_passphrase_and_bad_directory`, `sign_dialog_inspects_request`, E06 à E09 |
+| EDT-05 | Assistant de changement de racine | EDITEUR §5 | 1.1 | Qt `pki_root_change_preparation`, E10 |
+| EDT-06 | Livré dans le MSI (fonctionnalité « tlsrelay-admin », Qt 6 sous LGPLv3, liaison dynamique) ; contrôle sans fenêtre `--check` | EDITEUR §1 | 1.1 | `Admin.CheckValid`, `Admin.CheckInvalid`, CI Windows « Éditeur installé », E01 |
+
+## 12. Points ouverts
 
 - Nommage définitif des paquets (phase 11).
 - Décidé en phase 6 : métriques au format Prometheus texte via le canal d'administration (§10.4) ; chemins par défaut sous Windows dans `%ProgramData%\tlsrelay\` (§10.3).
