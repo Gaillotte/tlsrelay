@@ -149,7 +149,7 @@ Décisions de la livraison 1.1 :
 
 | Niveau | Outils | Contenu | Objectif |
 |---|---|---|---|
-| Unitaires | GoogleTest | Config et validation ; liste blanche ; trames ; numérotation et ACK ; jeton de reprise ; générations ; machines à états ; essais vers la destination ; masquage des secrets dans les logs | Couverture ≥ 85 % de `libtlsrelay-core` ; 100 % des branches du décodeur de trames, de la liste blanche et de la validation |
+| Unitaires | GoogleTest | Config et validation ; liste blanche ; trames ; numérotation et ACK ; jeton de reprise ; générations ; machines à états ; essais vers la destination ; masquage des secrets dans les logs | Couverture ≥ 85 % de `libtlsrelay-core` ; 100 % des branches du décodeur de trames, de la liste blanche et de la validation. Objectif porté à 90 % des lignes de tout le code livré ; mesure et tests à ajouter : [TESTS.md §6](TESTS.md#6-code-coverage) |
 | Intégration | GoogleTest + OpenSSL réel en local | Handshakes TLS 1.3 et mTLS, rotation, renégociation, inactivité | Tous les scénarios du catalogue |
 | Système | Binaires réels + `tlsrelay-testkit` | Chaîne complète, combinaisons croisées Windows ↔ Linux | Toutes les exigences, sur les deux OS |
 | Perturbations réseau | toxiproxy, `tc netem` | Latence, pertes, coupures pendant un transfert et une renégociation | Reprise sans perte, ou fermeture propre |
@@ -226,7 +226,7 @@ Réalisée par le responsable du projet, sur **une seule station Windows** :
 
 - 100 % des exigences couvertes par des tests verts, sur les deux OS.
 - Aucun défaut critique ou majeur ouvert.
-- Seuils de couverture atteints.
+- Seuils de couverture atteints : 90 % des lignes du code livré (mesuré à chaque push, [TESTS.md §6](TESTS.md#6-code-coverage)).
 - 24 h de fuzzing sans crash ; aucune alerte des sanitizers.
 - Endurance de 72 h réussie.
 - Objectifs de performance atteints.

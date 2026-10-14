@@ -1,6 +1,6 @@
 # tlsrelay — Test plan and test report
 
-> Test strategy, test environments, full description of every test, and coverage of the requirements ([SPEC §11](SPEC.md#11-requirements)) by the tests.
+> Test strategy, test environments, full description of every test, coverage of the requirements ([SPEC §11](SPEC.md#11-requirements)) by the tests, and code coverage with the new tests it calls for.
 > Scope: deliveries 1.0 (service `tlsrelay`, tool `tlsrelay-testkit`) and 1.1 (editor `tlsrelay-admin`).
 > Related documents: [PLAN.md](PLAN.md) §5 (original test strategy), [RECETTE.md](RECETTE.md) (acceptance procedure), [PV-RECETTE.md](PV-RECETTE.md) (acceptance sign-off record), [PENTEST.md](PENTEST.md) (penetration-test checklist).
 
@@ -11,6 +11,7 @@
 3. [Test inventory](#3-test-inventory)
 4. [Requirements coverage](#4-requirements-coverage)
 5. [Coverage summary, gaps and deviations](#5-coverage-summary-gaps-and-deviations)
+6. [Code coverage](#6-code-coverage)
 
 ---
 
@@ -67,11 +68,12 @@
 
 | Criterion | Status for 1.0 / 1.1 |
 |---|---|
-| All automated tests pass on both OSes, every CI job green on the release commit | Met: 18/18 jobs green on every merged phase |
+| All automated tests pass on both OSes, every CI job green on the release commit | Met: all CI jobs green on every merged phase |
 | Every requirement of SPEC §11 covered by a passing verification | Met for the automated part (section 4); manual items recorded in the acceptance sign-off |
 | No open critical or major defect | Met |
 | No sanitizer finding; fuzzing without crash | Met in CI (60 s per target per push); 24 h cumulated fuzzing: manual, before production |
-| Performance targets met | Met (section 3.13) |
+| Performance targets met | Met (section 3.21) |
+| Line coverage of the delivered code ≥ 90 % | **Not met**: 84.4 % (section 6); new tests specified in 6.4 |
 | 72 h endurance | Manual, before production (4-minute soak in CI) |
 | Acceptance sign-off record signed | [PV-RECETTE.md](PV-RECETTE.md), to be signed by the project owner |
 
@@ -93,6 +95,7 @@ A failing CI job blocks the merge of its branch. A failure is root-caused before
 | Linux Clang TSan | ubuntu-24.04 | Clang 18 Debug, ThreadSanitizer (`halt_on_error=1`) | ctest |
 | Linux OpenSSL 3.5 LTS | ubuntu-24.04 | GCC, OpenSSL 3.5 built from the official archive (SHA-512 verified) | Version check (`OpenSSL 3.5.x`), ctest with the matching `openssl` command |
 | Analyse statique (clang-tidy, cppcheck) | ubuntu-24.04 | clang-tidy 18, cppcheck | `tools/run-clang-tidy.sh`, `tools/run-cppcheck.sh` on the whole code base, editor included |
+| Couverture de code (gcovr) | ubuntu-24.04 | GCC 13 `--coverage`, Qt 6.4, gcovr 8.6 | `tools/coverage.sh`: instrumented build, all ctest entries, HTML report (`couverture` artifact); fails below 83 % of lines (section 6) |
 | Fuzzing (60 s par cible) | ubuntu-24.04 | Clang libFuzzer + ASan/UBSan | `tools/run-fuzz.sh` on the 6 targets from their corpus |
 | Performances et endurance | ubuntu-24.04 | Release build | `perf.sh` with 1,000 channels; `soak.sh` for 4 minutes (reports uploaded) |
 | Windows MSVC Release | windows-2022 | MSVC 2022, vcpkg (OpenSSL 3.5 LTS, Asio, CLI11, spdlog, yaml-cpp, GoogleTest), Qt 6.8 LTS | ctest; `check-hardening.ps1`; shipped OpenSSL version check; `windows-service.ps1` (real service); `windows-pki.ps1`; MSI build; MSI installation; installed editor check (without the runner's Qt); `recette.ps1 -Services -Quick` on the installed binaries; MSI uninstallation |
@@ -102,7 +105,7 @@ A failing CI job blocks the merge of its branch. A failure is root-caused before
 | Installation deb/rpm (×5) | ubuntu:22.04, ubuntu:24.04, debian:12, rockylinux:9, almalinux:9 | — | `packaging/test-linux-package.sh`: install, run, upgrade in place, licences, uninstall |
 | Paquets de la livraison | ubuntu-24.04 | — | Gathers `.deb`, `.rpm`, `.msi` and `SHA256SUMS` into the `tlsrelay-livraison` artifact |
 
-Totals per push: 18 jobs; 196 ctest entries on Linux (191 GoogleTest cases, 14 Qt Test functions counted as one ctest entry, `Admin.CheckValid`, `Admin.CheckInvalid`, `Lifecycle.Console`, `Lifecycle.Pki`); on Windows, 188 GoogleTest cases (3 are Linux-only, see 3.1) plus the Qt and `Admin.Check*` entries.
+Totals per push: 19 jobs; 196 ctest entries on Linux (191 GoogleTest cases, 14 Qt Test functions counted as one ctest entry, `Admin.CheckValid`, `Admin.CheckInvalid`, `Lifecycle.Console`, `Lifecycle.Pki`); on Windows, 188 GoogleTest cases (3 are Linux-only, see 3.1) plus the Qt and `Admin.Check*` entries.
 
 ### 2.2 Test network layout
 
@@ -142,6 +145,7 @@ The full performance targets (5,000 channels) were measured on a Linux developme
 | Windows build and tests | `cmake --preset windows-msvc -DTLSRELAY_BUILD_ADMIN=ON && cmake --build --preset windows-release && ctest --preset windows-release` |
 | Sanitizers | `-DCMAKE_BUILD_TYPE=Debug -DTLSRELAY_SANITIZERS=address,undefined` (or `thread`) with Clang |
 | One suite | `ctest --test-dir build -R TunnelTest` or `build/tests/tlsrelay_tests --gtest_filter='TunnelTest.*'` |
+| Code coverage | `tools/coverage.sh build/coverage` (needs `gcovr`) → `build/coverage/coverage/index.html` |
 | Fuzzing | Configure the `linux-fuzz` preset, then `tools/run-fuzz.sh build/linux-fuzz <seconds> [target…]` |
 | Performance / soak | `tests/perf/perf.sh build 5000 perf.json`; `tests/perf/soak.sh build 4320 soak.csv` (72 h) |
 | Service lifecycle | `sudo tests/lifecycle/systemd.sh build/src/app/tlsrelay`; Windows: `tests\lifecycle\windows-service.ps1 <bin dir>` as administrator |
@@ -702,9 +706,125 @@ All 91 requirements have at least one automated verification on every push. Ever
 
 | PLAN §5 item | What was implemented | Impact |
 |---|---|---|
-| Nightly pipeline (cross tests, 1 h fuzzing, network disturbances) | Everything runs on every push instead: 18 jobs, fuzzing 60 s per target, disturbances through the project's own cut proxy | Faster feedback; longer fuzzing moved to the pre-production checklist |
+| Nightly pipeline (cross tests, 1 h fuzzing, network disturbances) | Everything runs on every push instead: 19 jobs, fuzzing 60 s per target, disturbances through the project's own cut proxy | Faster feedback; longer fuzzing moved to the pre-production checklist |
 | toxiproxy, `tc netem` for network disturbances | Own cutting/freezing proxy (`tests/support/cut_proxy.hpp`, `tlsrelay-testkit proxy`) | Same scenarios (cut, silent link) on both OSes without extra dependencies; latency and loss injection not exercised |
-| Line coverage ≥ 85 % of the core library, 100 % of branches of the frame decoder, whitelist and validation | Not measured in CI | Coverage is argued per requirement (section 4) and by fuzzing of these three parsers; adding a coverage job (gcovr) is a possible improvement |
+| Line coverage ≥ 85 % of the core library, 100 % of branches of the frame decoder, whitelist and validation | Measured on every push since 2026-10-14 (section 6): core library 93.0 % of lines (met); parser branches 84–88 % (not met) | Tests CT-11 and CT-13 (section 6.4) close the parser branch gaps; project target raised to 90 % of lines of all delivered code |
 | Injectable clock for timer unit tests | Timers configured to milliseconds in integration tests | Tests are real-time but short; timing margins tuned for slow CI runners |
 | Windows ↔ Linux cross tests in CI | Linux and Windows tested separately; cross tests in acceptance (R13) | Wire compatibility relies on one protocol implementation built for both OSes |
 | OpenSSL 3.0 and 3.5 on both OSes | Linux: 3.0 and 3.5; Windows: 3.5 (the shipped version) | Matches what is delivered |
+
+---
+
+## 6. Code coverage
+
+### 6.1 Method
+
+| Item | Value |
+|---|---|
+| Tool | GCC 13 instrumentation (`--coverage`, `-O0`, `-fprofile-update=atomic`) and gcovr 8.6 |
+| Build | `-DTLSRELAY_COVERAGE=ON`, Debug, editor included (`TLSRELAY_BUILD_ADMIN=ON`) |
+| Tests executed | All 196 ctest entries on Linux: GoogleTest, Qt Test, `Admin.Check*`, `Lifecycle.Console`, `Lifecycle.Pki` |
+| Code measured | Delivered code: `src/core` (library), `src/app` (`tlsrelay` command line), `src/admin` (editor). Excluded: Qt-generated files (`*_autogen`), tests, third-party code. `src/testkit` (test tool) is reported separately: ctest does not run it; the performance, soak and acceptance scripts do |
+| Platform | Linux only. Windows-only files (`platform_windows.cpp`, named-pipe admin channel, Windows service glue) are not compiled there and are not in the figures; they are exercised by `windows-service.ps1`, `windows-pki.ps1` and the acceptance run on the installed MSI |
+| Branches | Counted by gcov with unreachable and exception-only branches excluded (`--exclude-unreachable-branches --exclude-throw-branches`) |
+| Command | `tools/coverage.sh [build dir] [minimum line %]` → `<build>/coverage/index.html`, `summary.txt`, `summary.json` |
+| CI | Job "Couverture de code (gcovr)" on every push; HTML report uploaded as the `couverture` artifact; fails if line coverage drops below the regression floor (83 %) |
+| Target | **90 % of lines** of the delivered code (this document); branch figures are reported for information |
+
+Figures vary by about ±0.1 % between runs, because a few lines run only on timing-dependent paths (retries, races between close and timeout).
+
+### 6.2 Results (main branch, measured on 2026-10-14)
+
+| Component | Lines | Functions | Branches |
+|---|---|---|---|
+| `src/core` — service library | **93.0 %** (3,511 / 3,774) | 98.8 % (489 / 495) | 79.1 % |
+| `src/app` — `tlsrelay` command line | **61.3 %** (457 / 745) | 58.8 % (30 / 51) | 53.4 % |
+| `src/admin` — editor | **74.8 %** (1,187 / 1,586) | 69.8 % (120 / 172) | 59.7 % |
+| **Delivered code (total)** | **84.4 %** (5,155 / 6,105) | **89.0 %** (639 / 718) | **69.6 %** |
+| `src/testkit` (not run by ctest) | 0 % (0 / 367) | 0 % | 0 % |
+
+**Verdict: below the 90 % target.** The service library is above the target; the shortfall is in the command line (`src/app`) and the editor (`src/admin`), in code that only runs with a terminal, a service manager or a modal dialog. 340 more lines must be covered to reach 90 % (5,495 / 6,105).
+
+Files of the delivered code below 90 % of lines:
+
+| File | Lines | Covered | Uncovered code |
+|---|---|---|---|
+| `src/admin/export_dialog.cpp` | 62 | 0 % | Whole export dialog (tests call `export_package()` directly) |
+| `src/app/platform_linux.cpp` | 95 | 5 % | systemd unit generation, `service install/uninstall/start`, `useradd`, `systemctl` calls |
+| `src/core/src/system/notify.cpp` | 14 | 21 % | `sd_notify` datagram (only under systemd, `NOTIFY_SOCKET` set) |
+| `src/app/passphrase.cpp` | 44 | 36 % | Interactive passphrase prompt (terminal without echo, confirmation, mismatch) |
+| `src/admin/pki_panel.cpp` | 416 | 53 % | Revocation, CRL and root-change dialogs, file pickers, passphrase confirmation, "new CA" flow |
+| `src/admin/diff_dialog.cpp` | 50 | 58 % | Dialog construction (tests inject `confirm_save`); skipped unchanged file |
+| `src/admin/main.cpp` | 38 | 68 % | `--check` with unreadable file or with a whitelist; GUI start |
+| `src/app/main.cpp` | 606 | 71 % | Error exits of the `pki`, `ca`, `check-config` commands; `start`, `stop`, `restart`, `service install/uninstall` paths; `--instance` mismatch; invalid timeouts and instance names; `version` |
+| `src/admin/main_window.cpp` | 277 | 74 % | Close with unsaved changes, issue list navigation, export dialog, open/save pickers, About box, read and save errors |
+| `src/core/src/admin/posix.cpp` | 114 | 76 % | Admin channel errors: path too long, unwritable directory, lock file error, listen failure, send failure, truncated reply |
+| `src/core/src/admin/session.hpp` | 35 | 77 % | Invalid reply header or size |
+| `src/core/include/tlsrelay/config.hpp` | 65 | 83 % | Default member values of `Limits` and `AdminConfig` never default-constructed in tests |
+| `src/core/src/tunnel/frame.cpp` | 205 | 87 % | `to_string()` of most frame types and close codes; decoder buffer compaction above 64 KiB |
+| `src/admin/sign_dialog.cpp` | 114 | 89 % | Unreadable request file, request with extensions, file pickers |
+
+Branch coverage of the parsers that PLAN §5.2 asked to cover at 100 %:
+
+| File | Branches | Main uncovered branches |
+|---|---|---|
+| `src/core/src/tunnel/frame.cpp` (decoder) | 85 % (139 / 163) | Size checks per frame type not all exercised (`OPEN_OK` with payload, `ACK`/`PING` wrong sizes), `OPEN` port kind above 3, compaction |
+| `src/core/src/whitelist.cpp` | 88 % (425 / 480) | Root not a map, unknown top-level key, `peers` not a list, entry not a map, non-scalar values |
+| `src/core/src/config.cpp` (loader and validation) | 84 % (551 / 649) | Destination without address or port above 65535, invalid `revoke_mode`, `admin.endpoint` empty, `resume_buffer` < 64 KiB, `keepalive_interval` < 1 s, `max_channels` bounds, negative `shutdown_timeout`, empty `logging.output` |
+| `src/core/src/units.cpp` | 88 % (90 / 102) | Size and percent overflow, unit edge cases |
+
+### 6.3 Why the gaps exist
+
+1. **Interactive code**: modal dialogs (`QDialog::exec()`, file pickers, message boxes) and the terminal prompt block a test; the existing tests inject hooks (`confirm_save`, `ask_passphrase`, `report`, `inform`) and call the underlying functions instead, so the dialog code itself is never run.
+2. **Service-manager code**: `service install/start/stop` and `sd_notify` need root and a running systemd. `systemd.sh` covers them functionally in CI, but in the GCC Release job, not in an instrumented build.
+3. **Error exits of the command line**: the lifecycle scripts test the main success paths and a few refusals; most "cannot read", "refused", "invalid value" exits of `src/app/main.cpp` have no test.
+4. **Defensive error paths of the admin channel**: failures of `mkdir`, `open`, `bind`, `send` are hard to provoke on a healthy system.
+
+### 6.4 New tests specified
+
+Each test below is specified with its target, steps and expected result. "Gain" is the estimated number of currently uncovered lines it covers. Implementing CT-01 to CT-14 raises the delivered code to about **95 % of lines** (estimate: +650 lines); CT-01 to CT-08 alone exceed 90 %.
+
+**Editor (Qt Test, `tests/admin/test_admin.cpp`).** Modal dialogs are driven with `QTimer::singleShot(0, …)`: the callback finds `QApplication::activeModalWidget()`, fills its widgets by type or object name, then clicks the OK or Cancel button of its `QDialogButtonBox`. File pickers and message boxes are replaced by injectable hooks (same pattern as `ask_passphrase`), defaulting to the Qt dialogs.
+
+| Id | Test | Target | Steps | Expected result | Gain | Req. |
+|---|---|---|---|---|---|---|
+| CT-01 | `export_dialog_builds_request_and_warns` | `export_dialog.cpp`, `main_window.cpp` (`choose_and_export`) | Valid document; open the export dialog; set output directory, Windows target, a kit without `chain.pem`, a CRL file; read the warnings label and `request()`; press Export; then repeat with Cancel and with an empty output directory | `request()` holds the four values; warnings list the incomplete kit and the relative Linux paths; Export creates the package and reports it; Cancel and empty directory create nothing | ≈ 80 | EDT-03 |
+| CT-02 | `diff_dialog_is_shown_and_controls_saving` | `diff_dialog.cpp`, `main_window.cpp` | Restore the default `confirm_save` hook; modify a field; save; accept the dialog; then modify again and reject it; then save a second document where the whitelist is unchanged | Accept writes files and `.bak`; reject writes nothing; the dialog shows only the changed file (unchanged file skipped) | ≈ 30 | EDT-02 |
+| CT-03 | `revoke_and_crl_dialogs` | `pki_panel.cpp` (`revoke_dialog`, `crl_dialog`, `add_crl_fields`, `optional_path`) | Open a test CA with two issued certificates; select one; open "Revoke", choose `keyCompromise`, 7 days, a copy path; confirm; open "Publish CRLs", 10 days, no copy; confirm; open Revoke and cancel | Certificate shown as revoked with reason; CRL copy written and verifiable with `openssl crl`; CRL number incremented; next update in 10 days; cancel changes nothing; `inform` called with serial and CRL number | ≈ 60 | EDT-04, CA-05 |
+| CT-04 | `root_change_dialog_creates_ca_and_prepares_files` | `pki_panel.cpp` (`root_change_dialog`) | Open a CA; open the wizard; "Create the new CA" with a passphrase given twice; set the output directory; press Prepare; press Prepare again with an empty field; close | New CA directory created with the old organisation; step files and `LISEZMOI.txt` produced and shown; empty field does nothing; mismatching passphrase confirmation creates nothing and reports "Les deux saisies diffèrent" | ≈ 70 | EDT-05, CA-07 |
+| CT-05 | `sign_and_create_dialogs` | `pki_panel.cpp` (`sign_dialog`, `choose_and_create`, `ask_passphrase` default), `sign_dialog.cpp` | Create a CA through the "New CA" flow (directory hook, organisation input); sign through the dialog a CSR with requested extensions, then an unreadable CSR path; renew the selected certificate through the dialog | CA created and summary shown; issued-certificate message with serial and kit path; extensions listed as ignored; unreadable file reported in the dialog; renewal pre-fills subject and role | ≈ 60 | EDT-04, CA-02 |
+| CT-06 | `main_window_navigation_and_close` | `main_window.cpp` | Load a file with errors in configuration and whitelist; activate each issue row; load a file with an unknown key; close with unsaved changes and answer Cancel, Discard, then Save; open the About box; save to a read-only directory; open a missing file | Issue rows focus the right tab, field or table row; unknown keys listed in load notes; close is refused on Cancel, accepted on Discard, saves on Save; About shows the tlsrelay, OpenSSL and Qt versions; read and write errors are reported | ≈ 55 | EDT-01, EDT-02 |
+| CT-07 | `Admin.CheckWhitelistAndUnreadable` (ctest) | `src/admin/main.cpp` | `tlsrelay-admin --check` on a server configuration whose whitelist has an error; on a missing file | Exit 1 with the whitelist error path; exit 2 with "fichier illisible" | ≈ 10 | EDT-06 |
+
+**Command line (`tests/lifecycle/cli.sh`, new ctest `Lifecycle.Cli`, Linux).** Runs the real binary and checks exit codes (0 success, 1 runtime error, 2 configuration error) and messages.
+
+| Id | Test | Target | Steps | Expected result | Gain | Req. |
+|---|---|---|---|---|---|---|
+| CT-08 | `cli.sh` — configuration and PKI refusals | `src/app/main.cpp` | `check-config` on a valid and an invalid file; `check-pki` on a configuration without TLS port; `pki activate` of a generation refused by the guard (without and with `--force`); `pki install` refused by the checks; `pki gen-csr` for a TLS client; `pki crl` with an invalid file, a wrong-CA file and on an instance that does not verify its peer; `ca revoke` with an unknown reason; `ca root-change` with a missing directory and then successfully; `ca sign` with an unreadable CSR; `run --instance other` with a mismatching configuration; `stop --timeout abc`; `start`/`restart`/`service uninstall` with an invalid instance name and for a non-installed instance; `version` | Each command prints its documented message and exits with the documented code; `ca root-change` produces `serveur/`, `client/` and `LISEZMOI.txt` | ≈ 130 | ADM-05, PKI-10, CRL-04, CA-07 |
+| CT-09 | `cli.sh` — passphrase prompt | `src/app/passphrase.cpp` | `ca init` without `--passphrase-file` and without `TLSRELAY_CA_PASSPHRASE`, passphrase given on stdin twice (pipe), then two different entries, then end of input; `--passphrase-file` on a missing file; run once under `script -qec` to get a pseudo-terminal | Pipe: CA created; mismatch: "les deux saisies diffèrent", nothing created; end of input and missing file: refused; with a terminal, the prompt does not echo the passphrase | ≈ 25 | CA-01 |
+
+**Service manager (instrumented `systemd.sh`, coverage job, root).**
+
+| Id | Test | Target | Steps | Expected result | Gain | Req. |
+|---|---|---|---|---|---|---|
+| CT-10 | Run `tests/lifecycle/systemd.sh` in the coverage job | `platform_linux.cpp`, `notify.cpp`, `main.cpp` (`cmd_install`, `cmd_start`, `cmd_stop`, restart) | In the "Couverture de code" job, after ctest, run `sudo tests/lifecycle/systemd.sh build/coverage/src/app/tlsrelay`; add `service install` with a configuration declaring another instance and with `admin.endpoint`, `start` of a running instance, `stop` of a stopped instance, `kill` when the channel does not answer | Same checks as today's `systemd.sh`; the command-line processes (root) write their counters, so the service code is measured; the refusals print their messages | ≈ 140 | ADM-01, ADM-02, ADM-07 |
+
+**Library unit tests (GoogleTest).**
+
+| Id | Test | Target | Steps | Expected result | Gain | Req. |
+|---|---|---|---|---|---|---|
+| CT-11 | `Frame.NamesOfEveryTypeAndCode`, `Frame.RejectsWrongSizeForEachType`, `Frame.DecoderCompactsLargeBuffers` | `frame.cpp` | `to_string()` of every `FrameType` and `CloseCode` and of an unknown value; for each type, a header with an invalid size; `OPEN` with port kind 0 and 4; feed > 64 KiB of frames in small chunks, consuming as they arrive | Names as in SPEC §4.2 and §4.6, `?` for unknown; each invalid size → `PROTOCOL_ERROR`; frames decoded identically across compaction | ≈ 25 lines, decoder branches to ≈ 100 % | TUN-01 |
+| CT-12 | `AdminChannel.ReportsEndpointErrors`, `AdminChannel.RejectsInvalidReplies` | `posix.cpp`, `session.hpp` | Listen on a path longer than `sun_path`; on a path under a read-only directory; on a path whose `.lock` is a directory; call a socket served by a fake server that answers `XYZ`, `OK abc`, `OK 10` followed by 3 bytes, or closes at once | Each failure gives a clear `runtime_error` or `CallResult.error` ("chemin trop long", "impossible de créer", "impossible d'ouvrir", "réponse invalide", "connexion fermée avant la fin de la réponse"); no crash, no hang | ≈ 30 | ADM-03 |
+| CT-13 | `Validate.EveryLimitBound`, `Config.DestinationAndWhitelistSectionErrors`, `Whitelist.StructureErrors` | `config.cpp`, `whitelist.cpp`, `config.hpp` | One configuration per violated rule of SPEC §8.3 and §5.2 not yet tested (destination address missing, port > 65535, `revoke_mode` invalid, `admin.endpoint` empty, `resume_buffer` < 64 KiB, `keepalive_interval` 500 ms, `max_channels` 0 and 100001, `shutdown_timeout` negative, `logging.output` empty); whitelists whose root is a list, with an unknown top-level key, `peers` as a map, an entry as a scalar, `name` as a list; default-constructed `Config` compared with SPEC §5.2 defaults | Exactly one error per case, with the documented path; defaults equal SPEC §5.2 | ≈ 20 lines, parser branches ≈ +12 % | CFG-01, CFG-02, CAN-05, WL-01 |
+| CT-14 | `ParseSize.RejectsOverflow`, `ParsePercent.Bounds` | `units.cpp` | Sizes beyond 2⁶⁴, `1.5MiB`, percent above 100 % and negative | Refused without wrapping | ≈ 5 lines, branches | CFG-03 |
+
+### 6.5 Plan
+
+| Step | Content | Line coverage expected |
+|---|---|---|
+| Now | Coverage measured on every push; floor 83 % | 84.4 % |
+| 1 | CT-01 to CT-08 (editor dialogs, `--check`, command-line refusals) | ≈ 91 % |
+| 2 | CT-09 to CT-14 (prompt, systemd in the coverage job, frame, admin channel, validation, units) | ≈ 95 % |
+| After each step | Raise the CI floor to the measured value minus 1 point; once above 90 %, set it to 90 % | — |
+
+Coverage of the testkit (`src/testkit`) is not a target: it is a test tool, validated by the acceptance and performance runs that use it.

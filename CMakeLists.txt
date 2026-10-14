@@ -16,6 +16,7 @@ option(TLSRELAY_FUZZ "Compiler les cibles de fuzzing libFuzzer (clang)" OFF)
 option(TLSRELAY_WARNINGS_AS_ERRORS "Traiter les avertissements comme des erreurs" OFF)
 option(TLSRELAY_MSVC_ANALYZE "Analyse statique MSVC (/analyze) du code du projet" OFF)
 option(TLSRELAY_BUILD_ADMIN "Compiler l'éditeur tlsrelay-admin (Qt 6)" OFF)
+option(TLSRELAY_COVERAGE "Instrumenter le code pour la mesure de couverture (GCC/Clang, gcov)" OFF)
 option(TLSRELAY_FETCH_DEPS "Dépendances embarquées (Asio, CLI11, spdlog, yaml-cpp), liées statiquement" OFF)
 set(TLSRELAY_SANITIZERS "" CACHE STRING "Sanitizers à activer (ex. address,undefined), GCC/Clang uniquement")
 

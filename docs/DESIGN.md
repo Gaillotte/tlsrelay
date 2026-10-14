@@ -664,7 +664,7 @@ tlsrelay is proprietary (`LICENSE`). `THIRD-PARTY-NOTICES.txt` reproduces the li
 
 ### 13.1 Test levels
 
-The test strategy, environments, the description of every test and the requirements coverage matrix are in [TESTS.md](TESTS.md).
+The test strategy, environments, the description of every test, the requirements coverage matrix and the code coverage (84.4 % of lines of the delivered code: core library 93.0 %, command line 61.3 %, editor 74.8 %; tests specified to reach 90 %) are in [TESTS.md](TESTS.md).
 
 | Level | Content |
 |---|---|
@@ -678,7 +678,7 @@ The test strategy, environments, the description of every test and the requireme
 
 ### 13.2 Continuous integration
 
-Every push runs: Linux GCC and Clang Release, Clang ASan+UBSan, Clang TSan (all with the editor), OpenSSL 3.5 LTS on Linux, clang-tidy and cppcheck, fuzzing, performance and short soak, Windows MSVC Release (tests, service lifecycle, CLI PKI, MSI build, installation, editor check, automated acceptance on the installed binaries, uninstallation), Windows MSVC `/analyze`, Linux package builds and installation tests on five distributions, and the release artifact. Warnings are errors.
+Every push runs: Linux GCC and Clang Release, Clang ASan+UBSan, Clang TSan (all with the editor), OpenSSL 3.5 LTS on Linux, clang-tidy and cppcheck, code coverage (gcovr, regression floor), fuzzing, performance and short soak, Windows MSVC Release (tests, service lifecycle, CLI PKI, MSI build, installation, editor check, automated acceptance on the installed binaries, uninstallation), Windows MSVC `/analyze`, Linux package builds and installation tests on five distributions, and the release artifact. Warnings are errors.
 
 ### 13.3 Measured performance
 

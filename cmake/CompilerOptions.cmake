@@ -47,4 +47,10 @@ else()
             -fsanitize=${TLSRELAY_SANITIZERS} -fno-omit-frame-pointer -fno-sanitize-recover=all)
         target_link_options(tlsrelay_options INTERFACE -fsanitize=${TLSRELAY_SANITIZERS})
     endif()
+    if(TLSRELAY_COVERAGE)
+        # Mesure de couverture (gcov) : sans optimisation pour que lignes et branches
+        # correspondent au source ; rapport par tools/coverage.sh.
+        target_compile_options(tlsrelay_options INTERFACE --coverage -O0 -fprofile-update=atomic)
+        target_link_options(tlsrelay_options INTERFACE --coverage)
+    endif()
 endif()

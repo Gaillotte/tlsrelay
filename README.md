@@ -88,7 +88,10 @@ tools/run-cppcheck.sh build/linux-release            # analyse statique (paquet 
 cmake --preset linux-fuzz && cmake --build --preset linux-fuzz
 tools/run-fuzz.sh build/linux-fuzz 60                # 60 s par cible libFuzzer
 tests/lifecycle/tls-scan.sh build/linux-release/src/app/tlsrelay   # configuration TLS (sslyze)
+tools/coverage.sh build/coverage                     # couverture de code (paquet gcovr) : build/coverage/coverage/index.html
 ```
+
+Couverture mesurée et nouveaux tests à réaliser : [TESTS.md §6](docs/TESTS.md#6-code-coverage).
 
 ### Éditeur tlsrelay-admin (Qt 6)
 

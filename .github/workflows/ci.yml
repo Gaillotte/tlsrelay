@@ -192,6 +192,33 @@ jobs:
       - name: cppcheck
         run: tools/run-cppcheck.sh build
 
+  coverage:
+    name: Couverture de code (gcovr)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
+            libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev qt6-base-dev
+          pipx install gcovr==8.6
+
+      # Seuil de non-régression : couverture mesurée moins une marge (TESTS.md §6) ;
+      # relevé à 90 % une fois les tests spécifiés en TESTS.md §6.4 réalisés.
+      - name: Tests instrumentés et rapport
+        run: tools/coverage.sh build/coverage 83
+
+      - name: Rapport de couverture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: couverture
+          path: build/coverage/coverage/
+          if-no-files-found: ignore
+
   fuzz:
     name: Fuzzing (60 s par cible)
     runs-on: ubuntu-24.04
