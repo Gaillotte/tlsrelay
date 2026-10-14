@@ -764,8 +764,9 @@ Figures vary by about ±0.1 % between runs, because a few lines run only on timi
 | `src/app` — `tlsrelay` command line | 61.3 % lines, 58.8 % functions, 53.4 % branches | **80.3 %** lines, 76.5 % functions, 72.6 % branches |
 | `src/admin` — editor | 74.8 % lines, 69.8 % functions, 59.7 % branches | **95.8 %** lines, 91.4 % functions, 77.5 % branches |
 | **Delivered code (total)** | **84.4 %** lines (5,155 / 6,105), 89.0 % functions, 69.6 % branches | **93.1 %** lines (5,692 / 6,115), **95.4 %** functions, **79.1 %** branches |
+| **Delivered code, CI coverage job** (ctest + `systemd.sh` as root) | — | **94.7 %** lines (5,790 / 6,115), **96.8 %** functions, **80.5 %** branches |
 
-**Verdict: the 90 % target is met** without counting the systemd run. In CI, `systemd.sh` on the instrumented binary adds the service-manager code (`platform_linux.cpp`, `notify.cpp`, `start`/`stop`/`restart`/`service install` paths of `main.cpp`).
+**Verdict: the 90 % target is met**, even without the systemd run. In CI, `systemd.sh` on the instrumented binary adds the service-manager code (`platform_linux.cpp`, `notify.cpp`, `start`/`stop`/`restart`/`service install` paths of `main.cpp`): 94.7 % of lines.
 
 Files still below 90 % of lines in the local run:
 

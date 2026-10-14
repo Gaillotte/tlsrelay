@@ -664,7 +664,7 @@ tlsrelay is proprietary (`LICENSE`). `THIRD-PARTY-NOTICES.txt` reproduces the li
 
 ### 13.1 Test levels
 
-The test strategy, environments, the description of every test, the requirements coverage matrix and the code coverage (93.1 % of lines of the delivered code: core library 94.5 %, command line 80.3 %, editor 95.8 %; at least 90 % enforced in CI) are in [TESTS.md](TESTS.md).
+The test strategy, environments, the description of every test, the requirements coverage matrix and the code coverage (94.7 % of lines of the delivered code in CI; locally without systemd 93.1 %: core library 94.5 %, command line 80.3 %, editor 95.8 %; at least 90 % enforced in CI) are in [TESTS.md](TESTS.md).
 
 | Level | Content |
 |---|---|
