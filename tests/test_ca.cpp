@@ -464,6 +464,14 @@ TEST_F(CaTest, AuditLogRecordsOperationsAndDetectsTampering) {
     ASSERT_FALSE(log.broken_line) << log.problem;
     ASSERT_EQ(log.entries.size(), 1u);
     EXPECT_EQ(log.entries[0].details, "a b c");
+
+    // AC antérieure à la livraison 1.1 : pas encore de journal, rien d'altéré.
+    std::filesystem::remove(ca() / "audit.log");
+    log = pki::read_audit(ca());
+    EXPECT_TRUE(log.entries.empty());
+    EXPECT_FALSE(log.broken_line);
+    // Répertoire qui n'est pas une AC (faute de frappe) : erreur, et non un journal « intact ».
+    EXPECT_THROW(pki::read_audit(ca() / "absente"), std::runtime_error);
 }
 
 TEST_F(CaTest, IndexWithoutRevocationColumnsIsStillRead) {

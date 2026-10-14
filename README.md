@@ -91,7 +91,7 @@ tests/lifecycle/tls-scan.sh build/linux-release/src/app/tlsrelay   # configurati
 tools/coverage.sh build/coverage                     # couverture de code (paquet gcovr) : build/coverage/coverage/index.html
 ```
 
-Couverture mesurée et nouveaux tests à réaliser : [TESTS.md §6](docs/TESTS.md#6-code-coverage).
+Couverture mesurée (au moins 90 % des lignes du code livré, contrôlé par la CI) : [TESTS.md §6](docs/TESTS.md#6-code-coverage).
 
 ### Éditeur tlsrelay-admin (Qt 6)
 

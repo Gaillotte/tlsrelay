@@ -48,6 +48,7 @@ step "démarrage"
 [ "$(systemctl is-active tlsrelay@ci)" = active ] || fail "service inactif"
 "$bin" status --instance ci | tee "$work/status" | grep -q "instance : ci" || fail "status"
 [ "$(ps -o user= -p "$(systemctl show -p MainPID --value tlsrelay@ci)")" = tlsrelay ] || fail "compte du service"
+"$bin" start --instance ci | grep -q "déjà démarrée" || fail "second démarrage"
 
 step "relais de données à travers le service"
 cat > "$work/client.yaml" <<YAML
@@ -80,6 +81,7 @@ step "arrêt propre"
 "$bin" stop --instance ci
 sleep 0.5
 [ "$(systemctl is-active tlsrelay@ci || true)" = inactive ] || fail "toujours actif après stop"
+"$bin" stop --instance ci | grep -q "déjà arrêtée" || fail "arrêt d'une instance arrêtée"
 
 step "arrêt par systemctl stop (SIGTERM, drain)"
 "$bin" start --instance ci
@@ -95,5 +97,7 @@ sleep 0.5
 step "désinstallation"
 "$bin" service uninstall --instance ci
 [ ! -e /etc/systemd/system/tlsrelay@ci.service.d ] || fail "drop-in restant"
+if "$bin" service uninstall --instance ci 2>"$work/uninstall.err"; then fail "seconde désinstallation acceptée"; fi
+grep -q "n'est pas installé" "$work/uninstall.err" || fail "message de la seconde désinstallation"
 
 echo "cycle de vie systemd : OK"

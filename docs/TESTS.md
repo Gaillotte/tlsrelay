@@ -73,7 +73,7 @@
 | No open critical or major defect | Met |
 | No sanitizer finding; fuzzing without crash | Met in CI (60 s per target per push); 24 h cumulated fuzzing: manual, before production |
 | Performance targets met | Met (section 3.21) |
-| Line coverage of the delivered code ≥ 90 % | **Not met**: 84.4 % (section 6); new tests specified in 6.4 |
+| Line coverage of the delivered code ≥ 90 % | Met (section 6); enforced by the CI coverage job |
 | 72 h endurance | Manual, before production (4-minute soak in CI) |
 | Acceptance sign-off record signed | [PV-RECETTE.md](PV-RECETTE.md), to be signed by the project owner |
 
@@ -95,7 +95,7 @@ A failing CI job blocks the merge of its branch. A failure is root-caused before
 | Linux Clang TSan | ubuntu-24.04 | Clang 18 Debug, ThreadSanitizer (`halt_on_error=1`) | ctest |
 | Linux OpenSSL 3.5 LTS | ubuntu-24.04 | GCC, OpenSSL 3.5 built from the official archive (SHA-512 verified) | Version check (`OpenSSL 3.5.x`), ctest with the matching `openssl` command |
 | Analyse statique (clang-tidy, cppcheck) | ubuntu-24.04 | clang-tidy 18, cppcheck | `tools/run-clang-tidy.sh`, `tools/run-cppcheck.sh` on the whole code base, editor included |
-| Couverture de code (gcovr) | ubuntu-24.04 | GCC 13 `--coverage`, Qt 6.4, gcovr 8.6 | `tools/coverage.sh`: instrumented build, all ctest entries, HTML report (`couverture` artifact); fails below 83 % of lines (section 6) |
+| Couverture de code (gcovr) | ubuntu-24.04 | GCC 13 `--coverage`, Qt 6.4, gcovr 8.6 | `tools/coverage.sh`: instrumented build, all ctest entries, then `systemd.sh` as root on the instrumented binary, HTML report (`couverture` artifact); fails below 90 % of lines (section 6) |
 | Fuzzing (60 s par cible) | ubuntu-24.04 | Clang libFuzzer + ASan/UBSan | `tools/run-fuzz.sh` on the 6 targets from their corpus |
 | Performances et endurance | ubuntu-24.04 | Release build | `perf.sh` with 1,000 channels; `soak.sh` for 4 minutes (reports uploaded) |
 | Windows MSVC Release | windows-2022 | MSVC 2022, vcpkg (OpenSSL 3.5 LTS, Asio, CLI11, spdlog, yaml-cpp, GoogleTest), Qt 6.8 LTS | ctest; `check-hardening.ps1`; shipped OpenSSL version check; `windows-service.ps1` (real service); `windows-pki.ps1`; MSI build; MSI installation; installed editor check (without the runner's Qt); `recette.ps1 -Services -Quick` on the installed binaries; MSI uninstallation |
@@ -105,7 +105,7 @@ A failing CI job blocks the merge of its branch. A failure is root-caused before
 | Installation deb/rpm (×5) | ubuntu:22.04, ubuntu:24.04, debian:12, rockylinux:9, almalinux:9 | — | `packaging/test-linux-package.sh`: install, run, upgrade in place, licences, uninstall |
 | Paquets de la livraison | ubuntu-24.04 | — | Gathers `.deb`, `.rpm`, `.msi` and `SHA256SUMS` into the `tlsrelay-livraison` artifact |
 
-Totals per push: 19 jobs; 196 ctest entries on Linux (191 GoogleTest cases, 14 Qt Test functions counted as one ctest entry, `Admin.CheckValid`, `Admin.CheckInvalid`, `Lifecycle.Console`, `Lifecycle.Pki`); on Windows, 188 GoogleTest cases (3 are Linux-only, see 3.1) plus the Qt and `Admin.Check*` entries.
+Totals per push: 19 jobs; 212 ctest entries on Linux (204 GoogleTest cases, 20 Qt Test functions counted as one ctest entry, `Admin.CheckValid`, `Admin.CheckInvalid`, `Admin.CheckWhitelist`, `Admin.CheckUnreadable`, `Lifecycle.Console`, `Lifecycle.Pki`, `Lifecycle.Cli`); on Windows, 199 GoogleTest cases (5 are Linux-only, see 5.3) plus the Qt and `Admin.Check*` entries.
 
 ### 2.2 Test network layout
 
@@ -173,6 +173,9 @@ Each table lists the tests of one suite, what each test does and checks, and the
 | `ParseEndpoint.AcceptsIpv4HostnameAndIpv6` | `host:port`, `a.b.c.d:port` and `[v6]:port` | CFG-03 |
 | `ParseEndpoint.RejectsInvalidInput` | Malformed endpoints (missing or out-of-range port, bad host) are refused | CFG-03 |
 | `Endpoint.ToStringBracketsIpv6` | IPv6 endpoints are printed with brackets | CFG-03 |
+| `ParseSize.RejectsOverflow` | Sizes beyond 2⁶⁴ (digits or unit multiplication) refused; largest representable size accepted; tabs trimmed | CFG-03 |
+| `ParsePercent.Bounds` | Spaces and tabs trimmed; above 100 %, negative and out-of-range values refused; a fraction above 1 is written as is | CFG-03, CFG-04 |
+| `ParseDuration.TrimsBlanksAndRejectsMillisecondOverflow` | Tabs trimmed; a millisecond count beyond the duration type refused | CFG-03 |
 | `IpLiteral.RecognisesAddresses` | IP literals are told apart from host names (used for SAN and `server_name`); wildcard addresses recognised | CFG-03, TLS-05 |
 
 ### 3.2 Configuration and validation — `test_config.cpp`
@@ -194,6 +197,9 @@ Each table lists the tests of one suite, what each test does and checks, and the
 | `Validate.RequiresAtLeastOnePort` | A configuration without any port is refused | CFG-02, GEN-04 |
 | `Validate.LimitsCoherence` | `idle_timeout` < `session_lifetime`, `renegotiation_grace` < lifetime / 2, jitter ≤ 50 % | CAN-05, CFG-02 |
 | `Validate.InstanceNameAndLogOutput` | Instance name syntax; unsupported log outputs refused | CFG-02, LOG-01 |
+| `Config.DefaultsMatchSpecification` | Default values of `Limits`, `AdminConfig` and `Destination` equal SPEC §5.2, §5.4 and §10.1 | CFG-01 |
+| `Config.DestinationAndWhitelistSectionErrors` | Destination without address, port above 65535 or missing; unknown `revoke_mode`: each error with its path | CFG-01, CFG-02 |
+| `Validate.EveryLimitBound` | Each remaining rule of SPEC §5.2 and §8.3 (zero timeouts, `keepalive_interval` < 1 s, `max_channels` bounds, negative `shutdown_timeout`, empty `logging.output`, empty `admin.endpoint`, missing `whitelist` or `whitelist.file` in server mode) gives exactly its error; `keepalive_interval: 0` accepted | CFG-02, CAN-05 |
 | `Validate.ProgrammaticConfigUsesSameRules` | A configuration built in code (as the editor does) goes through the same validation | CFG-02, EDT-01 |
 
 ### 3.3 Writers and diff — `test_writer.cpp`
@@ -233,6 +239,9 @@ Each table lists the tests of one suite, what each test does and checks, and the
 | `Frame.RejectsSizeInconsistentWithType` | A payload size that does not match the type is refused | TUN-01 |
 | `Frame.RejectsUnknownPortKindInOpen` | `OPEN` with a port kind other than 1, 2 or 3 is refused | TUN-01, TUN-02 |
 | `Frame.ErrorIsFinal` | After an error, the decoder stays in error | TUN-01 |
+| `Frame.NamesOfEveryTypeAndCode` | Log names of every frame type and close code (SPEC §4.2, §4.6); `?` for unknown values | TUN-01 |
+| `Frame.RejectsWrongSizeForEachType` | For every frame type, a header with a size other than its own → `PROTOCOL_ERROR`; `OPEN` with port kind 0 or 4 refused | TUN-01 |
+| `Frame.DecoderCompactsLargeBuffers` | 40 frames (160 KiB) fed in odd-sized chunks: internal buffer compacted beyond 64 KiB, every frame decoded identically | TUN-01 |
 
 ### 3.6 Whitelist — `test_whitelist.cpp`
 
@@ -248,6 +257,8 @@ Each table lists the tests of one suite, what each test does and checks, and the
 | `Whitelist.MtlsRequiresIpAndSubjectInTheSameEntry` | Canonical comparison (case and spaces ignored); right subject with another entry's IP, and the reverse, refused; component order matters | WL-03 |
 | `Dn.ParsesEscapesAndMatchesCertificateForm` | RFC 4514 DN parsing with escapes; multi-valued and hex values refused; matches the certificate's form | WL-03 |
 | `Whitelist.DiffReportsChanges` | The reload diff lists peers added, removed and modified | WL-04 |
+| `Whitelist.StructureErrors` | Root not a map, unknown top-level key, `peers` not a list, entry not a map, non-scalar value, YAML syntax error with line: each reported at its place | WL-01 |
+| `Whitelist.MissingFileIsReported` | Missing file: one error "absent ou illisible" | WL-01, WL-06 |
 
 ### 3.7 Instance PKI — `test_pki.cpp`
 
@@ -382,7 +393,7 @@ Each table lists the tests of one suite, what each test does and checks, and the
 | `CaTest.InstallRejectsCertificateForAnotherKey` | `pki install` refuses a certificate for another key | PKI-10 |
 | `SubjectAltNames.ParsesTypedAndBareValues` | `--san` values with or without `DNS:`/`IP:` prefixes | CA-02 |
 | `CaTest.RevocationIsPublishedInSignedCrls` | Revocation: lowercase serial accepted, double and unknown refused; OpenSSL recognises the revoked certificate; increasing CRL numbers; subject reusable after revocation | CA-05 |
-| `CaTest.AuditLogRecordsOperationsAndDetectsTampering` | Each operation logged; modified or deleted line breaks the chain; tabs and newlines in fields cannot break the format | CA-06 |
+| `CaTest.AuditLogRecordsOperationsAndDetectsTampering` | Each operation logged; modified or deleted line breaks the chain; tabs and newlines in fields cannot break the format; CA without a log yet reads as empty; a directory that is not a CA is an error | CA-06 |
 | `CaTest.IndexWithoutRevocationColumnsIsStillRead` | Five-column inventory from delivery 1.0 still read | CA-04 |
 | `CaTest.PublishedCrlIsAcceptedByInstancesOfBothRoles` | Published CRLs accepted by `pki crl` on a server and a client; the client learns its own certificate is revoked | CRL-01, CRL-04 |
 | `CaTest.DescribeAuthoritySummarizesCertificatesAndCrl` | CA summary (certificates, fingerprints, CRL state) used by the editor | CA-04, EDT-04 |
@@ -405,6 +416,8 @@ Each table lists the tests of one suite, what each test does and checks, and the
 | `AdminTest.ReloadReportsWhatChanged` | `reload` reports whitelist, PKI and configuration changes; non-runtime changes flagged as requiring a restart | ADM-05, ADM-06 |
 | `AdminTest.LogLevelChangesAtRuntime` | `log-level` changes global and per-category levels | LOG-02 |
 | `AdminTest.LogReopenStartsNewFileAfterRotation` | `log-reopen` after a rename creates a new file (Linux only) | LOG-02 |
+| `AdminTest.EndpointErrorsAreReported` | Endpoint path longer than `sun_path` (server and client), parent directory impossible to create, lock file that is a directory, endpoint occupied by a directory: each a clear error (Linux only) | ADM-03 |
+| `AdminTest.InvalidRepliesAreRejected` | Fake server answering an unknown header, a non-numeric size, 80 bytes without newline, a truncated body, or nothing: "réponse invalide" or "connexion fermée avant la fin de la réponse", no hang (Linux only) | ADM-03 |
 
 ### 3.15 Attack cases — `test_attacks.cpp`
 
@@ -425,7 +438,7 @@ Each table lists the tests of one suite, what each test does and checks, and the
 
 ### 3.16 Editor — Qt Test (`tests/admin/test_admin.cpp`, ctest `Admin.QtTests`)
 
-Runs with the `offscreen` Qt platform; dialogs are replaced by injected hooks.
+Runs with the `offscreen` Qt platform. Earlier tests replace dialogs by injected hooks; the dialog tests drive the real modal dialogs (file pickers, input dialogs, message boxes, the editor's own dialogs) through a helper that waits for the next modal window of a given type, fills it and presses its button.
 
 | Test | Description | Req. |
 |---|---|---|
@@ -443,6 +456,12 @@ Runs with the `offscreen` Qt platform; dialogs are replaced by injected hooks.
 | `pki_panel_refuses_wrong_passphrase_and_bad_directory` | Wrong passphrase and non-CA directory refused; cancelled entry does nothing | EDT-04 |
 | `sign_dialog_inspects_request` | Request details shown; renewal with a different subject flagged | EDT-04 |
 | `pki_root_change_preparation` | Root-change wizard produces the step files and `LISEZMOI.txt` | EDT-05 |
+| `export_dialog_builds_request_and_warns` | Export menu on an invalid document refused; dialog: Export disabled without output directory, Windows target, kit and CRL fields reflected in the request, warning about Linux paths, success message, package written; Cancel writes nothing | EDT-03 |
+| `diff_dialog_is_shown_and_controls_saving` | Default confirmation is the diff dialog: first save shows both files, a later change shows only the changed one; Save writes with `.bak`, Cancel writes nothing and keeps the document modified | EDT-02 |
+| `revoke_and_crl_dialogs` | Revoke dialog on the selected certificate (reason, CRL validity, copy path) → revoked with reason, CRL copy written; CRL dialog → CRL n° 2; Cancel leaves the certificate valid | EDT-04, CA-05 |
+| `root_change_dialog_creates_ca_and_prepares_files` | Wizard: empty fields do nothing; new CA created from the wizard (directory picker, passphrase typed twice; mismatch refused first); step files and `LISEZMOI.txt` produced and shown | EDT-05, CA-07 |
+| `sign_and_create_dialogs` | "New CA" (directory and organisation), "Open CA" in another panel, signing dialog (unreadable file shown, requested SAN extension listed as ignored, kit written), renewal of the selected certificate (subject and role pre-filled, old certificate superseded) | EDT-04, CA-02 |
+| `main_window_navigation_and_close` | Issue rows focus the configuration tab or the whitelist row; ignored keys listed; About box versions; unreadable file and impossible save reported; Open with unsaved changes asks first; Open and Save As through the file pickers; closing asks Cancel / Save / Discard; unmodified window closes without asking | EDT-01, EDT-02 |
 
 ### 3.17 Editor command line — ctest
 
@@ -450,6 +469,8 @@ Runs with the `offscreen` Qt platform; dialogs are replaced by injected hooks.
 |---|---|---|
 | `Admin.CheckValid` | `tlsrelay-admin --check examples/client.yaml` exits 0 | EDT-06 |
 | `Admin.CheckInvalid` | `--check tests/admin/invalide.yaml` exits non-zero and reports `ports.plain.listen : adresse invalide` | EDT-06, EDT-01 |
+| `Admin.CheckWhitelist` | Valid server configuration whose whitelist has a bad address: the whitelist error is reported with its file and path | EDT-06, WL-01 |
+| `Admin.CheckUnreadable` | Missing file: "fichier illisible" | EDT-06 |
 
 ### 3.18 Lifecycle scripts — real binary
 
@@ -457,7 +478,8 @@ Runs with the `offscreen` Qt platform; dialogs are replaced by injected hooks.
 |---|---|---|---|
 | `tests/lifecycle/console.sh` (ctest `Lifecycle.Console`) | Linux, every ctest run | Console run; instance lock; `status`; `reload`; `stop` with drain; `kill`; SIGTERM | ADM-02, ADM-04, ADM-05 |
 | `tests/lifecycle/pki.sh` (ctest `Lifecycle.Pki`) | Linux, every ctest run | `ca init` → `pki gen-csr` → `ca sign` → `pki install` → `pki activate`; mTLS chain in service; `openssl verify`; hot renewal; CA policy refusals; `ca revoke`, `ca crl`, `openssl verify -crl_check`, `pki crl`; `ca audit` intact then tampered | PKI-01, PKI-10, CA-05, CA-06, CRL-04 |
-| `tests/lifecycle/systemd.sh` | Linux, CI (GCC Release), root | Install `tlsrelay@N` with `--boot`; relay; `reload`; `restart`; `stop`; `kill`; `systemctl stop`; non-authorised user refused; service account checked; uninstall | ADM-01, ADM-02, ADM-03, ADM-07 |
+| `tests/lifecycle/cli.sh` (ctest `Lifecycle.Cli`) | Linux, every ctest run | Exit codes and messages of the command line: `version`, `check-config`; `check-pki`, `pki gen-csr`, `pki install`, `pki activate` (guard refusal, `--force`), `pki crl` refusals and installation; `ca revoke`, `ca sign`, `ca root-change`, `ca list`, `ca audit` refusals; passphrase from a pipe, mismatch, end of input, missing file, and from a terminal without echo; `run --instance` mismatch; `stop`/`kill`/`status` on stopped or invalid targets; `start`, `restart`, `service install/uninstall` refusals | ADM-05, PKI-10, CRL-04, CA-01, CA-07 |
+| `tests/lifecycle/systemd.sh` | Linux, CI (GCC Release and coverage jobs), root | Install `tlsrelay@N` with `--boot`; relay; second `start` (already running); `reload`; `restart`; `stop`, then `stop` of the stopped instance; `kill`; `systemctl stop`; non-authorised user refused; service account checked; uninstall, then uninstall again refused | ADM-01, ADM-02, ADM-03, ADM-07 |
 | `tests/lifecycle/windows-service.ps1` | Windows, CI, administrator | Install under `NT SERVICE\tlsrelay-ci`; start; relay; `reload`; `restart`; `stop`; stop by the service manager; `kill`; uninstall | ADM-01, ADM-02, ADM-07 |
 | `tests/lifecycle/windows-pki.ps1` | Windows, CI | `ca init` (ACL of CA keys), `pki gen-csr`, `ca sign`, `pki install`, `check-pki`, duplicate subject refused, revocation and audit | PKI-10, CA-01, CA-06 |
 | `tests/lifecycle/tls-scan.sh` | Linux, CI (GCC Release) | sslyze and testssl.sh on ports 2 and 3: TLS 1.3 only, allowed suites only, no session resumption, certificate conforming, no known vulnerability | TLS-01, TLS-02, TLS-04 |
@@ -573,7 +595,7 @@ Legend for the **Status** column: **Auto** — fully verified by automated tests
 | TLS-06 | Server requires Clients CA certificate on mtls | `MtlsTest.ServerRejectsClientWithoutCertificate`, `…ClientCertificateFromUnexpectedCa`, `…ServerCertificateUsedAsClientCertificate` | — | Auto |
 | TLS-07 | Certificate dates on both sides | `AttackTest.*Expired*`, `AttackTest.*NotYetValid*` (4 tests), `PkiTest.RejectsExpiredAndNotYetValidCertificates` | — | Auto |
 | TLS-08 | Handshake timeout, bounded flood | `TlsTest.HandshakeTimeoutClosesSilentConnection`, `AttackTest.ConnectionFloodWithoutHandshakeIsBoundedAndRecovers` | — | Auto |
-| TUN-01 | Frame format and refusals | `Frame.*` (9 tests), `TunnelTest.InvalidFrameClosesChannelWithProtocolError`, `AttackTest.OversizedFrameHeaderClosesChannelBeforePayload`, `fuzz_frame` | — | Auto |
+| TUN-01 | Frame format and refusals | `Frame.*` (9 tests), `TunnelTest.InvalidFrameClosesChannelWithProtocolError`, `AttackTest.OversizedFrameHeaderClosesChannelBeforePayload`, `fuzz_frame`, `Frame.NamesOfEveryTypeAndCode`, `Frame.RejectsWrongSizeForEachType`, `Frame.DecoderCompactsLargeBuffers` | — | Auto |
 | TUN-02 | `OPEN` / `OPEN_OK` / `OPEN_FAIL` | `TunnelTest.OpenIsRefusedForAnotherPortOrDuplicateSession`, `AttackTest.DataBeforeOpenIsRefused`, `Frame.RejectsUnknownPortKindInOpen` | — | Auto |
 | TUN-03 | Sequence numbers and cumulative ACK | `AttackTest.DataWithUnexpectedSequenceClosesChannel`; integrity hashes of every chain test | — | Auto |
 | TUN-04 | Back-pressure without loss | `TunnelTest.SmallResumeBufferAppliesBackpressureWithoutLoss` | — | Auto |
@@ -591,8 +613,8 @@ Legend for the **Status** column: **Auto** — fully verified by automated tests
 | CAN-02 | `max_channels` | `Relay.MaxChannelsRejectsExtraConnections` | — | Auto |
 | CAN-03 | `idle_timeout` | `Relay.IdleTimeoutClosesChannel`, `Relay.ActivityKeepsChannelOpen` | — | Auto |
 | CAN-04 | Destination retries | `Relay.DestinationUnreachableAfterThreeAttempts`, `Relay.DestinationRetrySucceeds`, `Validate.DestinationRules` | — | Auto |
-| CAN-05 | Timer consistency | `Validate.LimitsCoherence` | — | Auto |
-| WL-01 | Strict whitelist validation | `Whitelist.LoadsEntriesWithDefaults`, `…ReportsFormatErrors`, `…RejectsSameSubjectTwice`, `…RequiresPeersSection`, `…EmptyListIsValidWithWarning`, `fuzz_whitelist`, `fuzz_dn` | — | Auto |
+| CAN-05 | Timer consistency | `Validate.LimitsCoherence`, `Validate.EveryLimitBound` | — | Auto |
+| WL-01 | Strict whitelist validation | `Whitelist.LoadsEntriesWithDefaults`, `…ReportsFormatErrors`, `…RejectsSameSubjectTwice`, `…RequiresPeersSection`, `…EmptyListIsValidWithWarning`, `fuzz_whitelist`, `fuzz_dn`, `Whitelist.StructureErrors`, `Whitelist.MissingFileIsReported`, `Admin.CheckWhitelist` | — | Auto |
 | WL-02 | IP checked before the handshake | `MtlsTest.UnknownAddressIsRejectedBeforeHandshake`, `MtlsTest.PeerIsLimitedToItsPorts`, `Whitelist.AuthorizesByIpAndPort`, `IpRange.MatchesAddresses` | — | Auto |
 | WL-03 | Subject and IP in the same entry | `MtlsTest.WhitelistRequiresIpAndSubjectInTheSameEntry`, `MtlsTest.WhitelistRejectsUnknownSubjectBeforeContactingDestination`, `Whitelist.MtlsRequiresIpAndSubjectInTheSameEntry`, `Dn.ParsesEscapesAndMatchesCertificateForm` | — | Auto |
 | WL-04 | Hot reload, invalid file kept out | `MtlsTest.ReloadAddsPeer`, `MtlsTest.InvalidReloadKeepsCurrentList`, `Whitelist.DiffReportsChanges` | R05, E04 | Auto |
@@ -607,30 +629,30 @@ Legend for the **Status** column: **Auto** — fully verified by automated tests
 | PKI-07 | Rotation guard | `PkiTest.CheckCandidateAppliesRootGuard`, `RotationTest.GuardRefusesRootChangeWithoutPreTrust`, `RotationTest.GuardRefusesIdentityFromUnknownRootEvenWithoutMtls` | — | Auto |
 | PKI-08 | Three-step root change | `RotationTest.ThreeStepRootChangeKeepsServiceAvailable`, `CaTest.RootTransitionFilesDriveTheThreeSteps` | R09 | Auto |
 | PKI-09 | Watch, SIGHUP, reload | `RotationTest.SighupTriggersReload`, `RotationTest.WatchDisabledWaitsForExplicitReload`, `AdminTest.ReloadReportsWhatChanged` | — | Auto |
-| PKI-10 | Instance PKI commands | `CaTest.InstallRejectsCertificateForAnotherKey`, `CaTest.RenewalRotatesKeyAndKeepsTrustFiles`, `CaTest.GenCsrCreatesNextGenerationWithPrivateKey`, `pki.sh`, `windows-pki.ps1` | R01 | Auto |
-| CA-01 | `ca init`, encrypted keys, permissions | `CaTest.InitCreatesHierarchyWithEncryptedKeys`, `windows-pki.ps1` (ACL) | — | Auto |
-| CA-02 | Signing policy | `CaTest.SignAppliesCaPolicyAndIgnoresRequestedExtensions`, `CaTest.SignRefusesNonConformingRequests`, `SubjectAltNames.ParsesTypedAndBareValues`, `fuzz_csr` | — | Auto |
+| PKI-10 | Instance PKI commands | `CaTest.InstallRejectsCertificateForAnotherKey`, `CaTest.RenewalRotatesKeyAndKeepsTrustFiles`, `CaTest.GenCsrCreatesNextGenerationWithPrivateKey`, `pki.sh`, `windows-pki.ps1`, `cli.sh` | R01 | Auto |
+| CA-01 | `ca init`, encrypted keys, permissions | `CaTest.InitCreatesHierarchyWithEncryptedKeys`, `windows-pki.ps1` (ACL), `cli.sh` (passphrase from a pipe and a terminal) | — | Auto |
+| CA-02 | Signing policy | `CaTest.SignAppliesCaPolicyAndIgnoresRequestedExtensions`, `CaTest.SignRefusesNonConformingRequests`, `SubjectAltNames.ParsesTypedAndBareValues`, `fuzz_csr`, Qt `sign_and_create_dialogs` | — | Auto |
 | CA-03 | Subject assigned once | `CaTest.SubjectIsAttributedOnceUnlessRenewed` | R01 | Auto |
 | CA-04 | Inventory | `CaTest.IndexWithoutRevocationColumnsIsStillRead`, `CaTest.DescribeAuthoritySummarizesCertificatesAndCrl` | E06 | Auto |
-| CA-05 | Revocation and CRL publication | `CaTest.RevocationIsPublishedInSignedCrls`, `pki.sh` | E08 | Auto |
-| CA-06 | Hash-chained audit log | `CaTest.AuditLogRecordsOperationsAndDetectsTampering`, `pki.sh`, `windows-pki.ps1` | E10 | Auto |
-| CA-07 | Root-change preparation | `CaTest.RootTransitionFilesDriveTheThreeSteps` | R09 | Auto |
+| CA-05 | Revocation and CRL publication | `CaTest.RevocationIsPublishedInSignedCrls`, `pki.sh`, Qt `revoke_and_crl_dialogs` | E08 | Auto |
+| CA-06 | Hash-chained audit log | `CaTest.AuditLogRecordsOperationsAndDetectsTampering` (including a non-CA directory refused), `pki.sh`, `windows-pki.ps1` | E10 | Auto |
+| CA-07 | Root-change preparation | `CaTest.RootTransitionFilesDriveTheThreeSteps`, `cli.sh`, Qt `root_change_dialog_creates_ca_and_prepares_files` | R09 | Auto |
 | CRL-01 | Revoked certificate refused at the handshake | `CrlTest.ServerRefusesRevokedClientCertificate`, `CrlTest.ClientRefusesRevokedServerCertificate`, `CrlTest.CrlOfOtherCertificatesChangesNothing`, `CaTest.PublishedCrlIsAcceptedByInstancesOfBothRoles` | E08 | Auto |
 | CRL-02 | Hot CRL reload, channels closed | `CrlTest.PublishedCrlClosesActiveChannelAndRefusesNewOnes`, `CrlTest.NextRenegotiationKeepsActiveChannel` | — | Auto |
 | CRL-03 | Invalid, stale CRL; own certificate revoked | `CrlTest.InvalidCrlIsRefusedAtStartupAndKeptAsIsOnReload`, `CrlTest.ExpiredCrlIsStillAppliedWithWarning`, `CrlTest.RevokedInstanceCertificateIsReported` | — | Auto |
-| CRL-04 | `pki crl`, status and metrics | `pki.sh`, `CaTest.PublishedCrlIsAcceptedByInstancesOfBothRoles` | E08 | Auto |
-| CFG-01 | YAML, all errors with path, unknown keys | `Config.*` (8 tests), `fuzz_config` | — | Auto |
-| CFG-02 | Shared validation rules | `Validate.*` (8 tests), Qt `validation_matches_service` | E02 | Auto |
-| CFG-03 | Value formats | `ParseDuration.*`, `ParseSize.*`, `ParsePercent.*`, `ParseEndpoint.*`, `Endpoint.ToStringBracketsIpv6`, `IpLiteral.RecognisesAddresses`, `IpRange.MatchesAddresses` | — | Auto |
+| CRL-04 | `pki crl`, status and metrics | `pki.sh`, `CaTest.PublishedCrlIsAcceptedByInstancesOfBothRoles`, `cli.sh` | E08 | Auto |
+| CFG-01 | YAML, all errors with path, unknown keys | `Config.*` (8 tests), `fuzz_config`, `Config.DefaultsMatchSpecification`, `Config.DestinationAndWhitelistSectionErrors` | — | Auto |
+| CFG-02 | Shared validation rules | `Validate.*` (8 tests), Qt `validation_matches_service`, `Validate.EveryLimitBound` | E02 | Auto |
+| CFG-03 | Value formats | `ParseDuration.*`, `ParseSize.*`, `ParsePercent.*`, `ParseEndpoint.*`, `Endpoint.ToStringBracketsIpv6`, `IpLiteral.RecognisesAddresses`, `IpRange.MatchesAddresses`, `ParseSize.RejectsOverflow`, `ParsePercent.Bounds`, `ParseDuration.TrimsBlanksAndRejectsMillisecondOverflow` | — | Auto |
 | CFG-04 | Normalised writing, round trip | `ConfigWriter.*`, `WhitelistWriter.*`, `Units.FormatSizeAndPercentRoundTrip`, `FormatDuration.UsesLargestExactUnit`, Qt `form_round_trips_examples`, `new_document_is_saved_normalized` | — | Auto |
 | LOG-01 | Levels, categories, formats, outputs | `Logging.*`, `JsonFormatter.WritesOneObjectPerLine`, `JsonEscape.EscapesSpecialCharacters`, `Validate.InstanceNameAndLogOutput` | M05 | Auto + manual |
 | LOG-02 | Runtime level, log reopen | `AdminTest.LogLevelChangesAtRuntime`, `AdminTest.LogReopenStartsNewFileAfterRotation` (Linux) | R10, M06 (Windows) | Auto + manual |
 | LOG-03 | No secrets or relayed data; escaping | `AttackTest.TraceLogsContainNoSecretsNorRelayedData`, `AttackTest.PeerMessageCannotInjectLogLines`, `Frame.StatusMessageControlCharactersAreEscaped` | R10 | Auto |
 | ADM-01 | systemd and Windows services, boot start | `systemd.sh`, `windows-service.ps1` | R02, M01, M09 | Auto + manual |
 | ADM-02 | Graceful / immediate stop, restart | `Relay.GracefulStop*`, `Relay.AbortClosesChannelsImmediately`, `Relay.Signal*`, `Relay.SecondSignalForcesImmediateStop`, `AdminTest.StopDrainsThenStops`, `AdminTest.KillStopsImmediately`, `console.sh`, `systemd.sh`, `windows-service.ps1` | R12, M02, M03 | Auto + manual |
-| ADM-03 | Restricted local admin channel, commands logged | `AdminTest.SocketIsRestrictedToOwnerAndGroup` (Linux), `AdminTest.UnknownOrMalformedCommandsAreRefused`, `AdminProtocol.ParsesRequestWords`, `systemd.sh` (non-authorised user), `fuzz_admin` | M04 (Windows) | Auto + manual |
+| ADM-03 | Restricted local admin channel, commands logged | `AdminTest.SocketIsRestrictedToOwnerAndGroup` (Linux), `AdminTest.UnknownOrMalformedCommandsAreRefused`, `AdminProtocol.ParsesRequestWords`, `systemd.sh` (non-authorised user), `fuzz_admin`, `AdminTest.EndpointErrorsAreReported`, `AdminTest.InvalidRepliesAreRejected` (Linux) | M04 (Windows) | Auto + manual |
 | ADM-04 | Instance lock | `AdminTest.SecondExecutionOfSameInstanceIsRefused`, `console.sh` | — | Auto |
-| ADM-05 | `status`, `channels`, `reload`, `check-config` | `AdminTest.StatusDescribesInstance`, `…ChannelsListsOpenChannels`, `…ReloadReportsWhatChanged`, `…UnreachableInstanceIsReported`, `console.sh` | R11 | Auto |
+| ADM-05 | `status`, `channels`, `reload`, `check-config` | `AdminTest.StatusDescribesInstance`, `…ChannelsListsOpenChannels`, `…ReloadReportsWhatChanged`, `…UnreachableInstanceIsReported`, `console.sh`, `cli.sh` | R11 | Auto |
 | ADM-06 | Configuration reload | `AdminTest.ReloadReportsWhatChanged` | — | Auto |
 | ADM-07 | Least-privilege service accounts | `systemd.sh`, `windows-service.ps1` | M07 | Auto + manual |
 | ADM-08 | Prometheus metrics | `AdminTest.MetricsUsePrometheusTextFormat` | R11 | Auto |
@@ -645,12 +667,12 @@ Legend for the **Status** column: **Auto** — fully verified by automated tests
 | PKG-01 | `.deb`, `.rpm`, `.msi` lifecycle | Package jobs, installs on 5 distributions, MSI install/uninstall | In-place upgrade (before production) | Auto + manual |
 | PKG-02 | Licences and notices shipped | `test-linux-package.sh`, Windows MSI checks | E01 | Auto |
 | PKG-03 | SHA-256 hashes of the delivery | `tlsrelay-livraison` artifact | M08 | Auto |
-| EDT-01 | Editing with service validation, fields marked | Qt `validation_matches_service`, `invalid_fields_are_marked`, `fields_without_object_are_hidden_unless_filled`, `whitelist_editor_round_trip_and_marks`, `form_round_trips_examples`, `Admin.CheckInvalid` | E02 | Auto |
-| EDT-02 | Save pipeline: refusal, diff, `.bak`, atomic | Qt `open_edit_save_with_preview_and_backup`, `save_refused_while_invalid`, `new_document_is_saved_normalized`, `diff_preview_lists_changes`, `TextDiff.*` | E03, E04 | Auto |
-| EDT-03 | Deployment package export | Qt `export_package_for_linux_and_windows` | E05 | Auto |
-| EDT-04 | PKI module | Qt `pki_panel_full_cycle`, `pki_panel_refuses_wrong_passphrase_and_bad_directory`, `sign_dialog_inspects_request`, `CaTest.DescribeAuthoritySummarizesCertificatesAndCrl` | E06–E09 | Auto |
-| EDT-05 | Root-change wizard | Qt `pki_root_change_preparation` | E10 | Auto |
-| EDT-06 | Shipped in the MSI, `--check` | `Admin.CheckValid`, `Admin.CheckInvalid`, Windows "Éditeur installé" step | E01 | Auto |
+| EDT-01 | Editing with service validation, fields marked | Qt `validation_matches_service`, `invalid_fields_are_marked`, `fields_without_object_are_hidden_unless_filled`, `whitelist_editor_round_trip_and_marks`, `form_round_trips_examples`, `Admin.CheckInvalid`, Qt `main_window_navigation_and_close`, `Admin.CheckWhitelist` | E02 | Auto |
+| EDT-02 | Save pipeline: refusal, diff, `.bak`, atomic | Qt `open_edit_save_with_preview_and_backup`, `save_refused_while_invalid`, `new_document_is_saved_normalized`, `diff_preview_lists_changes`, `TextDiff.*`, Qt `diff_dialog_is_shown_and_controls_saving`, `main_window_navigation_and_close` | E03, E04 | Auto |
+| EDT-03 | Deployment package export | Qt `export_package_for_linux_and_windows`, Qt `export_dialog_builds_request_and_warns` | E05 | Auto |
+| EDT-04 | PKI module | Qt `pki_panel_full_cycle`, `pki_panel_refuses_wrong_passphrase_and_bad_directory`, `sign_dialog_inspects_request`, `CaTest.DescribeAuthoritySummarizesCertificatesAndCrl`, Qt `revoke_and_crl_dialogs`, `sign_and_create_dialogs` | E06–E09 | Auto |
+| EDT-05 | Root-change wizard | Qt `pki_root_change_preparation`, Qt `root_change_dialog_creates_ca_and_prepares_files` | E10 | Auto |
+| EDT-06 | Shipped in the MSI, `--check` | `Admin.CheckValid`, `Admin.CheckInvalid`, Windows "Éditeur installé" step, `Admin.CheckWhitelist`, `Admin.CheckUnreadable` | E01 | Auto |
 
 ---
 
@@ -697,9 +719,10 @@ All 91 requirements have at least one automated verification on every push. Ever
 | Test | Linux | Windows | Compensation on Windows |
 |---|---|---|---|
 | `AdminTest.SocketIsRestrictedToOwnerAndGroup` | Yes | No (Unix socket) | Named-pipe ACL: M04 |
+| `AdminTest.EndpointErrorsAreReported`, `AdminTest.InvalidRepliesAreRejected` | Yes | No (Unix socket errors) | Named-pipe client and server share the reply decoder (`session.hpp`) |
 | `AdminTest.LogReopenStartsNewFileAfterRotation` | Yes | No (open files cannot be renamed) | M06 |
 | `RotationTest.SighupTriggersReload` | Yes | No (no SIGHUP) | `reload` command, covered on both OSes |
-| `Lifecycle.Console`, `Lifecycle.Pki` (bash) | Yes | No | `windows-service.ps1`, `windows-pki.ps1` |
+| `Lifecycle.Console`, `Lifecycle.Pki`, `Lifecycle.Cli` (bash) | Yes | No | `windows-service.ps1`, `windows-pki.ps1`; the command-line code is the same on both systems except the service manager |
 | `tls-scan.sh`, sanitizers, fuzzing, clang-tidy, cppcheck | Yes | No | MSVC `/analyze`; same code base |
 
 ### 5.4 Deviations from the original strategy (PLAN §5)
@@ -708,7 +731,7 @@ All 91 requirements have at least one automated verification on every push. Ever
 |---|---|---|
 | Nightly pipeline (cross tests, 1 h fuzzing, network disturbances) | Everything runs on every push instead: 19 jobs, fuzzing 60 s per target, disturbances through the project's own cut proxy | Faster feedback; longer fuzzing moved to the pre-production checklist |
 | toxiproxy, `tc netem` for network disturbances | Own cutting/freezing proxy (`tests/support/cut_proxy.hpp`, `tlsrelay-testkit proxy`) | Same scenarios (cut, silent link) on both OSes without extra dependencies; latency and loss injection not exercised |
-| Line coverage ≥ 85 % of the core library, 100 % of branches of the frame decoder, whitelist and validation | Measured on every push since 2026-10-14 (section 6): core library 93.0 % of lines (met); parser branches 84–88 % (not met) | Tests CT-11 and CT-13 (section 6.4) close the parser branch gaps; project target raised to 90 % of lines of all delivered code |
+| Line coverage ≥ 85 % of the core library, 100 % of branches of the frame decoder, whitelist and validation | Measured on every push (section 6): core library 94.5 % of lines (met); branches of the frame decoder 98 %, whitelist 91 %, configuration and validation 91 %, units 96 % | Remaining parser branches are mostly implicit branches of YAML and string library calls; project target raised to 90 % of lines of all delivered code, enforced in CI |
 | Injectable clock for timer unit tests | Timers configured to milliseconds in integration tests | Tests are real-time but short; timing margins tuned for slow CI runners |
 | Windows ↔ Linux cross tests in CI | Linux and Windows tested separately; cross tests in acceptance (R13) | Wire compatibility relies on one protocol implementation built for both OSes |
 | OpenSSL 3.0 and 3.5 on both OSes | Linux: 3.0 and 3.5; Windows: 3.5 (the shipped version) | Matches what is delivered |
@@ -723,108 +746,77 @@ All 91 requirements have at least one automated verification on every push. Ever
 |---|---|
 | Tool | GCC 13 instrumentation (`--coverage`, `-O0`, `-fprofile-update=atomic`) and gcovr 8.6 |
 | Build | `-DTLSRELAY_COVERAGE=ON`, Debug, editor included (`TLSRELAY_BUILD_ADMIN=ON`) |
-| Tests executed | All 196 ctest entries on Linux: GoogleTest, Qt Test, `Admin.Check*`, `Lifecycle.Console`, `Lifecycle.Pki` |
-| Code measured | Delivered code: `src/core` (library), `src/app` (`tlsrelay` command line), `src/admin` (editor). Excluded: Qt-generated files (`*_autogen`), tests, third-party code. `src/testkit` (test tool) is reported separately: ctest does not run it; the performance, soak and acceptance scripts do |
+| Tests executed | All 212 ctest entries on Linux (GoogleTest, Qt Test, `Admin.Check*`, `Lifecycle.Console`, `Lifecycle.Pki`, `Lifecycle.Cli`); in CI, then `systemd.sh` as root on the instrumented binary (`COVERAGE_EXTRA`) |
+| Code measured | Delivered code: `src/core` (library), `src/app` (`tlsrelay` command line), `src/admin` (editor). Excluded: Qt-generated files (`*_autogen`), tests, third-party code. `src/testkit` (test tool) is not a target: ctest does not run it; the performance, soak and acceptance scripts do |
 | Platform | Linux only. Windows-only files (`platform_windows.cpp`, named-pipe admin channel, Windows service glue) are not compiled there and are not in the figures; they are exercised by `windows-service.ps1`, `windows-pki.ps1` and the acceptance run on the installed MSI |
 | Branches | Counted by gcov with unreachable and exception-only branches excluded (`--exclude-unreachable-branches --exclude-throw-branches`) |
 | Command | `tools/coverage.sh [build dir] [minimum line %]` → `<build>/coverage/index.html`, `summary.txt`, `summary.json` |
-| CI | Job "Couverture de code (gcovr)" on every push; HTML report uploaded as the `couverture` artifact; fails if line coverage drops below the regression floor (83 %) |
-| Target | **90 % of lines** of the delivered code (this document); branch figures are reported for information |
+| CI | Job "Couverture de code (gcovr)" on every push; HTML report uploaded as the `couverture` artifact; **fails below 90 % of lines** |
+| Target | **90 % of lines** of the delivered code; branch figures are reported for information |
 
-Figures vary by about ±0.1 % between runs, because a few lines run only on timing-dependent paths (retries, races between close and timeout).
+Figures vary by about ±0.1 % between runs, because a few lines run only on timing-dependent paths (retries, races between close and timeout). Counters written by the service process itself under systemd are lost (the service account cannot write into the build tree); the command-line processes that drive it run as root and are counted.
 
-### 6.2 Results (main branch, measured on 2026-10-14)
+### 6.2 Results
 
-| Component | Lines | Functions | Branches |
-|---|---|---|---|
-| `src/core` — service library | **93.0 %** (3,511 / 3,774) | 98.8 % (489 / 495) | 79.1 % |
-| `src/app` — `tlsrelay` command line | **61.3 %** (457 / 745) | 58.8 % (30 / 51) | 53.4 % |
-| `src/admin` — editor | **74.8 %** (1,187 / 1,586) | 69.8 % (120 / 172) | 59.7 % |
-| **Delivered code (total)** | **84.4 %** (5,155 / 6,105) | **89.0 %** (639 / 718) | **69.6 %** |
-| `src/testkit` (not run by ctest) | 0 % (0 / 367) | 0 % | 0 % |
-
-**Verdict: below the 90 % target.** The service library is above the target; the shortfall is in the command line (`src/app`) and the editor (`src/admin`), in code that only runs with a terminal, a service manager or a modal dialog. 340 more lines must be covered to reach 90 % (5,495 / 6,105).
-
-Files of the delivered code below 90 % of lines:
-
-| File | Lines | Covered | Uncovered code |
-|---|---|---|---|
-| `src/admin/export_dialog.cpp` | 62 | 0 % | Whole export dialog (tests call `export_package()` directly) |
-| `src/app/platform_linux.cpp` | 95 | 5 % | systemd unit generation, `service install/uninstall/start`, `useradd`, `systemctl` calls |
-| `src/core/src/system/notify.cpp` | 14 | 21 % | `sd_notify` datagram (only under systemd, `NOTIFY_SOCKET` set) |
-| `src/app/passphrase.cpp` | 44 | 36 % | Interactive passphrase prompt (terminal without echo, confirmation, mismatch) |
-| `src/admin/pki_panel.cpp` | 416 | 53 % | Revocation, CRL and root-change dialogs, file pickers, passphrase confirmation, "new CA" flow |
-| `src/admin/diff_dialog.cpp` | 50 | 58 % | Dialog construction (tests inject `confirm_save`); skipped unchanged file |
-| `src/admin/main.cpp` | 38 | 68 % | `--check` with unreadable file or with a whitelist; GUI start |
-| `src/app/main.cpp` | 606 | 71 % | Error exits of the `pki`, `ca`, `check-config` commands; `start`, `stop`, `restart`, `service install/uninstall` paths; `--instance` mismatch; invalid timeouts and instance names; `version` |
-| `src/admin/main_window.cpp` | 277 | 74 % | Close with unsaved changes, issue list navigation, export dialog, open/save pickers, About box, read and save errors |
-| `src/core/src/admin/posix.cpp` | 114 | 76 % | Admin channel errors: path too long, unwritable directory, lock file error, listen failure, send failure, truncated reply |
-| `src/core/src/admin/session.hpp` | 35 | 77 % | Invalid reply header or size |
-| `src/core/include/tlsrelay/config.hpp` | 65 | 83 % | Default member values of `Limits` and `AdminConfig` never default-constructed in tests |
-| `src/core/src/tunnel/frame.cpp` | 205 | 87 % | `to_string()` of most frame types and close codes; decoder buffer compaction above 64 KiB |
-| `src/admin/sign_dialog.cpp` | 114 | 89 % | Unreadable request file, request with extensions, file pickers |
-
-Branch coverage of the parsers that PLAN §5.2 asked to cover at 100 %:
-
-| File | Branches | Main uncovered branches |
+| Component | Before (2026-10-14, 196 tests) | After CT-01 to CT-14 (212 tests, local run without systemd) |
 |---|---|---|
-| `src/core/src/tunnel/frame.cpp` (decoder) | 85 % (139 / 163) | Size checks per frame type not all exercised (`OPEN_OK` with payload, `ACK`/`PING` wrong sizes), `OPEN` port kind above 3, compaction |
-| `src/core/src/whitelist.cpp` | 88 % (425 / 480) | Root not a map, unknown top-level key, `peers` not a list, entry not a map, non-scalar values |
-| `src/core/src/config.cpp` (loader and validation) | 84 % (551 / 649) | Destination without address or port above 65535, invalid `revoke_mode`, `admin.endpoint` empty, `resume_buffer` < 64 KiB, `keepalive_interval` < 1 s, `max_channels` bounds, negative `shutdown_timeout`, empty `logging.output` |
-| `src/core/src/units.cpp` | 88 % (90 / 102) | Size and percent overflow, unit edge cases |
+| `src/core` — service library | 93.0 % lines, 98.8 % functions, 79.1 % branches | **94.5 %** lines, 98.8 % functions, 81.5 % branches |
+| `src/app` — `tlsrelay` command line | 61.3 % lines, 58.8 % functions, 53.4 % branches | **80.3 %** lines, 76.5 % functions, 72.6 % branches |
+| `src/admin` — editor | 74.8 % lines, 69.8 % functions, 59.7 % branches | **95.8 %** lines, 91.4 % functions, 77.5 % branches |
+| **Delivered code (total)** | **84.4 %** lines (5,155 / 6,105), 89.0 % functions, 69.6 % branches | **93.1 %** lines (5,692 / 6,115), **95.4 %** functions, **79.1 %** branches |
 
-### 6.3 Why the gaps exist
+**Verdict: the 90 % target is met** without counting the systemd run. In CI, `systemd.sh` on the instrumented binary adds the service-manager code (`platform_linux.cpp`, `notify.cpp`, `start`/`stop`/`restart`/`service install` paths of `main.cpp`).
 
-1. **Interactive code**: modal dialogs (`QDialog::exec()`, file pickers, message boxes) and the terminal prompt block a test; the existing tests inject hooks (`confirm_save`, `ask_passphrase`, `report`, `inform`) and call the underlying functions instead, so the dialog code itself is never run.
-2. **Service-manager code**: `service install/start/stop` and `sd_notify` need root and a running systemd. `systemd.sh` covers them functionally in CI, but in the GCC Release job, not in an instrumented build.
-3. **Error exits of the command line**: the lifecycle scripts test the main success paths and a few refusals; most "cannot read", "refused", "invalid value" exits of `src/app/main.cpp` have no test.
+Files still below 90 % of lines in the local run:
+
+| File | Lines | Reason | Covered by |
+|---|---|---|---|
+| `src/app/platform_linux.cpp` | 13 % | systemd unit generation, `useradd`, `systemctl` calls: need root and systemd | `systemd.sh` in the CI coverage job |
+| `src/core/src/system/notify.cpp` | 21 % | `sd_notify` datagram: only under systemd (`NOTIFY_SOCKET`) | `systemd.sh` in the CI coverage job |
+| `src/core/include/tlsrelay/config.hpp` | 83 % | Default member initialisers: gcov attributes them to implicit constructors that are inlined; the values themselves are checked by `Config.DefaultsMatchSpecification` | — (measurement artefact) |
+| `src/app/main.cpp` | 89 % | `start`/`restart` of an installed service, forced kill through the service manager, OpenSSL older than 3.0 refused | `systemd.sh` in the CI coverage job (except the OpenSSL check, which cannot be provoked with a supported OpenSSL) |
+| `src/admin/main.cpp` | 89 % | Graphical start (`QApplication::exec`) | Acceptance step E01 |
+
+Branch coverage of the parsers that PLAN §5.2 asked to cover at 100 %: frame decoder 98 % (160 / 163), whitelist 91 % (439 / 480), configuration loader and validation 91 % (595 / 649), units 96 % (98 / 102). The remaining branches are mostly implicit branches of yaml-cpp and string library calls (allocation, conversion failures) rather than decisions of the project's code.
+
+### 6.3 Why the gaps existed
+
+1. **Interactive code**: modal dialogs (`QDialog::exec()`, file pickers, message boxes) and the terminal prompt block a test; the earlier tests injected hooks (`confirm_save`, `ask_passphrase`, `report`, `inform`) and called the underlying functions instead, so the dialog code itself never ran.
+2. **Service-manager code**: `service install/start/stop` and `sd_notify` need root and a running systemd; `systemd.sh` covered them functionally in CI, but not in an instrumented build.
+3. **Error exits of the command line**: the lifecycle scripts tested the main success paths and a few refusals.
 4. **Defensive error paths of the admin channel**: failures of `mkdir`, `open`, `bind`, `send` are hard to provoke on a healthy system.
 
-### 6.4 New tests specified
+### 6.4 New tests (specified, then implemented)
 
-Each test below is specified with its target, steps and expected result. "Gain" is the estimated number of currently uncovered lines it covers. Implementing CT-01 to CT-14 raises the delivered code to about **95 % of lines** (estimate: +650 lines); CT-01 to CT-08 alone exceed 90 %.
+All fourteen tests specified on 2026-10-14 are implemented; each is described with its requirements in section 3.
 
-**Editor (Qt Test, `tests/admin/test_admin.cpp`).** Modal dialogs are driven with `QTimer::singleShot(0, …)`: the callback finds `QApplication::activeModalWidget()`, fills its widgets by type or object name, then clicks the OK or Cancel button of its `QDialogButtonBox`. File pickers and message boxes are replaced by injectable hooks (same pattern as `ask_passphrase`), defaulting to the Qt dialogs.
+| Id | Implemented as | Section | Lines gained (measured) |
+|---|---|---|---|
+| CT-01 | Qt `export_dialog_builds_request_and_warns` | 3.16 | `export_dialog.cpp` 0 → 92 % (browse buttons not clicked) |
+| CT-02 | Qt `diff_dialog_is_shown_and_controls_saving`; far-apart changes added to `diff_preview_lists_changes` | 3.16 | `diff_dialog.cpp` 58 → 100 % |
+| CT-03 | Qt `revoke_and_crl_dialogs` | 3.16 | `pki_panel.cpp` 53 → 94 % (CT-03 to CT-05; browse buttons not clicked) |
+| CT-04 | Qt `root_change_dialog_creates_ca_and_prepares_files` (default passphrase prompt, typed twice) | 3.16 | see CT-03 |
+| CT-05 | Qt `sign_and_create_dialogs` | 3.16 | see CT-03; `sign_dialog.cpp` 89 → 94 % |
+| CT-06 | Qt `main_window_navigation_and_close` | 3.16 | `main_window.cpp` 74 → 98 % |
+| CT-07 | ctest `Admin.CheckWhitelist`, `Admin.CheckUnreadable` | 3.17 | `src/admin/main.cpp` 68 → 89 % |
+| CT-08 | `tests/lifecycle/cli.sh`, ctest `Lifecycle.Cli` | 3.18 | `src/app/main.cpp` 71 → 89 % |
+| CT-09 | `cli.sh`: passphrase from a pipe, mismatch, end of input, missing file, terminal without echo | 3.18 | `passphrase.cpp` 36 → 100 % |
+| CT-10 | `systemd.sh` run as root in the CI coverage job (`COVERAGE_EXTRA`); new steps: second `start`, `stop` of a stopped instance, second `uninstall` | 3.18 | CI only |
+| CT-11 | `Frame.NamesOfEveryTypeAndCode`, `Frame.RejectsWrongSizeForEachType`, `Frame.DecoderCompactsLargeBuffers` | 3.5 | `frame.cpp` 87 → 96 % lines, 85 → 98 % branches |
+| CT-12 | `AdminTest.EndpointErrorsAreReported`, `AdminTest.InvalidRepliesAreRejected` | 3.14 | `posix.cpp` 76 → 90 %, `session.hpp` 77 → 94 % |
+| CT-13 | `Config.DefaultsMatchSpecification`, `Config.DestinationAndWhitelistSectionErrors`, `Validate.EveryLimitBound`, `Whitelist.StructureErrors`, `Whitelist.MissingFileIsReported` | 3.2, 3.6 | `config.cpp` branches 84 → 91 %, `whitelist.cpp` branches 88 → 91 % |
+| CT-14 | `ParseSize.RejectsOverflow`, `ParsePercent.Bounds`, `ParseDuration.TrimsBlanksAndRejectsMillisecondOverflow` | 3.1 | `units.cpp` branches 88 → 96 % |
 
-| Id | Test | Target | Steps | Expected result | Gain | Req. |
-|---|---|---|---|---|---|---|
-| CT-01 | `export_dialog_builds_request_and_warns` | `export_dialog.cpp`, `main_window.cpp` (`choose_and_export`) | Valid document; open the export dialog; set output directory, Windows target, a kit without `chain.pem`, a CRL file; read the warnings label and `request()`; press Export; then repeat with Cancel and with an empty output directory | `request()` holds the four values; warnings list the incomplete kit and the relative Linux paths; Export creates the package and reports it; Cancel and empty directory create nothing | ≈ 80 | EDT-03 |
-| CT-02 | `diff_dialog_is_shown_and_controls_saving` | `diff_dialog.cpp`, `main_window.cpp` | Restore the default `confirm_save` hook; modify a field; save; accept the dialog; then modify again and reject it; then save a second document where the whitelist is unchanged | Accept writes files and `.bak`; reject writes nothing; the dialog shows only the changed file (unchanged file skipped) | ≈ 30 | EDT-02 |
-| CT-03 | `revoke_and_crl_dialogs` | `pki_panel.cpp` (`revoke_dialog`, `crl_dialog`, `add_crl_fields`, `optional_path`) | Open a test CA with two issued certificates; select one; open "Revoke", choose `keyCompromise`, 7 days, a copy path; confirm; open "Publish CRLs", 10 days, no copy; confirm; open Revoke and cancel | Certificate shown as revoked with reason; CRL copy written and verifiable with `openssl crl`; CRL number incremented; next update in 10 days; cancel changes nothing; `inform` called with serial and CRL number | ≈ 60 | EDT-04, CA-05 |
-| CT-04 | `root_change_dialog_creates_ca_and_prepares_files` | `pki_panel.cpp` (`root_change_dialog`) | Open a CA; open the wizard; "Create the new CA" with a passphrase given twice; set the output directory; press Prepare; press Prepare again with an empty field; close | New CA directory created with the old organisation; step files and `LISEZMOI.txt` produced and shown; empty field does nothing; mismatching passphrase confirmation creates nothing and reports "Les deux saisies diffèrent" | ≈ 70 | EDT-05, CA-07 |
-| CT-05 | `sign_and_create_dialogs` | `pki_panel.cpp` (`sign_dialog`, `choose_and_create`, `ask_passphrase` default), `sign_dialog.cpp` | Create a CA through the "New CA" flow (directory hook, organisation input); sign through the dialog a CSR with requested extensions, then an unreadable CSR path; renew the selected certificate through the dialog | CA created and summary shown; issued-certificate message with serial and kit path; extensions listed as ignored; unreadable file reported in the dialog; renewal pre-fills subject and role | ≈ 60 | EDT-04, CA-02 |
-| CT-06 | `main_window_navigation_and_close` | `main_window.cpp` | Load a file with errors in configuration and whitelist; activate each issue row; load a file with an unknown key; close with unsaved changes and answer Cancel, Discard, then Save; open the About box; save to a read-only directory; open a missing file | Issue rows focus the right tab, field or table row; unknown keys listed in load notes; close is refused on Cancel, accepted on Discard, saves on Save; About shows the tlsrelay, OpenSSL and Qt versions; read and write errors are reported | ≈ 55 | EDT-01, EDT-02 |
-| CT-07 | `Admin.CheckWhitelistAndUnreadable` (ctest) | `src/admin/main.cpp` | `tlsrelay-admin --check` on a server configuration whose whitelist has an error; on a missing file | Exit 1 with the whitelist error path; exit 2 with "fichier illisible" | ≈ 10 | EDT-06 |
+The editor dialog tests drive the real modal windows: a helper waits for the next modal widget of a given type (`QApplication::activeModalWidget()`), marks it as handled, fills its fields and presses its button; nested dialogs (file picker, then passphrase prompts) are chained the same way. Only one change was made to the editor for testing: object names on the export dialog's fields.
 
-**Command line (`tests/lifecycle/cli.sh`, new ctest `Lifecycle.Cli`, Linux).** Runs the real binary and checks exit codes (0 success, 1 runtime error, 2 configuration error) and messages.
+### 6.5 Defect found by the new tests
 
-| Id | Test | Target | Steps | Expected result | Gain | Req. |
-|---|---|---|---|---|---|---|
-| CT-08 | `cli.sh` — configuration and PKI refusals | `src/app/main.cpp` | `check-config` on a valid and an invalid file; `check-pki` on a configuration without TLS port; `pki activate` of a generation refused by the guard (without and with `--force`); `pki install` refused by the checks; `pki gen-csr` for a TLS client; `pki crl` with an invalid file, a wrong-CA file and on an instance that does not verify its peer; `ca revoke` with an unknown reason; `ca root-change` with a missing directory and then successfully; `ca sign` with an unreadable CSR; `run --instance other` with a mismatching configuration; `stop --timeout abc`; `start`/`restart`/`service uninstall` with an invalid instance name and for a non-installed instance; `version` | Each command prints its documented message and exits with the documented code; `ca root-change` produces `serveur/`, `client/` and `LISEZMOI.txt` | ≈ 130 | ADM-05, PKI-10, CRL-04, CA-07 |
-| CT-09 | `cli.sh` — passphrase prompt | `src/app/passphrase.cpp` | `ca init` without `--passphrase-file` and without `TLSRELAY_CA_PASSPHRASE`, passphrase given on stdin twice (pipe), then two different entries, then end of input; `--passphrase-file` on a missing file; run once under `script -qec` to get a pseudo-terminal | Pipe: CA created; mismatch: "les deux saisies diffèrent", nothing created; end of input and missing file: refused; with a terminal, the prompt does not echo the passphrase | ≈ 25 | CA-01 |
-
-**Service manager (instrumented `systemd.sh`, coverage job, root).**
-
-| Id | Test | Target | Steps | Expected result | Gain | Req. |
-|---|---|---|---|---|---|---|
-| CT-10 | Run `tests/lifecycle/systemd.sh` in the coverage job | `platform_linux.cpp`, `notify.cpp`, `main.cpp` (`cmd_install`, `cmd_start`, `cmd_stop`, restart) | In the "Couverture de code" job, after ctest, run `sudo tests/lifecycle/systemd.sh build/coverage/src/app/tlsrelay`; add `service install` with a configuration declaring another instance and with `admin.endpoint`, `start` of a running instance, `stop` of a stopped instance, `kill` when the channel does not answer | Same checks as today's `systemd.sh`; the command-line processes (root) write their counters, so the service code is measured; the refusals print their messages | ≈ 140 | ADM-01, ADM-02, ADM-07 |
-
-**Library unit tests (GoogleTest).**
-
-| Id | Test | Target | Steps | Expected result | Gain | Req. |
-|---|---|---|---|---|---|---|
-| CT-11 | `Frame.NamesOfEveryTypeAndCode`, `Frame.RejectsWrongSizeForEachType`, `Frame.DecoderCompactsLargeBuffers` | `frame.cpp` | `to_string()` of every `FrameType` and `CloseCode` and of an unknown value; for each type, a header with an invalid size; `OPEN` with port kind 0 and 4; feed > 64 KiB of frames in small chunks, consuming as they arrive | Names as in SPEC §4.2 and §4.6, `?` for unknown; each invalid size → `PROTOCOL_ERROR`; frames decoded identically across compaction | ≈ 25 lines, decoder branches to ≈ 100 % | TUN-01 |
-| CT-12 | `AdminChannel.ReportsEndpointErrors`, `AdminChannel.RejectsInvalidReplies` | `posix.cpp`, `session.hpp` | Listen on a path longer than `sun_path`; on a path under a read-only directory; on a path whose `.lock` is a directory; call a socket served by a fake server that answers `XYZ`, `OK abc`, `OK 10` followed by 3 bytes, or closes at once | Each failure gives a clear `runtime_error` or `CallResult.error` ("chemin trop long", "impossible de créer", "impossible d'ouvrir", "réponse invalide", "connexion fermée avant la fin de la réponse"); no crash, no hang | ≈ 30 | ADM-03 |
-| CT-13 | `Validate.EveryLimitBound`, `Config.DestinationAndWhitelistSectionErrors`, `Whitelist.StructureErrors` | `config.cpp`, `whitelist.cpp`, `config.hpp` | One configuration per violated rule of SPEC §8.3 and §5.2 not yet tested (destination address missing, port > 65535, `revoke_mode` invalid, `admin.endpoint` empty, `resume_buffer` < 64 KiB, `keepalive_interval` 500 ms, `max_channels` 0 and 100001, `shutdown_timeout` negative, `logging.output` empty); whitelists whose root is a list, with an unknown top-level key, `peers` as a map, an entry as a scalar, `name` as a list; default-constructed `Config` compared with SPEC §5.2 defaults | Exactly one error per case, with the documented path; defaults equal SPEC §5.2 | ≈ 20 lines, parser branches ≈ +12 % | CFG-01, CFG-02, CAN-05, WL-01 |
-| CT-14 | `ParseSize.RejectsOverflow`, `ParsePercent.Bounds` | `units.cpp` | Sizes beyond 2⁶⁴, `1.5MiB`, percent above 100 % and negative | Refused without wrapping | ≈ 5 lines, branches | CFG-03 |
-
-### 6.5 Plan
-
-| Step | Content | Line coverage expected |
+| Defect | Found by | Fix |
 |---|---|---|
-| Now | Coverage measured on every push; floor 83 % | 84.4 % |
-| 1 | CT-01 to CT-08 (editor dialogs, `--check`, command-line refusals) | ≈ 91 % |
-| 2 | CT-09 to CT-14 (prompt, systemd in the coverage job, frame, admin channel, validation, units) | ≈ 95 % |
-| After each step | Raise the CI floor to the measured value minus 1 point; once above 90 %, set it to 90 % | — |
+| `tlsrelay ca audit --dir <path>` on a directory that is not a CA (for example a mistyped path) reported "0 opération(s), chaîne d'empreintes intacte" and exit code 0: a typo looked like a clean audit | CT-08 (`cli.sh`) | `read_audit()` refuses a directory without `root.cert.pem` ("n'est pas un répertoire d'AC tlsrelay"); exit code 1. Checked by `CaTest.AuditLogRecordsOperationsAndDetectsTampering` and `cli.sh` |
 
-Coverage of the testkit (`src/testkit`) is not a target: it is a test tool, validated by the acceptance and performance runs that use it.
+### 6.6 Keeping the level
+
+- The CI coverage job fails below 90 % of lines of the delivered code.
+- A new feature comes with tests that keep its files at or above 90 %; `tools/coverage.sh` gives the per-file report locally.
+- Coverage of the testkit (`src/testkit`) is not a target: it is a test tool, validated by the acceptance and performance runs that use it.

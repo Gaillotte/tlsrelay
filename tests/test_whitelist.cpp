@@ -220,3 +220,30 @@ peers:
     EXPECT_EQ(d.removed, std::vector<std::string>{"c"});
     EXPECT_EQ(d.changed, std::vector<std::string>{"b"});
 }
+
+// Structure du fichier (CT-13) : chaque erreur désigne son emplacement.
+TEST(Whitelist, StructureErrors) {
+    auto r = whitelist::Whitelist::load_string("- a\n- b\n");
+    EXPECT_TRUE(has_error(r, "(racine)", "peers")) << dump(r);
+
+    r = whitelist::Whitelist::load_string("peers: []\nautres: 1\n");
+    EXPECT_TRUE(has_error(r, "autres", "clé inconnue")) << dump(r);
+
+    r = whitelist::Whitelist::load_string("peers: { name: a }\n");
+    EXPECT_TRUE(has_error(r, "peers", "liste")) << dump(r);
+
+    r = whitelist::Whitelist::load_string("peers:\n  - poste\n  - { name: [a, b], ip: 10.0.0.1 }\n");
+    EXPECT_TRUE(has_error(r, "peers[0]", "entrée")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[1].name", "valeur simple")) << dump(r);
+    EXPECT_FALSE(r.whitelist);
+
+    r = whitelist::Whitelist::load_string("peers: [\n");
+    EXPECT_FALSE(r.errors.empty());
+    EXPECT_NE(r.errors.front().path.find("ligne"), std::string::npos) << dump(r);
+}
+
+TEST(Whitelist, MissingFileIsReported) {
+    const auto r = whitelist::Whitelist::load_file("/nonexistent/whitelist.yaml");
+    ASSERT_EQ(r.errors.size(), 1u);
+    EXPECT_NE(r.errors.front().message.find("absent ou illisible"), std::string::npos);
+}

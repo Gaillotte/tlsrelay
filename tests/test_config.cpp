@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <functional>
 #include <string>
 
 using namespace tlsrelay;
@@ -235,4 +236,104 @@ TEST(Validate, ProgrammaticConfigUsesSameRules) {
     ASSERT_EQ(errors.size(), 2u);
     EXPECT_EQ(errors[0].path, "destination");
     EXPECT_EQ(errors[1].path, "whitelist");
+}
+
+// Valeurs par défaut de SPEC §5.2 et §10.1 (CT-13).
+TEST(Config, DefaultsMatchSpecification) {
+    const Limits l;
+    EXPECT_EQ(l.idle_timeout, Duration(5min));
+    EXPECT_EQ(l.session_lifetime, Duration(1h));
+    EXPECT_DOUBLE_EQ(l.session_jitter, 0.10);
+    EXPECT_EQ(l.renegotiation_grace, Duration(30s));
+    EXPECT_EQ(l.resume_buffer, 4ULL << 20);
+    EXPECT_EQ(l.handshake_timeout, Duration(10s));
+    EXPECT_EQ(l.keepalive_interval, Duration(15s));
+    EXPECT_EQ(l.max_channels, 5000U);
+    EXPECT_EQ(l.shutdown_timeout, Duration(30s));
+    const AdminConfig a;
+    EXPECT_TRUE(a.enabled);
+    EXPECT_FALSE(a.endpoint);
+    const Destination d;
+    EXPECT_EQ(d.dial_timeout, Duration(5s));
+    EXPECT_EQ(d.dial_retries, 3U);
+    EXPECT_EQ(d.dial_backoff, Duration(1s));
+}
+
+// Erreurs des sections destination, liste blanche et administration (CT-13).
+TEST(Config, DestinationAndWhitelistSectionErrors) {
+    const auto r = load_config_string(R"(
+mode: server
+destination: { port: 70000 }
+whitelist: { file: wl.yaml, revoke_mode: plus_tard }
+admin: { endpoint: "" }
+ports: { plain: { listen: "0.0.0.0:9001" } }
+)");
+    EXPECT_TRUE(has_error(r, "destination.address", "obligatoire")) << dump(r);
+    EXPECT_TRUE(has_error(r, "destination.port", "1–65535")) << dump(r);
+    EXPECT_TRUE(has_error(r, "whitelist.revoke_mode", "immediate ou next_renegotiation")) << dump(r);
+
+    const auto missing = load_config_string(R"(
+mode: server
+destination: { address: 10.0.0.1 }
+ports: { plain: { listen: "0.0.0.0:9001" } }
+)");
+    EXPECT_TRUE(has_error(missing, "destination.port", "obligatoire")) << dump(missing);
+}
+
+// Chaque borne de SPEC §5.2 et §8.3 non couverte ailleurs donne exactement son erreur (CT-13).
+TEST(Validate, EveryLimitBound) {
+    auto base = [] {
+        Config c;
+        c.mode = Mode::client;
+        c.ports[PortKind::plain] = PortConfig{Endpoint{"127.0.0.1", 7001}, Endpoint{"h", 1}, {}};
+        return c;
+    };
+    auto errors_of = [](const Config& c) {
+        std::vector<Issue> errors, warnings;
+        validate(c, errors, warnings);
+        return errors;
+    };
+    ASSERT_TRUE(errors_of(base()).empty());
+
+    struct Case {
+        const char* path;
+        std::function<void(Config&)> change;
+    };
+    const std::vector<Case> cases = {
+        {"limits.idle_timeout", [](Config& c) { c.limits.idle_timeout = Duration(0); }},
+        {"limits.session_lifetime", [](Config& c) { c.limits.session_lifetime = Duration(0); }},
+        {"limits.handshake_timeout", [](Config& c) { c.limits.handshake_timeout = Duration(0); }},
+        {"limits.keepalive_interval", [](Config& c) { c.limits.keepalive_interval = 500ms; }},
+        {"limits.max_channels", [](Config& c) { c.limits.max_channels = 100001; }},
+        {"limits.shutdown_timeout", [](Config& c) { c.limits.shutdown_timeout = Duration(-1); }},
+        {"logging.output", [](Config& c) { c.logging.output.clear(); }},
+        {"admin.endpoint", [](Config& c) { c.admin.endpoint = ""; }},
+        {"whitelist.file", [](Config& c) {
+             c.mode = Mode::server;
+             c.ports[PortKind::plain].upstream.reset();
+             c.destination = Destination{Endpoint{"10.0.0.1", 80}};
+             c.whitelist = WhitelistRef{};
+         }},
+        {"whitelist", [](Config& c) {
+             c.mode = Mode::server;
+             c.ports[PortKind::plain].upstream.reset();
+             c.destination = Destination{Endpoint{"10.0.0.1", 80}};
+         }},
+    };
+    for (const auto& k : cases) {
+        auto c = base();
+        k.change(c);
+        const auto errors = errors_of(c);
+        const bool found = std::any_of(errors.begin(), errors.end(), [&](const Issue& i) { return i.path == k.path; });
+        EXPECT_TRUE(found) << k.path;
+        for (const auto& e : errors) {
+            if (std::string(k.path) != "limits.session_lifetime") {
+                EXPECT_EQ(e.path, k.path) << e.message;
+            }
+        }
+    }
+    // keepalive_interval à 0 : désactivé, accepté.
+    auto off = base();
+    off.limits.keepalive_interval = Duration(0);
+    EXPECT_TRUE(errors_of(off).empty());
 }

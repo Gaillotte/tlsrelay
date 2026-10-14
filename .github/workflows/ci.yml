@@ -206,10 +206,12 @@ jobs:
             libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev qt6-base-dev
           pipx install gcovr==8.6
 
-      # Seuil de non-régression : couverture mesurée moins une marge (TESTS.md §6) ;
-      # relevé à 90 % une fois les tests spécifiés en TESTS.md §6.4 réalisés.
+      # Objectif du projet : au moins 90 % des lignes du code livré (TESTS.md §6).
+      # Tous les tests ctest, puis le cycle de vie systemd en root (service réel), puis le rapport.
       - name: Tests instrumentés et rapport
-        run: tools/coverage.sh build/coverage 83
+        env:
+          COVERAGE_EXTRA: sudo bash tests/lifecycle/systemd.sh build/coverage/src/app/tlsrelay
+        run: tools/coverage.sh build/coverage 90
 
       - name: Rapport de couverture
         if: always()

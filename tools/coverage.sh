@@ -19,6 +19,9 @@ cmake --build "$build"
 # Compteurs remis à zéro : la mesure ne porte que sur cette exécution.
 find "$build" -name '*.gcda' -delete
 (cd "$build" && QT_QPA_PLATFORM=offscreen ctest --output-on-failure -j 2)
+# Commande supplémentaire mesurée avant le rapport, par exemple le cycle de vie
+# systemd en root (CI) : COVERAGE_EXTRA="sudo bash tests/lifecycle/systemd.sh <build>/src/app/tlsrelay".
+if [ -n "${COVERAGE_EXTRA:-}" ]; then (cd "$root" && bash -c "$COVERAGE_EXTRA"); fi
 
 out="$build/coverage"
 mkdir -p "$out"

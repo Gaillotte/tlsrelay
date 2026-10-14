@@ -4,6 +4,7 @@
 #include "deployment.hpp"
 #include "diff_dialog.hpp"
 #include "document.hpp"
+#include "export_dialog.hpp"
 #include "main_window.hpp"
 #include "pki_panel.hpp"
 #include "sign_dialog.hpp"
@@ -11,10 +12,22 @@
 #include "tlsrelay/pki/request.hpp"
 #include "whitelist_editor.hpp"
 
+#include <QAction>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QFileDialog>
+#include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTextBrowser>
+#include <QTimer>
 #include <QtTest>
 
 #include <fstream>
@@ -66,6 +79,13 @@ private slots:
     void pki_panel_refuses_wrong_passphrase_and_bad_directory();
     void sign_dialog_inspects_request();
     void pki_root_change_preparation();
+    // Dialogues modaux (TESTS.md §6.4, CT-01 à CT-06).
+    void export_dialog_builds_request_and_warns();
+    void diff_dialog_is_shown_and_controls_saving();
+    void revoke_and_crl_dialogs();
+    void root_change_dialog_creates_ca_and_prepares_files();
+    void sign_and_create_dialogs();
+    void main_window_navigation_and_close();
 };
 
 void AdminTest::form_round_trips_examples() {
@@ -348,6 +368,16 @@ void AdminTest::diff_preview_lists_changes() {
     QVERIFY(html.contains("+ port: 2"));
     QVERIFY(html.contains("b.yaml"));
     QVERIFY(!html.contains("c.yaml"));
+
+    // Modifications éloignées : les lignes sans changement entre elles sont résumées.
+    std::string before, after;
+    for (int i = 0; i < 20; ++i) {
+        before += "ligne " + std::to_string(i) + "\n";
+        after += (i == 1 || i == 18 ? "modifiée " : "ligne ") + std::to_string(i) + "\n";
+    }
+    const auto far = DiffDialog::render({{"/tmp/d.yaml", before, after}});
+    QVERIFY(far.contains("…"));
+    QVERIFY(!far.contains("ligne 10"));
 }
 
 namespace {
@@ -511,6 +541,432 @@ void AdminTest::pki_root_change_preparation() {
         QVERIFY2(std::filesystem::exists(dir / "transition" / f), f);
     }
     QCOMPARE(panel.audit()->item(panel.audit()->rowCount() - 1, 2)->text(), QString("root-transition"));
+}
+
+namespace {
+
+// Agit sur la prochaine fenêtre modale de type T qui s'ouvre (QDialog::exec(),
+// QFileDialog, QInputDialog, QMessageBox) : les dialogues sont pilotés comme
+// par un utilisateur. Chaque fenêtre n'est traitée qu'une fois ; sans fenêtre
+// dans les 10 s, l'attente s'arrête (le test échoue alors sur ses vérifications).
+template <class T>
+void on_modal(std::function<void(T*)> action) {
+    auto* timer = new QTimer;
+    auto deadline = std::make_shared<QDeadlineTimer>(10000);
+    QObject::connect(timer, &QTimer::timeout, timer, [timer, deadline, action] {
+        auto* w = qobject_cast<T*>(QApplication::activeModalWidget());
+        if (!w || w->property("pris_en_charge").toBool()) {
+            if (deadline->hasExpired()) timer->deleteLater();
+            return;
+        }
+        w->setProperty("pris_en_charge", true);
+        timer->stop();
+        timer->deleteLater();
+        action(w);
+    });
+    timer->start(20);
+}
+
+void press(QWidget* dialog, QDialogButtonBox::StandardButton which) {
+    auto* box = dialog->findChild<QDialogButtonBox*>();
+    QVERIFY(box && box->button(which));
+    box->button(which)->click();
+}
+
+void choose_path(QFileDialog* dialog, const std::filesystem::path& path) {
+    if (std::filesystem::is_directory(path)) {
+        // Choix d'un répertoire : il devient le répertoire courant du sélecteur.
+        dialog->setDirectory(to_qstring(path));
+        dialog->selectFile(QString());
+    } else {
+        // Nom saisi comme par l'utilisateur (selectFile ne remplace pas un champ qui a le focus).
+        dialog->setDirectory(to_qstring(path.parent_path()));
+        dialog->findChild<QLineEdit*>("fileNameEdit")->setText(to_qstring(path.filename()));
+    }
+    static_cast<QDialog*>(dialog)->accept();  // QFileDialog::accept : contrôle du chemin choisi
+}
+
+void answer_text(QInputDialog* dialog, const QString& text) {
+    dialog->setTextValue(text);
+    dialog->accept();
+}
+
+QPushButton* button(QWidget* parent, const QString& text) {
+    for (auto* b : parent->findChildren<QPushButton*>()) {
+        if (b->text() == text) return b;
+    }
+    return nullptr;
+}
+
+void trigger(QWidget* window, const QString& text) {
+    for (auto* a : window->findChildren<QAction*>()) {
+        if (a->text().remove('&') == text) {
+            a->trigger();
+            return;
+        }
+    }
+    QFAIL(qPrintable("action absente : " + text));
+}
+
+// AC créée hors du panneau (le panneau testé garde sa saisie de phrase de passe par défaut).
+std::filesystem::path make_authority(const std::filesystem::path& dir) {
+    pki::AuthorityOptions options;
+    options.organization = "Essai";
+    pki::init_authority(dir, kPass, options);
+    return dir;
+}
+
+}  // namespace
+
+void AdminTest::export_dialog_builds_request_and_warns() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    MainWindow window;
+    window.show();
+    QStringList reports;
+    window.report = [&](const QString& m) { reports << m; };
+
+    // Document invalide : export refusé avant le dialogue.
+    window.new_document(Mode::server);
+    trigger(&window, "Exporter le paquet de déploiement…");
+    QCOMPARE(reports.size(), 1);
+    QVERIFY(reports.last().contains("avant d'exporter"));
+
+    write(dir / "agence.yaml", kServer);
+    QVERIFY(window.open_file(dir / "agence.yaml"));
+    std::filesystem::create_directories(dir / "kit");
+    for (const char* f : {"cert.pem", "chain.pem", "trust-roots.pem", "trust-issuer.pem"}) write(dir / "kit" / f, "PEM\n");
+    write(dir / "crl.pem", "-----BEGIN X509 CRL-----\nAAAA\n-----END X509 CRL-----\n");
+
+    ExportRequest seen;
+    QString warnings;
+    bool info_shown = false;
+    on_modal<ExportDialog>([&](ExportDialog* d) {
+        // Sans répertoire de sortie, « Exporter » ne ferme pas le dialogue.
+        press(d, QDialogButtonBox::Ok);
+        QVERIFY(d->isVisible());
+        d->findChild<QLineEdit*>("sortie")->setText(to_qstring(dir / "paquets"));
+        d->findChild<QComboBox*>("plateforme")->setCurrentIndex(1);  // Windows
+        d->findChild<QLineEdit*>("kit")->setText(to_qstring(dir / "kit"));
+        d->findChild<QLineEdit*>("crl")->setText(to_qstring(dir / "crl.pem"));
+        seen = d->request();
+        warnings = d->findChild<QLabel*>("avertissements")->text();
+        on_modal<QMessageBox>([&](QMessageBox* box) {
+            info_shown = box->text().contains("LISEZMOI.txt");
+            box->accept();
+        });
+        press(d, QDialogButtonBox::Ok);
+    });
+    trigger(&window, "Exporter le paquet de déploiement…");
+    QVERIFY2(reports.size() == 1, qPrintable(reports.join("\n")));
+    QCOMPARE(seen.out_dir, dir / "paquets");
+    QVERIFY(seen.platform == TargetPlatform::windows_host);
+    QCOMPARE(*seen.kit_dir, dir / "kit");
+    QCOMPARE(*seen.crl_file, dir / "crl.pem");
+    QVERIFY2(warnings.contains("credentials.pki_root"), qPrintable(warnings));  // chemin Linux pour Windows
+    QVERIFY(info_shown);
+    QVERIFY(std::filesystem::exists(dir / "paquets" / "agence" / "install.ps1"));
+
+    // Annulation : rien n'est créé.
+    on_modal<ExportDialog>([&](ExportDialog* d) {
+        d->findChild<QLineEdit*>("sortie")->setText(to_qstring(dir / "annule"));
+        press(d, QDialogButtonBox::Cancel);
+    });
+    trigger(&window, "Exporter le paquet de déploiement…");
+    QVERIFY(!std::filesystem::exists(dir / "annule"));
+}
+
+void AdminTest::diff_dialog_is_shown_and_controls_saving() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    write(dir / "agence.yaml", kServer);
+    write(dir / "whitelist.yaml", "peers:\n  - { name: lyon, ip: 192.0.2.10, ports: [mtls], subject: \"CN=lyon\" }\n");
+    MainWindow window;  // confirmation par défaut : le dialogue d'aperçu
+    window.show();
+    window.report = [](const QString& m) { QFAIL(qPrintable(m)); };
+    QVERIFY(window.open_file(dir / "agence.yaml"));
+
+    // Premier enregistrement : les deux fichiers sont réécrits sous forme normalisée.
+    window.config_form()->set_value("limits.max_channels", "200");
+    QString shown;
+    on_modal<DiffDialog>([&](DiffDialog* d) {
+        shown = d->findChild<QTextBrowser*>()->toPlainText();
+        press(d, QDialogButtonBox::Save);
+    });
+    QVERIFY(window.save());
+    QVERIFY2(shown.contains("agence.yaml") && shown.contains("max_channels: 200"), qPrintable(shown));
+    QVERIFY(shown.contains("whitelist.yaml"));
+    QVERIFY(std::filesystem::exists(dir / "agence.yaml.bak"));
+    QCOMPARE(load_config_file(dir / "agence.yaml").config->limits.max_channels, 200u);
+
+    // Seule la configuration change ensuite : l'aperçu ne montre qu'elle.
+    window.config_form()->set_value("limits.max_channels", "250");
+    on_modal<DiffDialog>([&](DiffDialog* d) {
+        shown = d->findChild<QTextBrowser*>()->toPlainText();
+        press(d, QDialogButtonBox::Save);
+    });
+    QVERIFY(window.save());
+    QVERIFY2(shown.contains("max_channels: 250") && !shown.contains("whitelist.yaml"), qPrintable(shown));
+    QCOMPARE(load_config_file(dir / "agence.yaml").config->limits.max_channels, 250u);
+
+    // Annulation : rien n'est écrit, le document reste modifié.
+    window.config_form()->set_value("limits.max_channels", "300");
+    on_modal<DiffDialog>([&](DiffDialog* d) { press(d, QDialogButtonBox::Cancel); });
+    QVERIFY(!window.save());
+    QVERIFY(window.is_modified());
+    QCOMPARE(load_config_file(dir / "agence.yaml").config->limits.max_channels, 250u);
+}
+
+void AdminTest::revoke_and_crl_dialogs() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    make_authority(dir / "ac");
+    PkiPanel panel;
+    QStringList reports, infos;
+    panel.report = [&](const QString& m) { reports << m; };
+    panel.inform = [&](const QString& m) { infos << m; };
+    panel.ask_passphrase = [](const QString&, bool) -> std::optional<std::string> { return kPass; };
+    QVERIFY(panel.open_authority(dir / "ac"));
+    const auto a = panel.sign({make_request(dir / "a", "CN=a.essai"), pki::Role::client, {}, 365, false, dir / "kit-a"});
+    const auto b = panel.sign({make_request(dir / "b", "CN=b.essai"), pki::Role::client, {}, 365, false, dir / "kit-b"});
+    QVERIFY(a && b);
+
+    // Révocation de a : motif, validité et copie des CRL choisis dans le dialogue.
+    auto row_of = [&](const std::string& serial) {
+        for (int r = 0; r < panel.inventory()->rowCount(); ++r) {
+            if (panel.inventory()->item(r, PkiPanel::serial_column)->text().toStdString() == serial) return r;
+        }
+        return -1;
+    };
+    panel.inventory()->selectRow(row_of(a->serial));
+    on_modal<QDialog>([&](QDialog* d) {
+        d->findChild<QComboBox*>()->setCurrentIndex(0);  // keyCompromise
+        d->findChild<QSpinBox*>()->setValue(7);
+        d->findChild<QLineEdit*>()->setText(to_qstring(dir / "deploy" / "crl.pem"));
+        press(d, QDialogButtonBox::Ok);
+    });
+    button(&panel, "Révoquer…")->click();
+    QVERIFY2(reports.isEmpty(), qPrintable(reports.join("\n")));
+    QVERIFY(infos.last().contains(QString::fromStdString(a->serial)));
+    QCOMPARE(panel.inventory()->item(row_of(a->serial), PkiPanel::status_column)->text(), QString("révoqué"));
+    QVERIFY(panel.inventory()->item(row_of(a->serial), PkiPanel::revocation_column)->text().contains("keyCompromise"));
+    QVERIFY(read(dir / "deploy" / "crl.pem").find("BEGIN X509 CRL") != std::string::npos);
+
+    // Publication des CRL : 10 jours, sans copie.
+    on_modal<QDialog>([&](QDialog* d) {
+        d->findChild<QSpinBox*>()->setValue(10);
+        press(d, QDialogButtonBox::Ok);
+    });
+    button(&panel, "Publier les CRL…")->click();
+    QVERIFY2(infos.last().contains("CRL n° 2"), qPrintable(infos.last()));
+    QCOMPARE(panel.info()->crl_number, std::uint64_t(2));
+
+    // Révocation annulée : b reste valide.
+    panel.inventory()->selectRow(row_of(b->serial));
+    on_modal<QDialog>([&](QDialog* d) { press(d, QDialogButtonBox::Cancel); });
+    button(&panel, "Révoquer…")->click();
+    QCOMPARE(panel.inventory()->item(row_of(b->serial), PkiPanel::status_column)->text(), QString("valide"));
+}
+
+void AdminTest::root_change_dialog_creates_ca_and_prepares_files() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    make_authority(dir / "ac");
+    std::filesystem::create_directories(dir / "nouvelle");
+    PkiPanel panel;  // saisie de la phrase de passe par défaut : deux fenêtres de saisie
+    QStringList reports;
+    panel.report = [&](const QString& m) { reports << m; };
+    QVERIFY(panel.open_authority(dir / "ac"));
+
+    // Création de la nouvelle AC depuis l'assistant ; première tentative : saisies différentes.
+    auto create_new_ca = [&](QDialog* d, const QString& second) {
+        on_modal<QFileDialog>([&, second](QFileDialog* f) {
+            on_modal<QInputDialog>([&, second](QInputDialog* first) {
+                on_modal<QInputDialog>([second](QInputDialog* confirm) { answer_text(confirm, second); });
+                answer_text(first, QString::fromStdString(kPass));
+            });
+            choose_path(f, dir / "nouvelle");
+        });
+        button(d, "Créer la nouvelle AC…")->click();
+    };
+    QString readme;
+    on_modal<QDialog>([&](QDialog* d) {
+        const auto edits = d->findChildren<QLineEdit*>();
+        QCOMPARE(edits.size(), 2);
+        press(d, QDialogButtonBox::Ok);  // champs vides : rien
+        create_new_ca(d, "autre phrase de passe");
+        QVERIFY(edits[0]->text().isEmpty());
+        create_new_ca(d, QString::fromStdString(kPass));
+        QCOMPARE(to_path(edits[0]->text()), dir / "nouvelle");
+        edits[1]->setText(to_qstring(dir / "transition"));
+        press(d, QDialogButtonBox::Ok);
+        readme = d->findChild<QTextBrowser*>()->toPlainText();
+        press(d, QDialogButtonBox::Close);
+    });
+    button(&panel, "Changement de racine…")->click();
+    QVERIFY(reports.contains("Les deux saisies diffèrent."));
+    QVERIFY(std::filesystem::exists(dir / "nouvelle" / "root.cert.pem"));
+    QVERIFY(pki::describe_authority(dir / "nouvelle").root.subject.find("O=Essai") != std::string::npos);
+    QVERIFY(std::filesystem::exists(dir / "transition" / "LISEZMOI.txt"));
+    QVERIFY(!readme.isEmpty());
+}
+
+void AdminTest::sign_and_create_dialogs() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    std::filesystem::create_directories(dir / "ac");
+    PkiPanel panel;
+    QStringList reports, infos;
+    panel.report = [&](const QString& m) { reports << m; };
+    panel.inform = [&](const QString& m) { infos << m; };
+    panel.ask_passphrase = [](const QString&, bool) -> std::optional<std::string> { return kPass; };
+
+    // « Créer une AC… » : répertoire, organisation.
+    on_modal<QFileDialog>([&](QFileDialog* f) {
+        on_modal<QInputDialog>([](QInputDialog* org) { answer_text(org, "Essai"); });
+        choose_path(f, dir / "ac");
+    });
+    button(&panel, "Créer une AC…")->click();
+    QVERIFY2(panel.info().has_value(), qPrintable(reports.join("\n")));
+    QVERIFY(infos.last().contains("AC créée"));
+
+    // « Ouvrir une AC… » dans un autre panneau.
+    PkiPanel other;
+    other.report = [&](const QString& m) { reports << m; };
+    on_modal<QFileDialog>([&](QFileDialog* f) { choose_path(f, dir / "ac"); });
+    button(&other, "Ouvrir une AC…")->click();
+    QCOMPARE(other.authority(), dir / "ac");
+
+    // Signature : fichier illisible signalé, puis demande avec extension SAN (ignorée par l'AC).
+    std::string san_error;
+    const auto sans = pki::parse_sans({"relay.essai"}, san_error);
+    QVERIFY(sans.has_value());
+    const auto csr = pki::generate_csr(dir / "srv", "CN=relay.essai,O=Essai", *sans).csr;
+    QString unreadable, description;
+    on_modal<SignDialog>([&](SignDialog* d) {
+        d->set_csr(to_qstring(dir / "absent.csr"));
+        unreadable = d->request_description();
+        d->set_csr(to_qstring(csr));
+        d->set_sans("relay.essai");
+        d->set_out(to_qstring(dir / "kit"));
+        description = d->request_description();
+        press(d, QDialogButtonBox::Ok);
+    });
+    button(&panel, "Signer une demande…")->click();
+    QCOMPARE(unreadable, QString("fichier illisible"));
+    QVERIFY2(description.contains("extensions demandées, ignorées"), qPrintable(description));
+    QVERIFY2(infos.last().contains("Certificat émis"), qPrintable(infos.last()));
+    QVERIFY(std::filesystem::exists(dir / "kit" / "cert.pem"));
+
+    // Renouvellement du certificat sélectionné : sujet et rôle repris.
+    panel.inventory()->selectRow(0);
+    QString expected;
+    on_modal<SignDialog>([&](SignDialog* d) {
+        QVERIFY(d->options().renew);
+        QVERIFY(d->options().role == pki::Role::server);
+        d->set_csr(to_qstring(pki::generate_csr(dir / "srv", "CN=relay.essai,O=Essai", {}).csr));
+        d->set_sans("relay.essai");
+        d->set_out(to_qstring(dir / "kit2"));
+        expected = d->request_description();
+        press(d, QDialogButtonBox::Ok);
+    });
+    button(&panel, "Renouveler…")->click();
+    QVERIFY(!expected.contains("attention"));  // même sujet
+    QCOMPARE(rows_with(panel.inventory(), PkiPanel::status_column, "remplacé"), 1);
+}
+
+void AdminTest::main_window_navigation_and_close() {
+    QTemporaryDir tmp;
+    const auto dir = to_path(tmp.path());
+    // Configuration avec une erreur, une clé ignorée ; liste blanche avec une erreur et une clé ignorée.
+    write(dir / "agence.yaml", std::string(kServer) + "inconnu: 1\n");
+    {
+        auto text = read(dir / "agence.yaml");
+        text.replace(text.find("0.0.0.0:9003"), 12, "0.0.0.0:99999");
+        write(dir / "agence.yaml", text);
+    }
+    write(dir / "whitelist.yaml", "peers:\n  - { name: a, ip: 10.0.0.1, ports: [plain], note: x }\n  - { name: b, ip: 300.0.0.1 }\n");
+    MainWindow window;
+    window.show();
+    QStringList reports;
+    window.report = [&](const QString& m) { reports << m; };
+    window.confirm_save = [](const std::vector<FileChange>&) { return true; };
+    QVERIFY(window.open_file(dir / "agence.yaml"));
+    QVERIFY(window.error_count() >= 2);
+
+    // Activation de chaque erreur : onglet et champ correspondants.
+    QTabWidget* tabs = nullptr;
+    for (auto* t : window.findChildren<QTabWidget*>()) {
+        if (t->count() == 3) tabs = t;
+    }
+    QVERIFY(tabs);
+    bool config_seen = false, whitelist_seen = false;
+    QStringList notes;
+    for (int i = 0; i < window.issues()->count(); ++i) {
+        auto* item = window.issues()->item(i);
+        notes << item->text();
+        emit window.issues()->itemActivated(item);
+        if (item->text().startsWith("Configuration — ports")) config_seen = tabs->currentIndex() == 0;
+        if (item->text().startsWith("Liste blanche — peers[1]")) {
+            whitelist_seen = tabs->currentIndex() == 1 && window.whitelist_editor()->table()->currentRow() == 1;
+        }
+    }
+    QVERIFY2(config_seen && whitelist_seen, qPrintable(notes.join("\n")));
+    QVERIFY2(notes.join("\n").contains("inconnu ignoré"), qPrintable(notes.join("\n")));
+    QVERIFY2(notes.join("\n").contains("Liste blanche : peers[0].note ignoré"), qPrintable(notes.join("\n")));
+
+    // À propos : versions de tlsrelay, d'OpenSSL et de Qt.
+    QString about;
+    on_modal<QMessageBox>([&](QMessageBox* box) {
+        about = box->text();
+        box->accept();
+    });
+    trigger(&window, "À propos");
+    QVERIFY2(about.contains("OpenSSL") && about.contains(qVersion()), qPrintable(about));
+
+    // Lecture et écriture impossibles.
+    QVERIFY(!window.open_file(dir / "absent.yaml"));
+    QVERIFY(reports.last().contains("Lecture impossible"));
+    write(dir / "valide.yaml", kServer);
+    write(dir / "whitelist.yaml", "peers: []\n");
+    QVERIFY(window.open_file(dir / "valide.yaml"));
+    write(dir / "fichier", "x");
+    QVERIFY(!window.save_to(dir / "fichier" / "x.yaml"));
+    QVERIFY(reports.last().contains("Enregistrement impossible"));
+
+    // Ouvrir avec des modifications en cours : « Non » garde le document, puis ouverture par le sélecteur.
+    window.config_form()->set_value("limits.max_channels", "10");
+    on_modal<QMessageBox>([](QMessageBox* box) { box->button(QMessageBox::No)->click(); });
+    trigger(&window, "Ouvrir…");
+    QVERIFY(window.is_modified());
+    window.config_form()->set_value("limits.max_channels", "");
+    QVERIFY(window.save());
+    on_modal<QFileDialog>([&](QFileDialog* f) { choose_path(f, dir / "agence.yaml"); });
+    trigger(&window, "Ouvrir…");
+    QCOMPARE(window.config_path(), dir / "agence.yaml");
+
+    // Enregistrer sous : chemin choisi dans le sélecteur.
+    QVERIFY(window.open_file(dir / "valide.yaml"));
+    on_modal<QFileDialog>([&](QFileDialog* f) { choose_path(f, dir / "copie.yaml"); });
+    trigger(&window, "Enregistrer sous…");
+    QVERIFY(load_config_file(dir / "copie.yaml").config.has_value());
+
+    // Fermeture avec des modifications : Annuler, Ignorer, puis Enregistrer.
+    window.config_form()->set_value("limits.max_channels", "20");
+    on_modal<QMessageBox>([](QMessageBox* box) { box->button(QMessageBox::Cancel)->click(); });
+    QVERIFY(!window.close());
+    on_modal<QMessageBox>([](QMessageBox* box) { box->button(QMessageBox::Save)->click(); });
+    QVERIFY(window.close());
+    QCOMPARE(load_config_file(dir / "copie.yaml").config->limits.max_channels, 20u);
+    MainWindow second;
+    second.show();
+    QVERIFY(second.open_file(dir / "copie.yaml"));
+    second.config_form()->set_value("limits.max_channels", "30");
+    on_modal<QMessageBox>([](QMessageBox* box) { box->button(QMessageBox::Discard)->click(); });
+    QVERIFY(second.close());
+    QCOMPARE(load_config_file(dir / "copie.yaml").config->limits.max_channels, 20u);
+    MainWindow third;  // sans modification : fermeture sans question
+    QVERIFY(third.close());
 }
 
 QTEST_MAIN(AdminTest)

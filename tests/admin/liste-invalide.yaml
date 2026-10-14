@@ -1,0 +1,3 @@
+# Liste blanche invalide : adresse incorrecte.
+peers:
+  - { name: poste, ip: 300.0.0.1, ports: [plain] }

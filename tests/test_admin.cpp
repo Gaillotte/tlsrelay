@@ -15,7 +15,13 @@
 #include <sstream>
 
 #ifndef _WIN32
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <cstring>
+#include <thread>
 #endif
 
 using namespace testnet;
@@ -278,5 +284,101 @@ TEST_F(AdminTest, LogReopenStartsNewFileAfterRotation) {
     const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     EXPECT_TRUE(contains(content, "après rotation")) << content;
     EXPECT_FALSE(contains(content, "service démarré")) << "écrit avant la rotation";
+}
+#endif
+
+#ifndef _WIN32
+// Erreurs du point d'accès et des réponses (CT-12) : messages clairs, ni plantage ni blocage.
+namespace {
+
+class NullHandler : public admin::Handler {
+public:
+    asio::awaitable<admin::Reply> handle(admin::Request, std::string) override { co_return admin::Reply{true, ""}; }
+};
+
+std::string server_error(const std::string& endpoint) {
+    asio::io_context io;
+    NullHandler handler;
+    try {
+        admin::Server server(io, endpoint, handler);
+    } catch (const std::exception& e) {
+        return e.what();
+    }
+    return {};
+}
+
+// Faux serveur : lit la requête puis envoie reply et ferme.
+class FakeAdminServer {
+public:
+    FakeAdminServer(std::string path, std::string reply) : path_(std::move(path)) {
+        fd_ = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        std::memcpy(addr.sun_path, path_.c_str(), path_.size() + 1);
+        EXPECT_EQ(::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof addr), 0);
+        EXPECT_EQ(::listen(fd_, 1), 0);
+        thread_ = std::thread([this, reply = std::move(reply)] {
+            const int c = ::accept(fd_, nullptr, nullptr);
+            if (c < 0) return;
+            char ch = 0;
+            while (::recv(c, &ch, 1, 0) == 1 && ch != '\n') {
+            }
+            if (!reply.empty()) {
+                EXPECT_EQ(::send(c, reply.data(), reply.size(), MSG_NOSIGNAL), ssize_t(reply.size()));
+            }
+            ::close(c);
+        });
+    }
+    ~FakeAdminServer() {
+        thread_.join();
+        ::close(fd_);
+        ::unlink(path_.c_str());
+    }
+
+private:
+    std::string path_;
+    int fd_ = -1;
+    std::thread thread_;
+};
+
+}  // namespace
+
+TEST_F(AdminTest, EndpointErrorsAreReported) {
+    // Chemin plus long que sun_path, côté serveur et côté client.
+    const std::string long_path = (dir_.path() / std::string(120, 'x')).string();
+    EXPECT_TRUE(contains(server_error(long_path), "chemin trop long")) << server_error(long_path);
+    EXPECT_TRUE(contains(admin::call(long_path, "status", 1s).error, "chemin trop long"));
+
+    // Répertoire parent impossible à créer : un fichier occupe sa place.
+    std::ofstream(dir_.path() / "fichier") << "x";
+    const auto under_file = (dir_.path() / "fichier" / "sous" / "a.sock").string();
+    EXPECT_TRUE(contains(server_error(under_file), "impossible de créer")) << server_error(under_file);
+
+    // Verrou d'instance impossible à ouvrir : un répertoire porte son nom.
+    std::filesystem::create_directory(dir_.path() / "verrou.sock.lock");
+    const auto locked = (dir_.path() / "verrou.sock").string();
+    EXPECT_TRUE(contains(server_error(locked), "impossible d'ouvrir")) << server_error(locked);
+
+    // Écoute impossible : un répertoire non vide occupe le point d'accès.
+    std::filesystem::create_directories(dir_.path() / "occupe.sock" / "contenu");
+    const auto busy = (dir_.path() / "occupe.sock").string();
+    EXPECT_TRUE(contains(server_error(busy), "impossible d'écouter")) << server_error(busy);
+}
+
+TEST_F(AdminTest, InvalidRepliesAreRejected) {
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"BONJOUR 3\nabc", "réponse invalide"},
+        {"OK abc\n", "réponse invalide"},
+        {std::string(80, 'z'), "réponse invalide"},
+        {"OK 10\nabc", "connexion fermée avant la fin de la réponse"},
+        {"", "connexion fermée avant la fin de la réponse"}};
+    for (const auto& [reply, expected] : cases) {
+        const auto r = [&] {
+            FakeAdminServer fake(endpoint_, reply);
+            return admin::call(endpoint_, "status", 5s);
+        }();
+        EXPECT_FALSE(r.reply) << reply;
+        EXPECT_TRUE(contains(r.error, expected)) << reply << " → " << r.error;
+    }
 }
 #endif

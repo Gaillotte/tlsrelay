@@ -23,6 +23,12 @@ ExportDialog::ExportDialog(ExportRequest request, QWidget* parent)
       crl_(new QLineEdit),
       warnings_(new QLabel) {
     setWindowTitle(tr("Exporter le paquet de déploiement"));
+    // Noms d'objet : repères stables pour les tests de l'interface.
+    out_->setObjectName("sortie");
+    platform_->setObjectName("plateforme");
+    kit_->setObjectName("kit");
+    crl_->setObjectName("crl");
+    warnings_->setObjectName("avertissements");
     resize(700, 380);
     platform_->addItem(tr("Linux"), static_cast<int>(TargetPlatform::linux_host));
     platform_->addItem(tr("Windows"), static_cast<int>(TargetPlatform::windows_host));

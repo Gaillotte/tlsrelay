@@ -8,6 +8,7 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <stdexcept>
 #include <sstream>
 
 #ifdef _WIN32
@@ -101,6 +102,11 @@ std::string current_operator() {
 }
 
 AuditLog read_audit(const fs::path& ca_dir) {
+    // Un répertoire qui n'est pas une AC (faute de frappe) ne doit pas passer pour un journal intact.
+    std::error_code ec;
+    if (!fs::is_regular_file(ca_dir / "root.cert.pem", ec)) {
+        throw std::runtime_error(ca_dir.string() + " n'est pas un répertoire d'AC tlsrelay (root.cert.pem absent)");
+    }
     AuditLog log;
     std::ifstream in(ca_dir / kAuditFile, std::ios::binary);
     if (!in) return log;

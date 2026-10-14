@@ -155,3 +155,72 @@ TEST(Frame, ErrorIsFinal) {
     EXPECT_FALSE(d.next());
     EXPECT_EQ(d.error(), Decoder::Error::protocol_error);
 }
+
+// Noms journalisés des trames et des codes de fermeture (SPEC §4.2, §4.6).
+TEST(Frame, NamesOfEveryTypeAndCode) {
+    const std::vector<std::pair<FrameType, std::string_view>> types = {
+        {FrameType::open, "OPEN"},         {FrameType::open_ok, "OPEN_OK"},
+        {FrameType::open_fail, "OPEN_FAIL"}, {FrameType::data, "DATA"},
+        {FrameType::ack, "ACK"},           {FrameType::shutdown_wr, "SHUTDOWN_WR"},
+        {FrameType::close, "CLOSE"},       {FrameType::resume, "RESUME"},
+        {FrameType::resumed, "RESUMED"},   {FrameType::resume_fail, "RESUME_FAIL"},
+        {FrameType::ping, "PING"},         {FrameType::pong, "PONG"}};
+    for (const auto& [type, name] : types) EXPECT_EQ(to_string(type), name);
+    EXPECT_EQ(to_string(static_cast<FrameType>(0x7f)), "?");
+
+    const std::vector<std::pair<CloseCode, std::string_view>> codes = {
+        {CloseCode::normal, "NORMAL"},
+        {CloseCode::idle_timeout, "IDLE_TIMEOUT"},
+        {CloseCode::lifetime_exceeded, "LIFETIME_EXCEEDED"},
+        {CloseCode::peer_revoked, "PEER_REVOKED"},
+        {CloseCode::dest_unreachable, "DEST_UNREACHABLE"},
+        {CloseCode::shutdown, "SHUTDOWN"},
+        {CloseCode::protocol_error, "PROTOCOL_ERROR"},
+        {CloseCode::frame_too_large, "FRAME_TOO_LARGE"},
+        {CloseCode::buffer_overflow, "BUFFER_OVERFLOW"},
+        {CloseCode::not_authorized, "NOT_AUTHORIZED"},
+        {CloseCode::internal_error, "INTERNAL_ERROR"}};
+    for (const auto& [code, name] : codes) EXPECT_EQ(to_string(code), name);
+    EXPECT_EQ(to_string(static_cast<CloseCode>(999)), "?");
+}
+
+// Chaque type refuse toute taille autre que la sienne (SPEC §4.2).
+TEST(Frame, RejectsWrongSizeForEachType) {
+    const std::vector<std::pair<std::uint8_t, std::uint32_t>> wrong = {
+        {0x01, 18}, {0x01, 20},          // OPEN : 19
+        {0x02, 1},                       // OPEN_OK : vide
+        {0x03, 1},  {0x03, 2 + 257},     // OPEN_FAIL : 2 à 258
+        {0x10, 8},                       // DATA : au moins un octet de données
+        {0x11, 7},  {0x12, 9},  {0x13, 1}, {0x20, 55},
+        {0x21, 0},  {0x22, 3},  {0x30, 4}, {0x31, 16}};
+    for (const auto& [type, size] : wrong) {
+        std::string detail;
+        EXPECT_EQ(decode_error(header(type, size) + std::string(size, '\0'), &detail), Decoder::Error::protocol_error)
+            << "type 0x" << std::hex << int(type) << " taille " << std::dec << size;
+        EXPECT_NE(detail.find("invalide pour"), std::string::npos) << detail;
+    }
+    // Type de port hors de 1..3 dans OPEN.
+    for (const std::uint8_t kind : {std::uint8_t{0}, std::uint8_t{4}}) {
+        std::string open = header(0x01, 19) + std::string("\x00\x01", 2) + std::string(16, 'x');
+        open += static_cast<char>(kind);
+        EXPECT_EQ(decode_error(open), Decoder::Error::protocol_error) << int(kind);
+    }
+}
+
+// Plus de 64 Kio consommés : le tampon interne est compacté sans perdre de trame.
+TEST(Frame, DecoderCompactsLargeBuffers) {
+    std::string stream;
+    std::vector<std::string> payloads;
+    for (int i = 0; i < 40; ++i) {
+        payloads.emplace_back(4000 + static_cast<std::size_t>(i), static_cast<char>('a' + i % 26));
+        stream += encode_data(static_cast<std::uint64_t>(i + 1), payloads.back().data(), payloads.back().size());
+    }
+    // Morceaux de taille impaire : la plupart des appels laissent une trame incomplète.
+    const auto frames = decode_all(stream, 1531);
+    ASSERT_EQ(frames.size(), payloads.size());
+    for (std::size_t i = 0; i < frames.size(); ++i) {
+        const auto data = read_data(frames[i]);
+        EXPECT_EQ(data.seq, i + 1);
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.bytes), data.size), payloads[i]);
+    }
+}

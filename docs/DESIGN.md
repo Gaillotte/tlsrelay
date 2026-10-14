@@ -664,13 +664,13 @@ tlsrelay is proprietary (`LICENSE`). `THIRD-PARTY-NOTICES.txt` reproduces the li
 
 ### 13.1 Test levels
 
-The test strategy, environments, the description of every test, the requirements coverage matrix and the code coverage (84.4 % of lines of the delivered code: core library 93.0 %, command line 61.3 %, editor 74.8 %; tests specified to reach 90 %) are in [TESTS.md](TESTS.md).
+The test strategy, environments, the description of every test, the requirements coverage matrix and the code coverage (93.1 % of lines of the delivered code: core library 94.5 %, command line 80.3 %, editor 95.8 %; at least 90 % enforced in CI) are in [TESTS.md](TESTS.md).
 
 | Level | Content |
 |---|---|
-| Unit and integration (GoogleTest, ~190 tests) | Units and formats, configuration and whitelist (including round trips), frames, TLS and mTLS chains, rotation and guard, tunnel (renegotiation, resume after cut, back-pressure, keepalive), CRL, mini-CA (policy, revocation, CRL content, audit tampering, root change through the three steps), administration, attack cases (expired/foreign certificates, fake servers, hostile frames, floods, log injection) |
-| Editor (Qt Test, offscreen) | Form round trips, editor/service parity corpus, error marking, mode visibility, whitelist editing, save with preview and `.bak`, deployment export, PKI panel full cycle, refusals, signing dialog, root change preparation; `--check` |
-| Lifecycle scripts | Console run, systemd service, Windows service, PKI on the command line (including revocation and audit) on Linux and Windows |
+| Unit and integration (GoogleTest, 204 tests) | Units and formats, configuration and whitelist (including round trips), frames, TLS and mTLS chains, rotation and guard, tunnel (renegotiation, resume after cut, back-pressure, keepalive), CRL, mini-CA (policy, revocation, CRL content, audit tampering, root change through the three steps), administration, attack cases (expired/foreign certificates, fake servers, hostile frames, floods, log injection) |
+| Editor (Qt Test, offscreen) | Form round trips, editor/service parity corpus, error marking, mode visibility, whitelist editing, save with preview and `.bak`, deployment export, PKI panel full cycle, refusals, signing dialog, root change preparation, and the real modal dialogs (export, diff, revocation, CRL, root change, signing, CA creation, file pickers, close and open confirmations); `--check` |
+| Lifecycle scripts | Console run, systemd service, Windows service, PKI on the command line (including revocation and audit) on Linux and Windows, command-line refusals and passphrase entry (`cli.sh`) |
 | Fuzzing | libFuzzer targets for frames, configuration, whitelist, DN, CSR and admin requests (60 s per target in CI, longer runs offline) |
 | Performance and soak | `tests/perf/perf.sh` (channels, throughput, latency), `soak.sh` (rotations, renegotiations, cuts; resource stability) |
 | External TLS scan | sslyze and testssl.sh against a running instance |
@@ -678,7 +678,7 @@ The test strategy, environments, the description of every test, the requirements
 
 ### 13.2 Continuous integration
 
-Every push runs: Linux GCC and Clang Release, Clang ASan+UBSan, Clang TSan (all with the editor), OpenSSL 3.5 LTS on Linux, clang-tidy and cppcheck, code coverage (gcovr, regression floor), fuzzing, performance and short soak, Windows MSVC Release (tests, service lifecycle, CLI PKI, MSI build, installation, editor check, automated acceptance on the installed binaries, uninstallation), Windows MSVC `/analyze`, Linux package builds and installation tests on five distributions, and the release artifact. Warnings are errors.
+Every push runs: Linux GCC and Clang Release, Clang ASan+UBSan, Clang TSan (all with the editor), OpenSSL 3.5 LTS on Linux, clang-tidy and cppcheck, code coverage (gcovr, at least 90 % of lines), fuzzing, performance and short soak, Windows MSVC Release (tests, service lifecycle, CLI PKI, MSI build, installation, editor check, automated acceptance on the installed binaries, uninstallation), Windows MSVC `/analyze`, Linux package builds and installation tests on five distributions, and the release artifact. Warnings are errors.
 
 ### 13.3 Measured performance
 

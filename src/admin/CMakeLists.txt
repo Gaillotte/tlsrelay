@@ -49,7 +49,13 @@ if(TLSRELAY_BUILD_TESTS)
     add_test(NAME Admin.CheckInvalid COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/tests/admin/invalide.yaml")
     # Le diagnostic attendu, et non un simple code d'échec (qui couvrirait un plantage).
     set_tests_properties(Admin.CheckInvalid PROPERTIES PASS_REGULAR_EXPRESSION "ports.plain.listen : adresse invalide")
+    # Liste blanche invalide derrière une configuration valide ; fichier absent.
+    add_test(NAME Admin.CheckWhitelist
+             COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/tests/admin/serveur-liste-invalide.yaml")
+    set_tests_properties(Admin.CheckWhitelist PROPERTIES PASS_REGULAR_EXPRESSION "liste-invalide.yaml : peers\\[0\\]\\.ip")
+    add_test(NAME Admin.CheckUnreadable COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/tests/admin/absent.yaml")
+    set_tests_properties(Admin.CheckUnreadable PROPERTIES PASS_REGULAR_EXPRESSION "absent.yaml : fichier illisible")
     # Sans affichage : plateforme Qt « offscreen ».
-    set_tests_properties(Admin.QtTests Admin.CheckValid Admin.CheckInvalid PROPERTIES
+    set_tests_properties(Admin.QtTests Admin.CheckValid Admin.CheckInvalid Admin.CheckWhitelist Admin.CheckUnreadable PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
 endif()
