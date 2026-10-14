@@ -92,7 +92,7 @@ A failing CI job blocks the merge of its branch. A failure is root-caused before
 | Linux GCC Release | ubuntu-24.04 | GCC 13, OpenSSL 3.0 (distribution), Qt 6.4 | ctest (GoogleTest, Qt Test, `Lifecycle.Console`, `Lifecycle.Pki`, `Admin.Check*`); `systemd.sh` (real systemd service, root); `tls-scan.sh` with sslyze and testssl.sh 3.2.1; `check-deps.sh`; `check-hardening.sh`; `recette.ps1 -Quick` in console mode (report uploaded) |
 | Linux Clang Release | ubuntu-24.04 | Clang 18, OpenSSL 3.0, Qt 6.4 | ctest |
 | Linux Clang ASan+UBSan | ubuntu-24.04 | Clang 18 Debug, AddressSanitizer + UndefinedBehaviorSanitizer | ctest |
-| Linux Clang TSan | ubuntu-24.04 | Clang 18 Debug, ThreadSanitizer (`halt_on_error=1`) | ctest |
+| Linux Clang TSan | ubuntu-24.04 | Clang 18 Debug, ThreadSanitizer (`halt_on_error=1`; races reported inside the Qt libraries, which are not instrumented, are suppressed by `tests/tsan.supp`) | ctest |
 | Linux OpenSSL 3.5 LTS | ubuntu-24.04 | GCC, OpenSSL 3.5 built from the official archive (SHA-512 verified) | Version check (`OpenSSL 3.5.x`), ctest with the matching `openssl` command |
 | Analyse statique (clang-tidy, cppcheck) | ubuntu-24.04 | clang-tidy 18, cppcheck | `tools/run-clang-tidy.sh`, `tools/run-cppcheck.sh` on the whole code base, editor included |
 | Couverture de code (gcovr) | ubuntu-24.04 | GCC 13 `--coverage`, Qt 6.4, gcovr 8.6 | `tools/coverage.sh`: instrumented build, all ctest entries, then `systemd.sh` as root on the instrumented binary, HTML report (`couverture` artifact); fails below 90 % of lines (section 6) |

@@ -375,9 +375,9 @@ void AdminTest::diff_preview_lists_changes() {
         before += "ligne " + std::to_string(i) + "\n";
         after += (i == 1 || i == 18 ? "modifiée " : "ligne ") + std::to_string(i) + "\n";
     }
-    const auto far = DiffDialog::render({{"/tmp/d.yaml", before, after}});
-    QVERIFY(far.contains("…"));
-    QVERIFY(!far.contains("ligne 10"));
+    const auto spread = DiffDialog::render({{"/tmp/d.yaml", before, after}});
+    QVERIFY(spread.contains("…"));
+    QVERIFY(!spread.contains("ligne 10"));
 }
 
 namespace {

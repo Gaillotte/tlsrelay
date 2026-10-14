@@ -1,0 +1,8 @@
+# Suppressions ThreadSanitizer (job « Linux Clang TSan »).
+# Qt n'est pas compilé avec ThreadSanitizer : ses threads internes (pool de
+# threads des dialogues de fichiers, chargement d'icônes) réutilisent des blocs
+# mémoire que TSan, sans voir leur synchronisation, signale comme des courses.
+# Le code du projet reste entièrement contrôlé.
+race:libQt6Core.so
+race:libQt6Gui.so
+race:libQt6Widgets.so

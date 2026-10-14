@@ -84,9 +84,11 @@ sleep 0.5
 "$bin" stop --instance ci | grep -q "déjà arrêtée" || fail "arrêt d'une instance arrêtée"
 
 step "arrêt par systemctl stop (SIGTERM, drain)"
+# Journal lu depuis ce démarrage (un binaire instrumenté pour la couverture y ajoute ses propres lignes).
+since=$(date '+%Y-%m-%d %H:%M:%S')
 "$bin" start --instance ci
 systemctl stop tlsrelay@ci
-journalctl -u tlsrelay@ci --no-pager -n 20 | grep -q "service arrêté" || fail "arrêt propre non journalisé"
+journalctl -u tlsrelay@ci --no-pager --since "$since" | grep -q "service arrêté" || fail "arrêt propre non journalisé"
 
 step "arrêt immédiat"
 "$bin" start --instance ci

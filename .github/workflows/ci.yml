@@ -48,7 +48,8 @@ jobs:
       - name: Tests
         working-directory: build
         env:
-          TSAN_OPTIONS: halt_on_error=1
+          # Suppressions : courses signalées dans Qt, non instrumenté (tests/tsan.supp).
+          TSAN_OPTIONS: halt_on_error=1 suppressions=${{ github.workspace }}/tests/tsan.supp
         run: ctest --output-on-failure -j 2
 
       - name: Cycle de vie sous systemd (service réel)
