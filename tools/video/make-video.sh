@@ -22,8 +22,14 @@ trap 'rm -rf "$work"' EXIT
 rm -rf "$demo"
 
 echo "== 1/4 recording tools/demo.sh"
-script -q -e -T "$work/timing.log" \
-  -c "stty cols 110 rows 30; cd '$root' && DEMO_DIR='$demo' tools/demo.sh '$build'" "$work/typescript.txt" >/dev/null
+if ! script -q -e -T "$work/timing.log" \
+  -c "stty cols 110 rows 30; cd '$root' && DEMO_DIR='$demo' tools/demo.sh '$build'" "$work/typescript.txt" >/dev/null; then
+  # The video only shows a run where every check passed.
+  cp "$work/typescript.txt" "$demo/typescript.txt"
+  echo "the demonstration failed (recording kept in $demo/typescript.txt):" >&2
+  grep -a -E "✘|Result" "$work/typescript.txt" | sed 's/\x1b\[[0-9;]*m//g' >&2
+  exit 1
+fi
 
 echo "== 2/4 editor screens"
 cmake --build "$build" --target tlsrelay-admin-tour >/dev/null
