@@ -253,6 +253,17 @@ En CI, `perf.sh` mesure le débit cadencé à 500 Mbit/s (variable `RATE`, 0 : s
 
 Sous Linux (PowerShell 7), en mode console : `pwsh tools/recette.ps1 -BuildDir build/linux-release/src/app -TestkitDir build/linux-release/src/testkit`.
 
+### Démonstration et vidéo
+
+`tools/demo.sh` montre toute la solution en 3 minutes sur une machine Linux, avec les binaires réels et un commentaire en anglais : PKI par la mini-AC, client et serveur sur les trois ports, TLS vu de l'extérieur (openssl), liste blanche rechargée, renégociation transparente, reprise après coupures réseau, rotation de la PKI à chaud, révocation (CRL), administration et métriques, éditeur, arrêt et audit. Chaque étape se termine par des contrôles (25 au total) ; code de sortie 0 s'ils réussissent tous.
+
+```sh
+tools/demo.sh build/linux-release              # DEMO_PAUSE=1 : attend Entrée entre les étapes (présentation en direct)
+DEMO_DIR=/tmp/demo tools/demo.sh build/linux-release   # conserve configurations, PKI, journaux et captures
+```
+
+`tools/video/make-video.sh <build> [sortie.mp4]` en tire une vidéo (MP4 1280×720, sans son, sous-titres en anglais, environ 3 minutes) : enregistrement réel de `demo.sh`, rejoué dans un terminal avec des cartons de chapitre, puis les écrans de l'éditeur (`tlsrelay-admin-tour`, cible hors compilation par défaut). Prérequis : build avec l'éditeur, node et le paquet playwright avec son Chromium, ffmpeg, accès npm (xterm.js).
+
 ### Service et administration
 
 ```sh

@@ -12,7 +12,7 @@ msiexec /i tlsrelay-<version>-win64.msi /qn ADDLOCAL=ALL
 
 L'éditeur est installé dans `C:\Program Files\tlsrelay\bin`, avec les bibliothèques Qt 6 (LGPLv3, voir `doc\THIRD-PARTY-NOTICES.txt` et `doc\LICENSES`), et un raccourci est ajouté au menu Démarrer. Il peut aussi être ouvert sur un fichier : `tlsrelay-admin.exe C:\chemin\agence.yaml`.
 
-Contrôle d'un fichier sans fenêtre, avec les règles du service (code de sortie 0 : valide, 1 : invalide, 2 : illisible ; messages dans le fichier `--report`) :
+Contrôle d'un fichier sans fenêtre, avec les règles du service (code de sortie 0 : valide, 1 : invalide, 2 : illisible ; messages sur la sortie d'erreur et dans le fichier `--report`). Il fonctionne aussi sur une machine sans affichage (serveur Linux, session SSH) :
 
 ```powershell
 Start-Process -Wait -PassThru "C:\Program Files\tlsrelay\bin\tlsrelay-admin.exe" `

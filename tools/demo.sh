@@ -58,6 +58,11 @@ run() {
   "$@" 2>&1 | sed "s#$work/##g; s/^/    /"
   return "${PIPESTATUS[0]}"
 }
+# Shell pipeline shown as typed: shell "<command line>" (tlsrelay = the binary under test).
+shell() {
+  printf '%s$ %s%s\n' "$D" "$1" "$N"
+  bash -c "tlsrelay() { '$bin' \"\$@\"; }; $1" 2>&1 | sed "s#$work/##g; s/^/    /"
+}
 check() {  # check <description> <command...>
   local what=$1; shift
   if "$@" >/dev/null 2>&1; then printf '  %s✔%s %s\n' "$G" "$N" "$what"; passed=$((passed + 1))
@@ -217,7 +222,7 @@ run "$bin" ca sign --dir ca --role server --csr pki-server/v2/request.csr --san 
 run "$bin" pki install -c server.yaml --from kit-server-v2
 run "$bin" pki activate -c server.yaml v2
 sleep 3
-run bash -c "'$bin' status -c server.yaml | grep -i génération"
+shell "tlsrelay status -c server.yaml | grep -i génération"
 r=$(json load --target "127.0.0.1:$cli_mtls" --channels 10 --bytes 64KiB)
 check "new connections served by generation v2" bash -c "'$bin' status -c server.yaml | grep -q 'v2'"
 check "service uninterrupted: 10/10 new channels intact" test "$(field ok "$r")" = 10
@@ -251,7 +256,7 @@ step "Administration and metrics"
 background "$kit" load --target "127.0.0.1:$cli_tls" --channels 4 --bytes 1KiB --hold 6s
 sleep 1
 run "$bin" channels -c server.yaml
-run bash -c "'$bin' metrics -c server.yaml | grep -E '^tlsrelay_(channels_opened_total|peers_rejected_total|peers_revoked_total|pki_rotations_total|crl_revoked_certificates|certificates_revoked_total|renegotiations_total)'"
+shell "tlsrelay metrics -c server.yaml | grep -E '^tlsrelay_(channels_opened|peers_rejected|peers_revoked|pki_rotations|certificates_revoked|renegotiations)_total'"
 check "metrics in Prometheus text format" bash -c "'$bin' metrics -c server.yaml | grep -q '^# TYPE tlsrelay_channels_active gauge'"
 check "no private key nor passphrase in the logs" \
   bash -c "! grep -qE 'PRIVATE KEY|phrase de passe de démonstration' server.log client.log"

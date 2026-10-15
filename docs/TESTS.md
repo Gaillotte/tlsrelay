@@ -105,7 +105,7 @@ A failing CI job blocks the merge of its branch. A failure is root-caused before
 | Installation deb/rpm (×5) | ubuntu:22.04, ubuntu:24.04, debian:12, rockylinux:9, almalinux:9 | — | `packaging/test-linux-package.sh`: install, run, upgrade in place, licences, uninstall |
 | Paquets de la livraison | ubuntu-24.04 | — | Gathers `.deb`, `.rpm`, `.msi` and `SHA256SUMS` into the `tlsrelay-livraison` artifact |
 
-Totals per push: 19 jobs; 212 ctest entries on Linux (204 GoogleTest cases, 20 Qt Test functions counted as one ctest entry, `Admin.CheckValid`, `Admin.CheckInvalid`, `Admin.CheckWhitelist`, `Admin.CheckUnreadable`, `Lifecycle.Console`, `Lifecycle.Pki`, `Lifecycle.Cli`); on Windows, 199 GoogleTest cases (5 are Linux-only, see 5.3) plus the Qt and `Admin.Check*` entries.
+Totals per push: 19 jobs; 213 ctest entries on Linux (204 GoogleTest cases, 20 Qt Test functions counted as one ctest entry, `Admin.CheckValid`, `Admin.CheckInvalid`, `Admin.CheckWhitelist`, `Admin.CheckUnreadable`, `Admin.CheckHeadless`, `Lifecycle.Console`, `Lifecycle.Pki`, `Lifecycle.Cli`); on Windows, 199 GoogleTest cases (5 are Linux-only, see 5.3) plus the Qt and `Admin.Check*` entries.
 
 ### 2.2 Test network layout
 
@@ -146,6 +146,7 @@ The full performance targets (5,000 channels) were measured on a Linux developme
 | Sanitizers | `-DCMAKE_BUILD_TYPE=Debug -DTLSRELAY_SANITIZERS=address,undefined` (or `thread`) with Clang |
 | One suite | `ctest --test-dir build -R TunnelTest` or `build/tests/tlsrelay_tests --gtest_filter='TunnelTest.*'` |
 | Code coverage | `tools/coverage.sh build/coverage` (needs `gcovr`) → `build/coverage/coverage/index.html` |
+| Demonstration | `tools/demo.sh build/linux-release` (25 checks, about 3 minutes); video: `tools/video/make-video.sh build/linux-release demo.mp4` |
 | Fuzzing | Configure the `linux-fuzz` preset, then `tools/run-fuzz.sh build/linux-fuzz <seconds> [target…]` |
 | Performance / soak | `tests/perf/perf.sh build 5000 perf.json`; `tests/perf/soak.sh build 4320 soak.csv` (72 h) |
 | Service lifecycle | `sudo tests/lifecycle/systemd.sh build/src/app/tlsrelay`; Windows: `tests\lifecycle\windows-service.ps1 <bin dir>` as administrator |
@@ -471,6 +472,7 @@ Runs with the `offscreen` Qt platform. Earlier tests replace dialogs by injected
 | `Admin.CheckInvalid` | `--check tests/admin/invalide.yaml` exits non-zero and reports `ports.plain.listen : adresse invalide` | EDT-06, EDT-01 |
 | `Admin.CheckWhitelist` | Valid server configuration whose whitelist has a bad address: the whitelist error is reported with its file and path | EDT-06, WL-01 |
 | `Admin.CheckUnreadable` | Missing file: "fichier illisible" | EDT-06 |
+| `Admin.CheckHeadless` | `--check` without `DISPLAY`, `WAYLAND_DISPLAY` nor `QT_QPA_PLATFORM` (Linux server): runs and reports the file valid (Linux only) | EDT-06 |
 
 ### 3.18 Lifecycle scripts — real binary
 
@@ -672,7 +674,7 @@ Legend for the **Status** column: **Auto** — fully verified by automated tests
 | EDT-03 | Deployment package export | Qt `export_package_for_linux_and_windows`, Qt `export_dialog_builds_request_and_warns` | E05 | Auto |
 | EDT-04 | PKI module | Qt `pki_panel_full_cycle`, `pki_panel_refuses_wrong_passphrase_and_bad_directory`, `sign_dialog_inspects_request`, `CaTest.DescribeAuthoritySummarizesCertificatesAndCrl`, Qt `revoke_and_crl_dialogs`, `sign_and_create_dialogs` | E06–E09 | Auto |
 | EDT-05 | Root-change wizard | Qt `pki_root_change_preparation`, Qt `root_change_dialog_creates_ca_and_prepares_files` | E10 | Auto |
-| EDT-06 | Shipped in the MSI, `--check` | `Admin.CheckValid`, `Admin.CheckInvalid`, Windows "Éditeur installé" step, `Admin.CheckWhitelist`, `Admin.CheckUnreadable` | E01 | Auto |
+| EDT-06 | Shipped in the MSI, `--check` | `Admin.CheckValid`, `Admin.CheckInvalid`, Windows "Éditeur installé" step, `Admin.CheckWhitelist`, `Admin.CheckUnreadable`, `Admin.CheckHeadless` | E01 | Auto |
 
 ---
 
@@ -746,7 +748,7 @@ All 91 requirements have at least one automated verification on every push. Ever
 |---|---|
 | Tool | GCC 13 instrumentation (`--coverage`, `-O0`, `-fprofile-update=atomic`) and gcovr 8.6 |
 | Build | `-DTLSRELAY_COVERAGE=ON`, Debug, editor included (`TLSRELAY_BUILD_ADMIN=ON`) |
-| Tests executed | All 212 ctest entries on Linux (GoogleTest, Qt Test, `Admin.Check*`, `Lifecycle.Console`, `Lifecycle.Pki`, `Lifecycle.Cli`); in CI, then `systemd.sh` as root on the instrumented binary (`COVERAGE_EXTRA`) |
+| Tests executed | All 213 ctest entries on Linux (GoogleTest, Qt Test, `Admin.Check*`, `Lifecycle.Console`, `Lifecycle.Pki`, `Lifecycle.Cli`); in CI, then `systemd.sh` as root on the instrumented binary (`COVERAGE_EXTRA`) |
 | Code measured | Delivered code: `src/core` (library), `src/app` (`tlsrelay` command line), `src/admin` (editor). Excluded: Qt-generated files (`*_autogen`), tests, third-party code. `src/testkit` (test tool) is not a target: ctest does not run it; the performance, soak and acceptance scripts do |
 | Platform | Linux only. Windows-only files (`platform_windows.cpp`, named-pipe admin channel, Windows service glue) are not compiled there and are not in the figures; they are exercised by `windows-service.ps1`, `windows-pki.ps1` and the acceptance run on the installed MSI |
 | Branches | Counted by gcov with unreachable and exception-only branches excluded (`--exclude-unreachable-branches --exclude-throw-branches`) |
@@ -810,11 +812,12 @@ All fourteen tests specified on 2026-10-14 are implemented; each is described wi
 
 The editor dialog tests drive the real modal windows: a helper waits for the next modal widget of a given type (`QApplication::activeModalWidget()`), marks it as handled, fills its fields and presses its button; nested dialogs (file picker, then passphrase prompts) are chained the same way. Only one change was made to the editor for testing: object names on the export dialog's fields.
 
-### 6.5 Defect found by the new tests
+### 6.5 Defects found by the new tests and the demonstration
 
 | Defect | Found by | Fix |
 |---|---|---|
 | `tlsrelay ca audit --dir <path>` on a directory that is not a CA (for example a mistyped path) reported "0 opération(s), chaîne d'empreintes intacte" and exit code 0: a typo looked like a clean audit | CT-08 (`cli.sh`) | `read_audit()` refuses a directory without `root.cert.pem` ("n'est pas un répertoire d'AC tlsrelay"); exit code 1. Checked by `CaTest.AuditLogRecordsOperationsAndDetectsTampering` and `cli.sh` |
+| `tlsrelay-admin --check` aborted on a Linux machine without a display (the Qt platform plugin could not start), so the headless check documented for servers did not work there; CI did not see it because its ctest environment sets `QT_QPA_PLATFORM=offscreen` | `tools/demo.sh` | In `--check` mode without a display, the offscreen platform is used (the Qt libraries and plugins are still loaded, so an incomplete installation is still detected). Checked by `Admin.CheckHeadless` |
 
 ### 6.6 Keeping the level
 
