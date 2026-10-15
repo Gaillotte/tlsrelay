@@ -34,6 +34,8 @@ cleanup() {
 trap cleanup EXIT
 cd "$work"
 unset TLSRELAY_CA_PASSPHRASE
+# Qt expects a runtime directory (set by desktop and SSH sessions; not always in containers).
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then export XDG_RUNTIME_DIR="$work/.runtime"; mkdir -p -m 0700 "$XDG_RUNTIME_DIR"; fi
 
 # Ports.
 echo_port=$base
@@ -53,7 +55,7 @@ say() { printf '%s%s%s\n' "$C" "$*" "$N"; }
 # Shows a command, runs it, indents its output.
 run() {
   printf '%s$ %s%s\n' "$D" "$(printf '%q ' "$@" | sed "s#$bin#tlsrelay#g; s#$kit#tlsrelay-testkit#g; s#$editor#tlsrelay-admin#g; s#$work/##g")" "$N"
-  "$@" 2>&1 | sed 's/^/    /'
+  "$@" 2>&1 | sed "s#$work/##g; s/^/    /"
   return "${PIPESTATUS[0]}"
 }
 check() {  # check <description> <command...>
@@ -162,8 +164,10 @@ grep -E "^(New|Protocol|Verify return code|ALPN protocol)|Cipher is" <<<"$out" |
 check "TLS 1.3 negotiated, ALPN tlsrelay/1, certificate verified" \
   bash -c "grep -q 'TLSv1.3' <<<\"\$1\" && grep -q 'ALPN protocol: tlsrelay/1' <<<\"\$1\" && grep -q 'Verify return code: 0' <<<\"\$1\"" _ "$out"
 check "TLS 1.2 refused" bash -c "! openssl s_client -connect 127.0.0.1:$srv_tls -tls1_2 </dev/null >/dev/null 2>&1"
-check "client certificate required on the mTLS port" \
-  bash -c "! openssl s_client -connect 127.0.0.1:$srv_mtls -alpn tlsrelay/1 -CAfile kit-server/trust-roots.pem </dev/null 2>&1 | grep -q 'Verify return code: 0' || ! printf 'x' | openssl s_client -connect 127.0.0.1:$srv_mtls -alpn tlsrelay/1 -quiet 2>/dev/null"
+say "Without a client certificate, the mTLS port answers with a TLS alert:"
+out=$(printf 'x\n' | timeout 5 openssl s_client -connect "127.0.0.1:$srv_mtls" -alpn tlsrelay/1 -CAfile kit-server/trust-roots.pem 2>&1)
+grep -o "alert certificate required.*" <<<"$out" | head -1 | sed 's/^/    /'
+check "client certificate required on the mTLS port (alert 116)" grep -q "alert certificate required" <<<"$out"
 
 # ================================================================ 6
 step "Whitelist reloaded while running"
@@ -217,7 +221,7 @@ run bash -c "'$bin' status -c server.yaml | grep -i génération"
 r=$(json load --target "127.0.0.1:$cli_mtls" --channels 10 --bytes 64KiB)
 check "new connections served by generation v2" bash -c "'$bin' status -c server.yaml | grep -q 'v2'"
 check "service uninterrupted: 10/10 new channels intact" test "$(field ok "$r")" = 10
-grep -E "génération|PKI" server.log | tail -3 | sed 's/^/    log: /'
+grep -E "bascule|libérée" server.log | tail -2 | sed 's/^/    log: /'
 
 # ================================================================ 10
 step "Revocation: the client's certificate is revoked and the CRL deployed"
@@ -262,7 +266,7 @@ if [ -x "$editor" ]; then
   if command -v xvfb-run >/dev/null && command -v import >/dev/null; then
     for f in server server-invalid; do
       xvfb-run -a -s "-screen 0 1280x860x24" bash -c \
-        "'$editor' '$work/$f.yaml' & sleep 3; import -window root '$work/editor-$f.png'; kill \$!" >/dev/null 2>&1
+        "'$editor' '$work/$f.yaml' & sleep 3; import -window root png:- | convert - -trim +repage '$work/editor-$f.png'; kill \$!" >/dev/null 2>&1
     done
     say "screenshots: editor-server.png, editor-server-invalid.png"
   fi

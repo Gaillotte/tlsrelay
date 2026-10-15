@@ -55,6 +55,13 @@ if(TLSRELAY_BUILD_TESTS)
     set_tests_properties(Admin.CheckWhitelist PROPERTIES PASS_REGULAR_EXPRESSION "liste-invalide.yaml : peers\\[0\\]\\.ip")
     add_test(NAME Admin.CheckUnreadable COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/tests/admin/absent.yaml")
     set_tests_properties(Admin.CheckUnreadable PROPERTIES PASS_REGULAR_EXPRESSION "absent.yaml : fichier illisible")
+    # --check sur une machine sans affichage (serveur Linux) : aucune variable Qt ni DISPLAY.
+    if(NOT WIN32)
+        add_test(NAME Admin.CheckHeadless
+                 COMMAND ${CMAKE_COMMAND} -E env --unset=DISPLAY --unset=WAYLAND_DISPLAY --unset=QT_QPA_PLATFORM
+                         $<TARGET_FILE:tlsrelay-admin> --check "${PROJECT_SOURCE_DIR}/examples/client.yaml")
+        set_tests_properties(Admin.CheckHeadless PROPERTIES PASS_REGULAR_EXPRESSION "client.yaml : valide" TIMEOUT 60)
+    endif()
     # Sans affichage : plateforme Qt « offscreen ».
     set_tests_properties(Admin.QtTests Admin.CheckValid Admin.CheckInvalid Admin.CheckWhitelist Admin.CheckUnreadable PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)

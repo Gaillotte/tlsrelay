@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <string_view>
 
 namespace {
 
@@ -52,6 +53,15 @@ int check(const std::filesystem::path& path, const std::filesystem::path& report
 int main(int argc, char* argv[]) {
     // L'application Qt est créée même pour --check : une installation à qui
     // manquent des DLL ou le module de plateforme de Qt échoue ici aussi.
+    // Sans affichage (serveur Linux, session SSH), --check utilise la plateforme
+    // « offscreen » : le contrôle n'ouvre aucune fenêtre.
+    const bool check_mode = argc >= 3 && std::string_view(argv[1]) == "--check";
+    if (check_mode && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && qEnvironmentVariableIsEmpty("DISPLAY") &&
+        qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+#ifndef _WIN32
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
+    }
     QApplication app(argc, argv);
     QApplication::setApplicationName("tlsrelay-admin");
     QApplication::setOrganizationName("tlsrelay");
