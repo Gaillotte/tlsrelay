@@ -429,6 +429,7 @@ void PkiPanel::revoke_dialog() {
     const auto crl = add_crl_fields(form, &dialog);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(tr("Révoquer et publier les CRL"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Annuler"));
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     auto* layout = new QVBoxLayout(&dialog);
@@ -454,6 +455,7 @@ void PkiPanel::crl_dialog() {
     const auto crl = add_crl_fields(form, &dialog);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(tr("Publier"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Annuler"));
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     auto* layout = new QVBoxLayout(&dialog);

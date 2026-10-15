@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tlsrelay demonstration</title>
+<link rel="stylesheet" href="XTERM_CSS">
+<style>
+  :root { --bg: #0f1726; --panel: #141f33; --ink: #e8edf5; --muted: #9aa8bd; --accent: #4fd1b5; --warn: #f2b84b; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; background: var(--bg); color: var(--ink);
+    font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif; }
+  #stage { position: absolute; inset: 0; }
+  #terminal { position: absolute; left: 50%; top: 22px; transform: translateX(-50%); padding: 12px 14px;
+    background: #0b111c; border: 1px solid #26344d; border-radius: 10px; }
+  #caption { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; display: flex; align-items: center;
+    gap: 18px; padding: 0 32px; background: var(--panel); border-top: 1px solid #26344d; font-size: 20px; }
+  #caption .chapter { color: var(--accent); font-weight: bold; white-space: nowrap; }
+  #caption .text { color: var(--ink); }
+  #later { position: absolute; right: 40px; top: 36px; padding: 8px 16px; border-radius: 20px; background: var(--warn);
+    color: #1b1b1b; font-weight: bold; font-size: 18px; opacity: 0; transition: opacity .25s; }
+  .card { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 120px;
+    background: radial-gradient(circle at 20% 20%, #1c2c48, var(--bg) 70%); opacity: 0; transition: opacity .35s; }
+  .card.show { opacity: 1; }
+  .card .kicker { color: var(--accent); font-size: 22px; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 18px; }
+  .card h1 { font-size: 54px; line-height: 1.15; margin-bottom: 22px; }
+  .card p { font-size: 25px; line-height: 1.45; color: #c9d3e2; max-width: 1000px; }
+  .card pre { margin-top: 30px; font-family: "DejaVu Sans Mono", monospace; font-size: 17px; color: var(--muted); }
+  #shot { position: absolute; left: 0; right: 0; top: 0; bottom: 64px; display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .3s; }
+  #shot.show { opacity: 1; }
+  #shot img { max-width: 1220px; max-height: 620px; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.5); background: #fff; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="terminal"></div>
+  <div id="shot"><img id="shot-img" alt=""></div>
+  <div id="later"></div>
+  <div id="caption"><span class="chapter" id="cap-chapter"></span><span class="text" id="cap-text"></span></div>
+  <div class="card" id="card"><div class="kicker" id="card-kicker"></div><h1 id="card-title"></h1><p id="card-text"></p><pre id="card-pre"></pre></div>
+</div>
+<script src="XTERM_JS"></script>
+<script>
+const TIMELINE = TIMELINE_JSON;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const $ = id => document.getElementById(id);
+const term = new Terminal({ cols: 110, rows: 30, fontSize: 16, fontFamily: '"DejaVu Sans Mono", monospace',
+  theme: { background: '#0b111c', foreground: '#dfe6ef', cyan: '#5fd3f3', green: '#59d98e', red: '#ff6b6b' },
+  convertEol: false, scrollback: 0 });
+term.open($('terminal'));
+
+function write(data) { return new Promise(r => term.write(data, r)); }
+async function card(c) {
+  $('card-kicker').textContent = c.kicker || '';
+  $('card-title').textContent = c.title || '';
+  $('card-text').textContent = c.text || '';
+  $('card-pre').textContent = c.pre || '';
+  $('card').classList.add('show');
+  await sleep(c.ms);
+  $('card').classList.remove('show');
+  await sleep(350);
+}
+function caption(chapter, text) { $('cap-chapter').textContent = chapter; $('cap-text').textContent = text; }
+
+(async () => {
+  await document.fonts.ready;
+  for (const e of TIMELINE) {
+    if (e.kind === 'card') await card(e);
+    else if (e.kind === 'caption') caption(e.chapter, e.text);
+    else if (e.kind === 'clear') { term.reset(); }
+    else if (e.kind === 'out') { if (e.wait) await sleep(e.wait); await write(e.data); }
+    else if (e.kind === 'later') {
+      $('later').textContent = e.text; $('later').style.opacity = 1; await sleep(e.ms); $('later').style.opacity = 0;
+    }
+    else if (e.kind === 'pause') await sleep(e.ms);
+    else if (e.kind === 'shot') {
+      $('terminal').style.visibility = 'hidden';
+      $('shot-img').src = e.src;
+      await new Promise(r => { if ($('shot-img').complete) r(); else $('shot-img').onload = r; });
+      $('shot').classList.add('show');
+      await sleep(e.ms);
+      $('shot').classList.remove('show');
+      await sleep(300);
+    }
+  }
+  window.done = true;
+})();
+</script>
+</body>
+</html>

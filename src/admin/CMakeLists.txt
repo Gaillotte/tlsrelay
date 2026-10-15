@@ -20,6 +20,12 @@ target_link_libraries(tlsrelay_admin_lib
     PRIVATE tlsrelay::options yaml-cpp::yaml-cpp)
 
 add_executable(tlsrelay-admin WIN32 main.cpp)
+
+# Visite de l'éditeur pour la vidéo de démonstration (tools/video) : hors de la
+# compilation par défaut, jamais installée.
+add_executable(tlsrelay-admin-tour EXCLUDE_FROM_ALL "${PROJECT_SOURCE_DIR}/tools/video/editor_tour.cpp")
+target_include_directories(tlsrelay-admin-tour PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(tlsrelay-admin-tour PRIVATE tlsrelay_admin_lib tlsrelay::options)
 target_link_libraries(tlsrelay-admin PRIVATE tlsrelay_admin_lib tlsrelay::options)
 install(TARGETS tlsrelay-admin RUNTIME DESTINATION bin COMPONENT admin)
 
