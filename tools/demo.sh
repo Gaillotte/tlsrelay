@@ -170,7 +170,8 @@ check "TLS 1.3 negotiated, ALPN tlsrelay/1, certificate verified" \
   bash -c "grep -q 'TLSv1.3' <<<\"\$1\" && grep -q 'ALPN protocol: tlsrelay/1' <<<\"\$1\" && grep -q 'Verify return code: 0' <<<\"\$1\"" _ "$out"
 check "TLS 1.2 refused" bash -c "! openssl s_client -connect 127.0.0.1:$srv_tls -tls1_2 </dev/null >/dev/null 2>&1"
 say "Without a client certificate, the mTLS port answers with a TLS alert:"
-out=$(printf 'x\n' | timeout 5 openssl s_client -connect "127.0.0.1:$srv_mtls" -alpn tlsrelay/1 -CAfile kit-server/trust-roots.pem 2>&1)
+# -ign_eof: keep reading after sending, until the server's alert closes the connection.
+out=$(printf 'x\n' | timeout 5 openssl s_client -ign_eof -connect "127.0.0.1:$srv_mtls" -alpn tlsrelay/1 -CAfile kit-server/trust-roots.pem 2>&1)
 grep -o "alert certificate required.*" <<<"$out" | head -1 | sed 's/^/    /'
 check "client certificate required on the mTLS port (alert 116)" grep -q "alert certificate required" <<<"$out"
 
