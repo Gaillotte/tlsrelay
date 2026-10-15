@@ -98,10 +98,12 @@ timeline.push({ kind: 'card', kicker: 'Result', title: result ? `${result[1]} ch
 
 // Page: xterm.js and the timeline inlined.
 const template = fs.readFileSync(path.join(__dirname, 'player.html'), 'utf8');
+// Replacement functions: the recorded output contains "$" sequences that a replacement string would interpret.
+const xterm = path.resolve(xtermDir);
 const page = template
-  .replace('XTERM_CSS', 'file://' + path.join(xtermDir, 'css', 'xterm.css'))
-  .replace('XTERM_JS', 'file://' + path.join(xtermDir, 'lib', 'xterm.js'))
-  .replace('TIMELINE_JSON', JSON.stringify(timeline));
+  .replace('XTERM_CSS', () => 'file://' + path.join(xterm, 'css', 'xterm.css'))
+  .replace('XTERM_JS', () => 'file://' + path.join(xterm, 'lib', 'xterm.js'))
+  .replace('TIMELINE_JSON', () => JSON.stringify(timeline).replace(/<\//g, '<\\/'));
 const pageFile = path.join(path.dirname(path.resolve(outFile)), 'player.generated.html');
 fs.writeFileSync(pageFile, page);
 
@@ -112,7 +114,12 @@ fs.writeFileSync(pageFile, page);
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 },
     recordVideo: { dir: videoDir, size: { width: 1280, height: 720 } } });
   const tab = await context.newPage();
+  let failure = null;
+  tab.on('pageerror', e => { failure = e; });
+  tab.on('requestfailed', r => { failure = new Error('cannot load ' + r.url()); });
   await tab.goto('file://' + pageFile);
+  await tab.waitForTimeout(1000);
+  if (failure) throw failure;
   await tab.waitForFunction(() => window.done === true, null, { timeout: 30 * 60 * 1000, polling: 500 });
   await tab.waitForTimeout(800);
   const video = tab.video();
