@@ -28,7 +28,7 @@
   #shot { position: absolute; left: 0; right: 0; top: 0; bottom: 64px; display: flex; align-items: center; justify-content: center;
     opacity: 0; transition: opacity .3s; }
   #shot.show { opacity: 1; }
-  #shot img { max-width: 1220px; max-height: 620px; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.5); background: #fff; }
+  #shot img { border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.5); background: #fff; }
 </style>
 </head>
 <body>
@@ -75,8 +75,13 @@ function caption(chapter, text) { $('cap-chapter').textContent = chapter; $('cap
     else if (e.kind === 'pause') await sleep(e.ms);
     else if (e.kind === 'shot') {
       $('terminal').style.visibility = 'hidden';
-      $('shot-img').src = e.src;
-      await new Promise(r => { if ($('shot-img').complete) r(); else $('shot-img').onload = r; });
+      const img = $('shot-img');
+      img.src = e.src;
+      await new Promise(r => { if (img.complete) r(); else img.onload = r; });
+      // Small dialogs are enlarged (up to 2×) to fill the frame; large windows are reduced.
+      const k = Math.min(1220 / img.naturalWidth, 620 / img.naturalHeight, 2);
+      img.style.width = Math.round(img.naturalWidth * k) + 'px';
+      img.style.height = Math.round(img.naturalHeight * k) + 'px';
       $('shot').classList.add('show');
       await sleep(e.ms);
       $('shot').classList.remove('show');

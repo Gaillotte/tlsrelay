@@ -27,7 +27,9 @@ script -q -e -T "$work/timing.log" \
 
 echo "== 2/4 editor screens"
 cmake --build "$build" --target tlsrelay-admin-tour >/dev/null
-XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-$demo/.runtime} "$build/src/admin/tlsrelay-admin-tour" "$demo" "$work/shots" >/dev/null
+# (the offscreen platform warns that it cannot resize windows to their hints: harmless)
+XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-$demo/.runtime} "$build/src/admin/tlsrelay-admin-tour" "$demo" "$work/shots" \
+  2> >(grep -v propagateSizeHints >&2) >/dev/null
 
 echo "== 3/4 rendering"
 (cd "$work" && npm init -y >/dev/null && npm install --silent --no-audit --no-fund @xterm/xterm@5.5.0)
