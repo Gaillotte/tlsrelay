@@ -38,6 +38,8 @@ Le paquet installe `/usr/bin/tlsrelay`, la documentation et les exemples dans `/
 
 ## 3. Installation sous Windows
 
+Pour compiler le projet et construire le MSI soi-même : [BUILD-WINDOWS.md](BUILD-WINDOWS.md).
+
 Double-cliquer sur le MSI, ou en mode silencieux depuis un PowerShell administrateur :
 
 ```powershell

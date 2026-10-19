@@ -23,6 +23,7 @@ Principales caractéristiques :
 
 - [Design document (English)](docs/DESIGN.md) : architecture, sécurité, protocole, PKI, éditeur, qualité ; en 10 slides : [tlsrelay-design-slides.pdf](docs/tlsrelay-design-slides.pdf)
 - [Éditeur tlsrelay-admin](docs/EDITEUR.md) : configuration, liste blanche, paquets de déploiement, mini-AC (livraison 1.1)
+- [Compilation et tests sous Windows](docs/BUILD-WINDOWS.md) (en anglais) : outils à installer, compilation, tests, paquet MSI, dépannage
 - [Installation](docs/INSTALLATION.md) : paquets `.deb`, `.rpm` et `.msi`, première instance, mise à jour, désinstallation
 - [Exploitation](docs/EXPLOITATION.md) : commandes courantes, journaux, supervision, PKI, sauvegarde, dépannage
 - [Plan de développement](docs/PLAN.md) : décisions, architecture, planning, stratégie de tests, recette
@@ -134,6 +135,8 @@ cmake --preset windows-msvc
 cmake --build --preset windows-release
 ctest --preset windows-release
 ```
+
+Guide complet (installation des outils, éditeur Qt, tous les tests Windows, paquet MSI, dépannage) : [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md).
 
 ## Utilisation
 
