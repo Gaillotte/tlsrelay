@@ -1,6 +1,6 @@
 #pragma once
 
-// Outils internes du module PKI : fichiers, encodage PEM, aléa.
+// Internal helpers of the PKI module: files, PEM encoding, randomness.
 
 #include "tlsrelay/tls/openssl_ptr.hpp"
 
@@ -27,18 +27,18 @@ namespace tlsrelay::pki::detail {
 
 inline std::string read_file(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
-    if (!in) throw std::runtime_error("lecture impossible : " + path.string());
+    if (!in) throw std::runtime_error("cannot read: " + path.string());
     std::ostringstream text;
     text << in.rdbuf();
     return text.str();
 }
 
-// Écrit un fichier ; secret : lisible par le seul propriétaire (Linux).
+// Writes a file; secret: readable by the owner only (Linux).
 inline void write_file(const std::filesystem::path& path, const std::string& content, bool secret = false) {
 #ifdef _WIN32
-    (void)secret;  // droits gérés par ACL (voir pki/authority.cpp)
+    (void)secret;  // permissions handled by ACL (see pki/authority.cpp)
 #else
-    // Créé directement avec les bons droits : aucun instant où la clé serait lisible.
+    // Created directly with the right permissions: the key is never readable, even briefly.
     const auto old = ::umask(secret ? 0077 : 0022);
 #endif
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -48,14 +48,14 @@ inline void write_file(const std::filesystem::path& path, const std::string& con
     ::umask(old);
     if (secret) ::chmod(path.c_str(), 0600);
 #endif
-    if (!out) throw std::runtime_error("écriture impossible : " + path.string());
+    if (!out) throw std::runtime_error("cannot write: " + path.string());
 }
 
-// Crée un répertoire réservé au propriétaire (Linux).
+// Creates a directory restricted to the owner (Linux).
 inline void make_private_dir(const std::filesystem::path& dir) {
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
-    if (ec) throw std::runtime_error("création impossible : " + dir.string() + " : " + ec.message());
+    if (ec) throw std::runtime_error("cannot create: " + dir.string() + ": " + ec.message());
 #ifndef _WIN32
     ::chmod(dir.c_str(), 0700);
 #endif
@@ -69,29 +69,29 @@ inline std::string bio_text(BIO* bio) {
 
 inline std::string pem_of(const X509* cert) {
     tls::BioPtr bio(BIO_new(BIO_s_mem()));
-    if (!PEM_write_bio_X509(bio.get(), const_cast<X509*>(cert))) fail("encodage PEM impossible");
+    if (!PEM_write_bio_X509(bio.get(), const_cast<X509*>(cert))) fail("PEM encoding failed");
     return bio_text(bio.get());
 }
 
 inline tls::X509Ptr cert_from_pem(const std::string& pem, const std::string& what) {
     tls::BioPtr bio(BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())));
     tls::X509Ptr cert(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
-    if (!cert) fail(what + " : certificat illisible");
+    if (!cert) fail(what + ": unreadable certificate");
     return cert;
 }
 
-// Clé ECDSA sur la courbe donnée (« P-256 », « P-384 »).
+// ECDSA key on the given curve ("P-256", "P-384").
 inline tls::EvpPkeyPtr generate_ec_key(const char* curve) {
     tls::EvpPkeyPtr key(EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", curve));
-    if (!key) fail(std::string("génération de clé ") + curve + " impossible");
+    if (!key) fail(std::string("cannot generate ") + curve + " key");
     return key;
 }
 
-// Numéro de série aléatoire de 128 bits, positif et non nul (RFC 5280 §4.1.2.2).
+// Random 128-bit serial number, positive and non-zero (RFC 5280 §4.1.2.2).
 inline std::string random_serial_hex() {
     unsigned char bytes[16];
     do {
-        if (RAND_bytes(bytes, sizeof bytes) != 1) fail("générateur aléatoire indisponible");
+        if (RAND_bytes(bytes, sizeof bytes) != 1) fail("random generator unavailable");
         bytes[0] &= 0x7f;
     } while (bytes[0] == 0);
     static constexpr char digits[] = "0123456789ABCDEF";

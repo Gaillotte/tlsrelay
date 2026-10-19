@@ -1,5 +1,5 @@
-# Analyse statique (PLAN §5) : défauts probables, sécurité, concurrence,
-# analyseur de chemins de clang. Les règles retenues sont bloquantes en CI.
+# Static analysis (PLAN §5): likely defects, security, concurrency,
+# clang path analyzer. The selected rules are blocking in CI.
 Checks: >
   -*,
   bugprone-*,

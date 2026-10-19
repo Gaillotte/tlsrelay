@@ -37,49 +37,49 @@ enum class CloseReason {
     certificate_revoked,
     generation_retired,
     io_error,
-    lifetime_exceeded,  // pas de renégociation réussie dans le délai de grâce
-    protocol_error,     // trame non conforme reçue
-    resume_refused,     // le serveur a refusé la reprise de session
-    closed_by_peer,     // CLOSE (code autre que NORMAL) ou OPEN_FAIL reçu
+    lifetime_exceeded,  // no successful renegotiation within the grace period
+    protocol_error,     // malformed frame received
+    resume_refused,     // the server refused the session resumption
+    closed_by_peer,     // CLOSE (code other than NORMAL) or OPEN_FAIL received
     internal_error
 };
 
 std::string_view to_string(CloseReason r);
 
-// Décide si un pair est autorisé, selon la liste blanche courante (mode serveur).
+// Decides whether a peer is authorized, according to the current whitelist (server mode).
 class PeerAuthorizer {
 public:
     virtual ~PeerAuthorizer() = default;
-    // Retourne le nom de l'entrée qui autorise le pair, ou std::nullopt.
-    // subject : sujet du certificat client (port mtls), nullptr sinon.
+    // Returns the name of the entry that authorizes the peer, or std::nullopt.
+    // subject: subject of the client certificate (mtls port), nullptr otherwise.
     virtual std::optional<std::string> authorize(const asio::ip::address& address, PortKind port,
                                                  const X509_NAME* subject) const = 0;
 };
 
-// Pair tlsrelay authentifié sur une connexion de transport (mode serveur).
+// tlsrelay peer authenticated on a transport connection (server mode).
 struct PeerIdentity {
     asio::ip::address address;
-    tls::X509NamePtr subject;  // certificat client (port mtls)
-    std::string name;          // entrée de la liste blanche qui autorise le pair
-    std::string endpoint;      // adresse:port, pour les journaux
+    tls::X509NamePtr subject;  // client certificate (mtls port)
+    std::string name;          // whitelist entry that authorizes the peer
+    std::string endpoint;      // address:port, for the logs
 };
 
 enum class Side { client, server };
 
-// État d'un canal pour la commande d'administration « channels ».
+// State of a channel for the "channels" administration command.
 struct ChannelInfo {
     std::uint64_t id = 0;
     PortKind port = PortKind::plain;
-    std::string state;       // ouverture, ouvert, renégociation, reprise, fermeture
-    std::string session;     // 8 premiers caractères hexadécimaux
-    std::string peer;        // client : application ; serveur : entrée de liste blanche et adresse
-    std::string generation;  // génération PKI de la connexion de transport courante
-    std::uint32_t transport = 0;  // numéro de la connexion de transport courante
+    std::string state;       // opening, open, renegotiating, resuming, closing
+    std::string session;     // first 8 hexadecimal characters
+    std::string peer;        // client: application; server: whitelist entry and address
+    std::string generation;  // PKI generation of the current transport connection
+    std::uint32_t transport = 0;  // number of the current transport connection
     std::chrono::milliseconds age{};
     std::chrono::milliseconds idle{};
     std::uint64_t bytes_up = 0;
     std::uint64_t bytes_down = 0;
-    std::string flow;  // contrôle de flux : séquences, octets en attente, tâches bloquées
+    std::string flow;  // flow control: sequences, pending bytes, blocked tasks
 };
 
 struct ChannelSettings {
@@ -87,26 +87,26 @@ struct ChannelSettings {
     PortKind port = PortKind::plain;
     Duration idle_timeout{};
     Duration handshake_timeout{};
-    Duration keepalive_interval{};  // 0 : pas de PING
+    Duration keepalive_interval{};  // 0: no PING
     Duration session_lifetime{};
     double session_jitter = 0.0;
     Duration renegotiation_grace{};
     std::uint64_t resume_buffer = 4ULL << 20;
-    // Client : connexion de transport vers l'upstream. Serveur : destination.
+    // Client: transport connection to the upstream. Server: destination.
     DialOptions dial;
-    // Client : contexte TLS de la génération courante (relu à chaque connexion de transport).
+    // Client: TLS context of the current generation (reread on each transport connection).
     std::function<std::shared_ptr<const tls::Context>()> tls_context;
-    std::string server_name;                     // client : nom vérifié dans le certificat du serveur
-    const PeerAuthorizer* authorizer = nullptr;  // serveur : liste blanche
+    std::string server_name;                     // client: name checked in the server certificate
+    const PeerAuthorizer* authorizer = nullptr;  // server: whitelist
 };
 
-// Un canal relie une connexion « brute » (client : application ; serveur :
-// destination) à un tunnel vers l'autre tlsrelay (SPEC §4). Le tunnel passe
-// par une suite de connexions de transport : à l'échéance de session_lifetime,
-// le client en ouvre une nouvelle (handshake complet, génération PKI courante)
-// et y reprend la session sans perte ni duplication de données.
+// A channel links a "raw" connection (client: application; server:
+// destination) to a tunnel to the other tlsrelay (SPEC §4). The tunnel goes
+// through a series of transport connections: when session_lifetime expires,
+// the client opens a new one (full handshake, current PKI generation)
+// and resumes the session on it without loss or duplication of data.
 //
-// Tout l'état est manipulé sur un strand, l'exécuteur du canal.
+// All state is handled on a strand, the channel's executor.
 class Channel : public std::enable_shared_from_this<Channel> {
 public:
     using ClosedCallback = std::function<void(Channel&)>;
@@ -114,44 +114,44 @@ public:
     Channel(std::uint64_t id, asio::any_io_executor strand, ChannelSettings settings, Stats& stats,
             ClosedCallback on_closed);
 
-    // Client : relaie la connexion de l'application (socket sur le strand du canal).
+    // Client: relays the application connection (socket on the channel's strand).
     void start_client(asio::ip::tcp::socket application);
-    // Serveur : OPEN reçu sur transport (déjà authentifié) ; se connecte à la destination.
+    // Server: OPEN received on transport (already authenticated); connects to the destination.
     void start_server(std::shared_ptr<Transport> transport, const tunnel::SessionId& session, PeerIdentity peer);
 
-    // Serveur : RESUME reçu sur une nouvelle connexion de transport. À exécuter
-    // sur le strand du canal. En cas de succès, le canal prend la connexion et
-    // y répond RESUMED ; sinon l'appelant répond RESUME_FAIL.
+    // Server: RESUME received on a new transport connection. To be run
+    // on the channel's strand. On success, the channel takes the connection and
+    // replies RESUMED on it; otherwise the caller replies RESUME_FAIL.
     asio::awaitable<bool> accept_resume(std::shared_ptr<Transport> transport, tunnel::Resume request,
                                         PeerIdentity peer, PortKind port);
 
-    // Ferme le canal (en prévenant l'autre tlsrelay). Utilisable depuis n'importe quel thread.
+    // Closes the channel (notifying the other tlsrelay). Usable from any thread.
     void abort(CloseReason reason);
 
-    // Vérifie de nouveau le pair après un changement de la liste blanche ; le
-    // canal est fermé s'il n'est plus autorisé. Utilisable depuis n'importe quel thread.
+    // Checks the peer again after a whitelist change; the
+    // channel is closed if it is no longer authorized. Usable from any thread.
     void revalidate();
 
-    // Ferme le canal si sa connexion de transport utilise un autre contexte que
-    // ceux donnés (génération retirée). Utilisable depuis n'importe quel thread.
+    // Closes the channel if its transport connection uses a context other than
+    // the given ones (retired generation). Usable from any thread.
     void close_if_retired(std::shared_ptr<const tls::Context> tls, std::shared_ptr<const tls::Context> mtls);
-    // Ferme le canal si le certificat du pair figure dans les CRL en vigueur.
+    // Closes the channel if the peer certificate is listed in the CRLs in force.
     void close_if_revoked();
 
-    // À exécuter sur le strand du canal.
+    // To be run on the channel's strand.
     asio::awaitable<ChannelInfo> describe() const;
 
     std::uint64_t id() const { return id_; }
     const asio::any_io_executor& executor() const { return executor_; }
     const tunnel::SessionId& session() const { return session_; }
-    // Après la fermeture : raison et jeton de reprise de la dernière connexion.
+    // After closing: reason and resumption token of the last connection.
     CloseReason close_reason() const { return reason_.value_or(CloseReason::normal); }
     const std::optional<tunnel::Token>& resume_token() const { return token_; }
 
 private:
     using Clock = std::chrono::steady_clock;
 
-    // Signal à un seul attendant, mémorisé s'il n'y a personne pour l'attendre.
+    // Signal to a single waiter, remembered if nobody is waiting for it.
     class Event {
     public:
         explicit Event(const asio::any_io_executor& ex);
@@ -165,14 +165,14 @@ private:
 
     struct Pending {
         std::uint64_t seq;
-        std::string frame;  // trame DATA encodée
-        std::size_t size;   // données utiles
+        std::string frame;  // encoded DATA frame
+        std::size_t size;   // payload size
     };
 
     void spawn(asio::awaitable<void> task);
     asio::awaitable<void> run_client();
     asio::awaitable<void> run_server();
-    // Client : nouvelle connexion de transport (TCP, puis TLS avec la génération courante).
+    // Client: new transport connection (TCP, then TLS with the current generation).
     asio::awaitable<std::shared_ptr<Transport>> connect_transport(std::string& failure, CloseReason& reason);
 
     asio::awaitable<void> sender();
@@ -188,7 +188,7 @@ private:
     asio::awaitable<void> goodbye(std::shared_ptr<Transport> transport, std::string frame);
     asio::awaitable<void> retire(std::shared_ptr<Transport> transport);
 
-    // Traite une trame reçue ; faux si le canal doit s'arrêter.
+    // Handles a received frame; false if the channel must stop.
     asio::awaitable<bool> handle(const tunnel::Frame& frame);
     asio::awaitable<bool> handle_data(const tunnel::Frame& frame);
     bool handle_ack(std::uint64_t seq);
@@ -204,7 +204,7 @@ private:
     bool resumable() const;
 
     void protocol_error(tunnel::CloseCode code, const std::string& detail);
-    // Ferme le canal. last_frame : trame d'adieu ; par défaut, CLOSE avec le code de la raison.
+    // Closes the channel. last_frame: farewell frame; by default, CLOSE with the reason's code.
     void stop(CloseReason reason, std::optional<std::string> last_frame = std::nullopt);
     void finish();
 
@@ -215,45 +215,45 @@ private:
     ClosedCallback on_closed_;
     const Side side_;
 
-    std::shared_ptr<Stream> raw_;  // client : application ; serveur : destination
+    std::shared_ptr<Stream> raw_;  // client: application; server: destination
     std::string raw_peer_;
     tunnel::SessionId session_{};
-    PeerIdentity peer_;  // serveur
+    PeerIdentity peer_;  // server
 
-    // Connexion de transport courante (n = transport_index_) et jeton de reprise.
+    // Current transport connection (n = transport_index_) and resumption token.
     std::shared_ptr<Transport> transport_;
     std::uint32_t transport_index_ = 0;
     std::optional<tunnel::Token> token_;
     Clock::time_point transport_since_;
-    Duration transport_lifetime_{};          // client : échéance tirée pour la connexion courante
-    std::optional<Clock::time_point> broken_since_;  // transport perdu, reprise attendue
-    std::shared_ptr<Stream> pending_stream_;  // client : connexion en cours d'ouverture
+    Duration transport_lifetime_{};          // client: deadline drawn for the current connection
+    std::optional<Clock::time_point> broken_since_;  // transport lost, resumption expected
+    std::shared_ptr<Stream> pending_stream_;  // client: connection being opened
     bool migrating_ = false;
-    bool opened_ = false;  // OPEN_OK envoyé (serveur) ou reçu (client)
-    int open_attempts_ = 0;  // client : réouvertures du tunnel avant OPEN_OK
+    bool opened_ = false;  // OPEN_OK sent (server) or received (client)
+    int open_attempts_ = 0;  // client: reopenings of the tunnel before OPEN_OK
 
-    // Émission : trames de contrôle, puis DATA non acquittées (renvoyées après une reprise).
+    // Sending: control frames, then unacknowledged DATA (resent after a resumption).
     std::deque<std::string> control_;
     std::deque<Pending> unacked_;
     std::uint64_t unacked_bytes_ = 0;
     std::uint64_t next_seq_ = 1;
-    std::uint64_t sent_upto_ = 0;  // dernier seq écrit sur la connexion courante
-    bool local_shutdown_ = false;  // fin de la source brute : SHUTDOWN_WR(final_seq_)
+    std::uint64_t sent_upto_ = 0;  // last seq written on the current connection
+    bool local_shutdown_ = false;  // end of the raw source: SHUTDOWN_WR(final_seq_)
     std::uint64_t final_seq_ = 0;
-    bool shutdown_sent_ = false;   // SHUTDOWN_WR écrit sur la connexion courante
+    bool shutdown_sent_ = false;   // SHUTDOWN_WR written on the current connection
 
-    // Réception. Les DATA reçues attendent leur livraison dans delivery_ : la
-    // lecture du transport (ACK, PING…) ne dépend pas de l'application.
+    // Reception. Received DATA waits for its delivery in delivery_: reading
+    // the transport (ACK, PING…) does not depend on the application.
     struct Received {
         std::uint64_t seq;
         std::string bytes;
     };
     std::deque<Received> delivery_;
     std::uint64_t delivery_bytes_ = 0;
-    std::uint64_t received_ = 0;  // dernière DATA reçue (mise en file)
-    std::uint64_t last_rx_ = 0;   // dernière DATA livrée (acquittée)
+    std::uint64_t received_ = 0;  // last DATA received (queued)
+    std::uint64_t last_rx_ = 0;   // last DATA delivered (acknowledged)
     std::uint64_t acked_rx_ = 0;
-    std::uint64_t rx_since_ack_ = 0;  // octets reçus depuis le dernier ACK
+    std::uint64_t rx_since_ack_ = 0;  // bytes received since the last ACK
     std::optional<std::uint64_t> peer_final_;
     bool raw_shutdown_ = false;
 
@@ -261,21 +261,21 @@ private:
     Event space_event_;
     Event transport_event_;
     Event ack_event_;
-    Event delivery_event_;  // DATA mise en file
-    Event drained_event_;   // file de livraison libérée
+    Event delivery_event_;  // DATA queued
+    Event drained_event_;   // delivery queue drained
     asio::steady_timer idle_timer_;
     asio::steady_timer ack_timer_;
     asio::steady_timer lifetime_timer_;
     asio::steady_timer retry_timer_;
     asio::steady_timer keepalive_timer_;
-    Clock::time_point last_frame_;  // dernière trame reçue sur la connexion courante
+    Clock::time_point last_frame_;  // last frame received on the current connection
     std::uint64_t ping_nonce_ = 0;
-    bool reading_held_ = false;  // lecture du transport suspendue : file de livraison pleine
-    bool window_full_ = false;   // lecture de la source suspendue : tampon de reprise plein
-    bool delivering_ = false;    // écriture vers la connexion brute en cours
-    bool sending_ = false;       // envoi sur la connexion de transport en cours
-    bool reading_source_ = false;     // lecture de la connexion brute en cours
-    bool reading_transport_ = false;  // lecture de la connexion de transport en cours
+    bool reading_held_ = false;  // transport read suspended: delivery queue full
+    bool window_full_ = false;   // source read suspended: resumption buffer full
+    bool delivering_ = false;    // write to the raw connection in progress
+    bool sending_ = false;       // send on the transport connection in progress
+    bool reading_source_ = false;     // read of the raw connection in progress
+    bool reading_transport_ = false;  // read of the transport connection in progress
     asio::cancellation_signal dial_cancel_;
 
     Clock::time_point opened_at_;
@@ -284,8 +284,8 @@ private:
     bool finished_ = false;
     int tasks_ = 0;
     std::optional<CloseReason> reason_;
-    std::uint64_t raw_in_ = 0;   // octets lus sur la connexion brute
-    std::uint64_t raw_out_ = 0;  // octets écrits sur la connexion brute
+    std::uint64_t raw_in_ = 0;   // bytes read on the raw connection
+    std::uint64_t raw_out_ = 0;  // bytes written on the raw connection
 };
 
 }  // namespace tlsrelay::relay

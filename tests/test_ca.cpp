@@ -1,6 +1,6 @@
-// PKI en ligne de commande (phase 7, SPEC §7.6) : mini-AC, demandes de
-// signature, installation d'une génération. La PKI produite par la mini-AC
-// sert ensuite à une vraie chaîne mTLS.
+// Command-line PKI (phase 7, SPEC §7.6): mini-CA, signing requests,
+// installation of a generation. The PKI produced by the mini-CA is then
+// used for a real mTLS chain.
 
 #include "tlsrelay/pki/audit.hpp"
 #include "tlsrelay/pki/authority.hpp"
@@ -27,7 +27,7 @@ using testpki::TempDir;
 
 namespace {
 
-const std::string kPass = "phrase de passe de test";
+const std::string kPass = "test passphrase 123";
 
 std::string read(const std::filesystem::path& p) {
     std::ifstream in(p, std::ios::binary);
@@ -39,7 +39,7 @@ tls::X509Ptr cert_of(const std::string& pem) {
     return tls::X509Ptr(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
 }
 
-// Demande construite à la main (clé et extensions au choix) pour tester la politique de l'AC.
+// Hand-built request (any key and extensions) to test the CA policy.
 std::string custom_csr(const char* algorithm, const char* param, const std::string& cn,
                        const std::vector<std::pair<int, std::string>>& extensions = {}) {
     tls::EvpPkeyPtr key(std::string(algorithm) == "RSA" ? EVP_PKEY_Q_keygen(nullptr, nullptr, "RSA", size_t{2048})
@@ -76,13 +76,13 @@ class CaTest : public ::testing::Test {
 protected:
     void SetUp() override {
         pki::AuthorityOptions options;
-        options.organization = "Essai";
+        options.organization = "Test";
         pki::init_authority(ca(), kPass, options);
     }
 
     std::filesystem::path ca() const { return dir_.path() / "ac"; }
 
-    // gen-csr → ca sign → pki install → activate, pour une instance.
+    // gen-csr → ca sign → pki install → activate, for one instance.
     void provision(const std::filesystem::path& pki_root, Role role, const std::string& subject,
                    const std::vector<std::string>& sans, bool renew = false) {
         const auto csr = pki::generate_csr(pki_root, subject, {});
@@ -99,7 +99,7 @@ protected:
         const pki::Requirements req{role, true, true};
         const auto result = pki::install(pki_root, std::nullopt, files, req);
         ASSERT_EQ(result.generation, csr.generation);
-        for (const auto& e : result.check.errors) ADD_FAILURE() << e.path << " : " << e.message;
+        for (const auto& e : result.check.errors) ADD_FAILURE() << e.path << ": " << e.message;
         ASSERT_TRUE(result.check.generation);
         pki::activate(pki_root, result.generation);
     }
@@ -114,7 +114,7 @@ TEST_F(CaTest, InitCreatesHierarchyWithEncryptedKeys) {
         const auto pem = read(ca() / f);
         EXPECT_NE(pem.find("BEGIN ENCRYPTED PRIVATE KEY"), std::string::npos) << f;
         tls::BioPtr bio(BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())));
-        EXPECT_FALSE(PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, const_cast<char*>("mauvaise"))) << f;
+        EXPECT_FALSE(PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, const_cast<char*>("wrong"))) << f;
         tls::take_openssl_errors();
 #ifndef _WIN32
         struct stat st {};
@@ -125,24 +125,24 @@ TEST_F(CaTest, InitCreatesHierarchyWithEncryptedKeys) {
     const auto root = cert_of(read(ca() / "root.cert.pem"));
     const auto servers = cert_of(read(ca() / "servers.cert.pem"));
     ASSERT_TRUE(root && servers);
-    EXPECT_EQ(tls::subject_of(root.get()), "CN=Essai AC Racine,O=Essai");
+    EXPECT_EQ(tls::subject_of(root.get()), "CN=Test Root CA,O=Test");
     EXPECT_EQ(X509_check_issued(root.get(), servers.get()), X509_V_OK);
     EXPECT_EQ(X509_get_pathlen(servers.get()), 0);
     EXPECT_TRUE(X509_get_extended_key_usage(servers.get()) & XKU_SSL_SERVER);
     EXPECT_EQ(EVP_PKEY_get_bits(X509_get0_pubkey(root.get())), 384);
-    // Une seconde initialisation n'écrase rien.
+    // A second initialization overwrites nothing.
     EXPECT_THROW(pki::init_authority(ca(), kPass, {}), std::runtime_error);
-    EXPECT_THROW(pki::init_authority(dir_.path() / "autre", "court", {}), std::runtime_error);
+    EXPECT_THROW(pki::init_authority(dir_.path() / "other", "short", {}), std::runtime_error);
 }
 
 TEST_F(CaTest, ProvisionedPkiCarriesAnMtlsChain) {
-    const auto server_pki = dir_.path() / "serveur";
+    const auto server_pki = dir_.path() / "server";
     const auto client_pki = dir_.path() / "client";
-    provision(server_pki, Role::server, "CN=relay.essai,O=Essai", {"relay.essai", "127.0.0.1"});
-    provision(client_pki, Role::client, "CN=agence.essai,O=Essai", {});
+    provision(server_pki, Role::server, "CN=relay.test,O=Test", {"relay.test", "127.0.0.1"});
+    provision(client_pki, Role::client, "CN=branch.test,O=Test", {});
 
-    std::ofstream(dir_.path() / "wl.yaml") << "peers:\n  - { name: agence, ip: 127.0.0.1, ports: [mtls], "
-                                              "subject: \"CN=agence.essai,O=Essai\" }\n";
+    std::ofstream(dir_.path() / "wl.yaml") << "peers:\n  - { name: branch, ip: 127.0.0.1, ports: [mtls], "
+                                              "subject: \"CN=branch.test,O=Test\" }\n";
     EchoServer echo;
     Config s;
     s.mode = Mode::server;
@@ -154,7 +154,7 @@ TEST_F(CaTest, ProvisionedPkiCarriesAnMtlsChain) {
     Config c;
     c.mode = Mode::client;
     c.ports[PortKind::mtls] = PortConfig{Endpoint{"127.0.0.1", 0}, Endpoint{"127.0.0.1", server.port(PortKind::mtls)},
-                                         "relay.essai"};
+                                         "relay.test"};
     c.credentials = Credentials{client_pki.string()};
     RunningService client(std::move(c));
 
@@ -166,31 +166,31 @@ TEST_F(CaTest, ProvisionedPkiCarriesAnMtlsChain) {
 
 TEST_F(CaTest, GenCsrCreatesNextGenerationWithPrivateKey) {
     const auto root = dir_.path() / "pki";
-    const auto first = pki::generate_csr(root, "CN=a.essai", sans_of({"a.essai"}));
+    const auto first = pki::generate_csr(root, "CN=a.test", sans_of({"a.test"}));
     EXPECT_EQ(first.generation, "v1");
     EXPECT_EQ(pki::pending_generation(root), "v1");
-    const auto second = pki::generate_csr(root, "CN=a.essai", {});
+    const auto second = pki::generate_csr(root, "CN=a.test", {});
     EXPECT_EQ(second.generation, "v2");
     EXPECT_EQ(pki::next_generation_name(root), "v3");
-    EXPECT_FALSE(std::filesystem::exists(root / "current"));  // rien n'est activé
+    EXPECT_FALSE(std::filesystem::exists(root / "current"));  // nothing is activated
 #ifndef _WIN32
     struct stat st {};
     ASSERT_EQ(::stat((root / "v1" / "key.pem").c_str(), &st), 0);
     EXPECT_EQ(st.st_mode & 0777, 0600u);
 #endif
-    EXPECT_THROW(pki::generate_csr(root, "O=sans cn", {}), std::runtime_error);
-    EXPECT_THROW(pki::generate_csr(root, "pas un DN", {}), std::runtime_error);
+    EXPECT_THROW(pki::generate_csr(root, "O=no cn", {}), std::runtime_error);
+    EXPECT_THROW(pki::generate_csr(root, "not a DN", {}), std::runtime_error);
 }
 
 TEST_F(CaTest, SignAppliesCaPolicyAndIgnoresRequestedExtensions) {
     pki::SignRequest request;
     request.role = Role::server;
-    // La demande réclame des droits d'AC et un usage client : ignorés.
-    request.csr_pem = custom_csr("EC", "P-256", "ambitieux.essai",
+    // The request asks for CA rights and client usage: ignored.
+    request.csr_pem = custom_csr("EC", "P-256", "ambitious.test",
                                  {{NID_basic_constraints, "critical,CA:TRUE"},
                                   {NID_ext_key_usage, "clientAuth,codeSigning"},
-                                  {NID_subject_alt_name, "DNS:autre.exemple"}});
-    request.sans = sans_of({"dns:ambitieux.essai"});
+                                  {NID_subject_alt_name, "DNS:other.example"}});
+    request.sans = sans_of({"dns:ambitious.test"});
     const auto issued = pki::sign_request(ca(), kPass, request);
     EXPECT_EQ(issued.ignored_extensions,
               (std::vector<std::string>{"basicConstraints", "extendedKeyUsage", "subjectAltName"}));
@@ -199,9 +199,9 @@ TEST_F(CaTest, SignAppliesCaPolicyAndIgnoresRequestedExtensions) {
     ASSERT_TRUE(cert);
     EXPECT_EQ(X509_check_ca(cert.get()), 0);
     EXPECT_EQ(X509_get_extended_key_usage(cert.get()), static_cast<std::uint32_t>(XKU_SSL_SERVER));
-    EXPECT_EQ(X509_check_host(cert.get(), "ambitieux.essai", 0, 0, nullptr), 1);
-    EXPECT_NE(X509_check_host(cert.get(), "autre.exemple", 0, 0, nullptr), 1);
-    // Chaîne vérifiée par OpenSSL : racine → AC Serveurs → certificat.
+    EXPECT_EQ(X509_check_host(cert.get(), "ambitious.test", 0, 0, nullptr), 1);
+    EXPECT_NE(X509_check_host(cert.get(), "other.example", 0, 0, nullptr), 1);
+    // Chain verified by OpenSSL: root → Servers CA → certificate.
     tls::X509StorePtr store(X509_STORE_new());
     X509_STORE_add_cert(store.get(), cert_of(issued.roots_pem).get());
     auto chain_cert = cert_of(issued.chain_pem);
@@ -212,12 +212,12 @@ TEST_F(CaTest, SignAppliesCaPolicyAndIgnoresRequestedExtensions) {
     X509_STORE_CTX_set_purpose(ctx.get(), X509_PURPOSE_SSL_SERVER);
     EXPECT_EQ(X509_verify_cert(ctx.get()), 1) << X509_verify_cert_error_string(X509_STORE_CTX_get_error(ctx.get()));
     sk_X509_free(untrusted);
-    // Fin de validité : un an par défaut.
+    // Expiry: one year by default.
     const auto entries = pki::list_issued(ca());
     ASSERT_EQ(entries.size(), 1u);
     EXPECT_EQ(entries[0].serial, issued.serial);
-    EXPECT_EQ(entries[0].status, "valide");
-    EXPECT_EQ(entries[0].subject, "CN=ambitieux.essai");
+    EXPECT_EQ(entries[0].status, "valid");
+    EXPECT_EQ(entries[0].subject, "CN=ambitious.test");
 }
 
 TEST_F(CaTest, SignRefusesNonConformingRequests) {
@@ -226,45 +226,45 @@ TEST_F(CaTest, SignRefusesNonConformingRequests) {
     auto refused = [&](const std::string& fragment) {
         try {
             pki::sign_request(ca(), kPass, request);
-            ADD_FAILURE() << "demande acceptée, refus attendu : " << fragment;
+            ADD_FAILURE() << "request accepted, refusal expected: " << fragment;
         } catch (const std::runtime_error& e) {
             EXPECT_NE(std::string(e.what()).find(fragment), std::string::npos) << e.what();
         }
     };
-    request.csr_pem = custom_csr("RSA", nullptr, "rsa.essai");
+    request.csr_pem = custom_csr("RSA", nullptr, "rsa.test");
     refused("P-256");
-    request.csr_pem = custom_csr("EC", "P-384", "p384.essai");
+    request.csr_pem = custom_csr("EC", "P-384", "p384.test");
     refused("P-256");
-    request.csr_pem = "pas une demande";
-    refused("illisible");
+    request.csr_pem = "not a request";
+    refused("unreadable");
 
-    // Signature de la demande altérée.
-    auto tampered = custom_csr("EC", "P-256", "altere.essai");
+    // Tampered request signature.
+    auto tampered = custom_csr("EC", "P-256", "tampered.test");
     tampered[tampered.size() / 2] = tampered[tampered.size() / 2] == 'A' ? 'B' : 'A';
     request.csr_pem = tampered;
     EXPECT_THROW(pki::sign_request(ca(), kPass, request), std::runtime_error);
 
-    request.csr_pem = custom_csr("EC", "P-256", "serveur.essai");
+    request.csr_pem = custom_csr("EC", "P-256", "server.test");
     request.role = Role::server;
-    refused("SAN");  // serveur sans SAN
+    refused("SAN");  // server without SAN
 
     request.role = Role::client;
     try {
-        pki::sign_request(ca(), "mauvaise phrase", request);
-        ADD_FAILURE() << "mauvaise phrase de passe acceptée";
+        pki::sign_request(ca(), "wrong passphrase", request);
+        ADD_FAILURE() << "wrong passphrase accepted";
     } catch (const std::runtime_error& e) {
-        EXPECT_NE(std::string(e.what()).find("phrase de passe"), std::string::npos) << e.what();
+        EXPECT_NE(std::string(e.what()).find("passphrase"), std::string::npos) << e.what();
     }
-    EXPECT_TRUE(pki::list_issued(ca()).empty());  // aucun certificat émis
+    EXPECT_TRUE(pki::list_issued(ca()).empty());  // no certificate issued
 }
 
 TEST_F(CaTest, SubjectIsAttributedOnceUnlessRenewed) {
     pki::SignRequest request;
     request.role = Role::client;
-    request.csr_pem = custom_csr("EC", "P-256", "agence.essai");
+    request.csr_pem = custom_csr("EC", "P-256", "branch.test");
     const auto first = pki::sign_request(ca(), kPass, request);
 
-    request.csr_pem = custom_csr("EC", "P-256", "agence.essai");  // autre clé, même sujet
+    request.csr_pem = custom_csr("EC", "P-256", "branch.test");  // another key, same subject
     EXPECT_THROW(pki::sign_request(ca(), kPass, request), std::runtime_error);
 
     request.renew = true;
@@ -272,29 +272,29 @@ TEST_F(CaTest, SubjectIsAttributedOnceUnlessRenewed) {
     const auto entries = pki::list_issued(ca());
     ASSERT_EQ(entries.size(), 2u);
     EXPECT_EQ(entries[0].serial, first.serial);
-    EXPECT_EQ(entries[0].status, "remplacé");
+    EXPECT_EQ(entries[0].status, "replaced");
     EXPECT_EQ(entries[1].serial, second.serial);
-    EXPECT_EQ(entries[1].status, "valide");
+    EXPECT_EQ(entries[1].status, "valid");
 
-    // Renouvellement d'un sujet inconnu, ou sous un autre rôle : refusé.
-    request.csr_pem = custom_csr("EC", "P-256", "inconnu.essai");
+    // Renewal of an unknown subject, or under another role: refused.
+    request.csr_pem = custom_csr("EC", "P-256", "unknown.test");
     EXPECT_THROW(pki::sign_request(ca(), kPass, request), std::runtime_error);
     request.role = Role::server;
-    request.sans = sans_of({"agence.essai"});
-    request.csr_pem = custom_csr("EC", "P-256", "agence.essai");
+    request.sans = sans_of({"branch.test"});
+    request.csr_pem = custom_csr("EC", "P-256", "branch.test");
     EXPECT_THROW(pki::sign_request(ca(), kPass, request), std::runtime_error);
 }
 
 TEST_F(CaTest, RenewalRotatesKeyAndKeepsTrustFiles) {
-    const auto root = dir_.path() / "serveur";
-    provision(root, Role::server, "CN=relay.essai,O=Essai", {"relay.essai"});
+    const auto root = dir_.path() / "server";
+    provision(root, Role::server, "CN=relay.test,O=Test", {"relay.test"});
     const auto key_v1 = read(root / "v1" / "key.pem");
-    // Renouvellement : nouvelle clé dans v2 ; les fichiers de confiance sont repris de v1.
-    const auto csr = pki::generate_csr(root, "CN=relay.essai,O=Essai", {});
+    // Renewal: new key in v2; the trust files are taken from v1.
+    const auto csr = pki::generate_csr(root, "CN=relay.test,O=Test", {});
     pki::SignRequest request;
     request.role = Role::server;
     request.csr_pem = read(csr.csr);
-    request.sans = sans_of({"relay.essai"});
+    request.sans = sans_of({"relay.test"});
     request.renew = true;
     const auto issued = pki::sign_request(ca(), kPass, request);
     std::ofstream(dir_.path() / "cert.pem") << issued.cert_pem;
@@ -304,20 +304,20 @@ TEST_F(CaTest, RenewalRotatesKeyAndKeepsTrustFiles) {
     files.chain = dir_.path() / "chain.pem";
     const auto result = pki::install(root, std::nullopt, files, {Role::server, true, true});
     EXPECT_EQ(result.generation, "v2");
-    for (const auto& e : result.check.errors) ADD_FAILURE() << e.path << " : " << e.message;
-    EXPECT_TRUE(result.check.generation);  // garde-fou de rotation compris
+    for (const auto& e : result.check.errors) ADD_FAILURE() << e.path << ": " << e.message;
+    EXPECT_TRUE(result.check.generation);  // rotation safeguard included
     EXPECT_NE(read(root / "v2" / "key.pem"), key_v1);
     EXPECT_EQ(read(root / "v2" / "trust-roots.pem"), read(root / "v1" / "trust-roots.pem"));
-    // Une génération complète ne se réinstalle pas.
+    // A complete generation cannot be reinstalled.
     EXPECT_THROW(pki::install(root, std::string("v2"), files, {Role::server, true, true}), std::runtime_error);
 }
 
 TEST_F(CaTest, InstallRejectsCertificateForAnotherKey) {
     const auto root = dir_.path() / "client";
-    pki::generate_csr(root, "CN=agence.essai", {});
+    pki::generate_csr(root, "CN=branch.test", {});
     pki::SignRequest request;
     request.role = Role::client;
-    request.csr_pem = custom_csr("EC", "P-256", "agence.essai");  // autre clé que celle de v1
+    request.csr_pem = custom_csr("EC", "P-256", "branch.test");  // another key than v1's
     const auto issued = pki::sign_request(ca(), kPass, request);
     const auto kit = dir_.path() / "kit";
     pki::write_bundle(kit, issued);
@@ -326,19 +326,19 @@ TEST_F(CaTest, InstallRejectsCertificateForAnotherKey) {
     const auto result = pki::install(root, std::nullopt, files, {Role::client, true, true});
     EXPECT_FALSE(result.check.generation);
     bool mismatch = false;
-    for (const auto& e : result.check.errors) mismatch |= e.message.find("ne correspond pas") != std::string::npos;
+    for (const auto& e : result.check.errors) mismatch |= e.message.find("does not match") != std::string::npos;
     EXPECT_TRUE(mismatch);
 }
 
 TEST(SubjectAltNames, ParsesTypedAndBareValues) {
     std::string error;
-    const auto sans = pki::parse_sans({"dns:relay.essai,ip:10.0.0.1", "::1", "agence.essai"}, error);
+    const auto sans = pki::parse_sans({"dns:relay.test,ip:10.0.0.1", "::1", "branch.test"}, error);
     ASSERT_TRUE(sans) << error;
-    EXPECT_EQ(sans->dns, (std::vector<std::string>{"relay.essai", "agence.essai"}));
+    EXPECT_EQ(sans->dns, (std::vector<std::string>{"relay.test", "branch.test"}));
     EXPECT_EQ(sans->ip, (std::vector<std::string>{"10.0.0.1", "::1"}));
-    EXPECT_EQ(sans->to_openssl(), "DNS:relay.essai,DNS:agence.essai,IP:10.0.0.1,IP:::1");
-    EXPECT_FALSE(pki::parse_sans({"ip:relay.essai"}, error));
-    EXPECT_FALSE(pki::parse_sans({"nom invalide!"}, error));
+    EXPECT_EQ(sans->to_openssl(), "DNS:relay.test,DNS:branch.test,IP:10.0.0.1,IP:::1");
+    EXPECT_FALSE(pki::parse_sans({"ip:relay.test"}, error));
+    EXPECT_FALSE(pki::parse_sans({"invalid name!"}, error));
 }
 
 namespace {
@@ -367,38 +367,38 @@ std::string serial_hex(const ASN1_INTEGER* serial) {
 TEST_F(CaTest, RevocationIsPublishedInSignedCrls) {
     pki::SignRequest request;
     request.role = Role::client;
-    request.csr_pem = custom_csr("EC", "P-256", "perdu.essai");
+    request.csr_pem = custom_csr("EC", "P-256", "lost.test");
     const auto lost = pki::sign_request(ca(), kPass, request);
-    request.csr_pem = custom_csr("EC", "P-256", "garde.essai");
+    request.csr_pem = custom_csr("EC", "P-256", "kept.test");
     const auto kept = pki::sign_request(ca(), kPass, request);
 
-    // Série en minuscules acceptée ; double révocation et série inconnue refusées.
+    // Lowercase serial accepted; double revocation and unknown serial refused.
     std::string lower = lost.serial;
     for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     const auto entry = pki::revoke_certificate(ca(), lower, pki::RevocationReason::key_compromise);
-    EXPECT_EQ(entry.status, "révoqué");
+    EXPECT_EQ(entry.status, "revoked");
     EXPECT_EQ(entry.reason, "keyCompromise");
     EXPECT_THROW(pki::revoke_certificate(ca(), lost.serial, pki::RevocationReason::unspecified), std::runtime_error);
     EXPECT_THROW(pki::revoke_certificate(ca(), "ABCDEF", pki::RevocationReason::unspecified), std::runtime_error);
     const auto entries = pki::list_issued(ca());
     ASSERT_EQ(entries.size(), 2u);
-    EXPECT_EQ(entries[0].status, "révoqué");
+    EXPECT_EQ(entries[0].status, "revoked");
     EXPECT_FALSE(entries[0].revoked_at.empty());
-    EXPECT_EQ(entries[1].status, "valide");
+    EXPECT_EQ(entries[1].status, "valid");
 
-    EXPECT_THROW(pki::publish_crl(ca(), "mauvaise phrase de passe", 30), std::runtime_error);
+    EXPECT_THROW(pki::publish_crl(ca(), "wrong passphrase", 30), std::runtime_error);
     const auto crl = pki::publish_crl(ca(), kPass, 30);
     EXPECT_EQ(crl.number, 1u);
     EXPECT_EQ(crl.revoked, 1u);
     EXPECT_EQ(read(ca() / "crl.pem"), crl.pem);
     const auto list = crls_of(crl.pem);
-    ASSERT_EQ(list.size(), 2u);  // AC Serveurs puis AC Clients
+    ASSERT_EQ(list.size(), 2u);  // Servers CA, then Clients CA
 
     const auto servers = cert_of(read(ca() / "servers.cert.pem"));
     const auto clients = cert_of(read(ca() / "clients.cert.pem"));
     EXPECT_EQ(X509_CRL_verify(list[0].get(), X509_get0_pubkey(servers.get())), 1);
     EXPECT_EQ(X509_CRL_verify(list[1].get(), X509_get0_pubkey(clients.get())), 1);
-    EXPECT_LE(sk_X509_REVOKED_num(X509_CRL_get_REVOKED(list[0].get())), 0);  // liste absente : -1
+    EXPECT_LE(sk_X509_REVOKED_num(X509_CRL_get_REVOKED(list[0].get())), 0);  // list absent: -1
     STACK_OF(X509_REVOKED)* revoked = X509_CRL_get_REVOKED(list[1].get());
     ASSERT_EQ(sk_X509_REVOKED_num(revoked), 1);
     X509_REVOKED* r = sk_X509_REVOKED_value(revoked, 0);
@@ -407,24 +407,24 @@ TEST_F(CaTest, RevocationIsPublishedInSignedCrls) {
     ASSERT_TRUE(reason);
     EXPECT_EQ(ASN1_ENUMERATED_get(reason), CRL_REASON_KEY_COMPROMISE);
     ASN1_ENUMERATED_free(reason);
-    // Le certificat révoqué est reconnu par OpenSSL ; l'autre non.
+    // The revoked certificate is recognized by OpenSSL; the other is not.
     X509_REVOKED* found = nullptr;
     EXPECT_EQ(X509_CRL_get0_by_cert(list[1].get(), &found, cert_of(lost.cert_pem).get()), 1);
     EXPECT_EQ(X509_CRL_get0_by_cert(list[1].get(), &found, cert_of(kept.cert_pem).get()), 0);
 
-    // Numérotation croissante.
+    // Increasing numbering.
     EXPECT_EQ(pki::publish_crl(ca(), kPass, 7).number, 2u);
     EXPECT_THROW(pki::publish_crl(ca(), kPass, 0), std::runtime_error);
 
-    // Après révocation, le sujet peut recevoir un nouveau certificat sans --renew.
-    request.csr_pem = custom_csr("EC", "P-256", "perdu.essai");
+    // After revocation, the subject can receive a new certificate without --renew.
+    request.csr_pem = custom_csr("EC", "P-256", "lost.test");
     EXPECT_NO_THROW(pki::sign_request(ca(), kPass, request));
 }
 
 TEST_F(CaTest, AuditLogRecordsOperationsAndDetectsTampering) {
     pki::SignRequest request;
     request.role = Role::client;
-    request.csr_pem = custom_csr("EC", "P-256", "audit.essai");
+    request.csr_pem = custom_csr("EC", "P-256", "audit.test");
     const auto issued = pki::sign_request(ca(), kPass, request);
     pki::revoke_certificate(ca(), issued.serial, pki::RevocationReason::superseded);
     pki::publish_crl(ca(), kPass, 30);
@@ -439,7 +439,7 @@ TEST_F(CaTest, AuditLogRecordsOperationsAndDetectsTampering) {
     EXPECT_EQ(log.entries[3].operation, "crl");
     EXPECT_EQ(log.entries[0].operator_name, pki::current_operator());
 
-    // Une ligne modifiée rompt la chaîne à partir de cette ligne.
+    // A modified line breaks the chain from that line on.
     auto text = read(ca() / "audit.log");
     const auto pos = text.find("revoke");
     text.replace(pos, 6, "revok3");
@@ -449,7 +449,7 @@ TEST_F(CaTest, AuditLogRecordsOperationsAndDetectsTampering) {
     EXPECT_EQ(*log.broken_line, 3u);
     EXPECT_EQ(log.entries.size(), 2u);
 
-    // Une ligne supprimée aussi.
+    // So does a deleted line.
     auto lines = read(ca() / "audit.log");
     lines.erase(0, lines.find('\n') + 1);
     { std::ofstream(ca() / "audit.log", std::ios::binary | std::ios::trunc) << lines; }
@@ -457,7 +457,7 @@ TEST_F(CaTest, AuditLogRecordsOperationsAndDetectsTampering) {
     ASSERT_TRUE(log.broken_line);
     EXPECT_EQ(*log.broken_line, 1u);
 
-    // Champs nettoyés : une tabulation ou une fin de ligne ne casse pas le format.
+    // Cleaned fields: a tab or a line break does not break the format.
     std::filesystem::remove(ca() / "audit.log");
     pki::append_audit(ca(), "test", "a\tb\nc");
     log = pki::read_audit(ca());
@@ -465,38 +465,39 @@ TEST_F(CaTest, AuditLogRecordsOperationsAndDetectsTampering) {
     ASSERT_EQ(log.entries.size(), 1u);
     EXPECT_EQ(log.entries[0].details, "a b c");
 
-    // AC antérieure à la livraison 1.1 : pas encore de journal, rien d'altéré.
+    // CA older than release 1.1: no log yet, nothing tampered with.
     std::filesystem::remove(ca() / "audit.log");
     log = pki::read_audit(ca());
     EXPECT_TRUE(log.entries.empty());
     EXPECT_FALSE(log.broken_line);
-    // Répertoire qui n'est pas une AC (faute de frappe) : erreur, et non un journal « intact ».
-    EXPECT_THROW(pki::read_audit(ca() / "absente"), std::runtime_error);
+    // Directory that is not a CA (typo): error, not an "intact" log.
+    EXPECT_THROW(pki::read_audit(ca() / "missing"), std::runtime_error);
 }
 
 TEST_F(CaTest, IndexWithoutRevocationColumnsIsStillRead) {
-    // Inventaire écrit par la livraison 1 : cinq colonnes.
+    // Inventory written by release 1: five columns, French status values.
     { std::ofstream(ca() / "index.tsv", std::ios::binary | std::ios::trunc)
-          << "# série\trôle\tétat\tfin de validité\tsujet\n"
-          << "0A1B\tclient\tvalide\t2099-01-01 00:00:00Z\tCN=ancien,O=Essai\n"; }
+          << "# serial\trole\tstatus\tnot after\tsubject\n"
+          << "0A1B\tclient\tvalide\t2099-01-01 00:00:00Z\tCN=old,O=Test\n"; }
     const auto entries = pki::list_issued(ca());
     ASSERT_EQ(entries.size(), 1u);
-    EXPECT_EQ(entries[0].subject, "CN=ancien,O=Essai");
+    EXPECT_EQ(entries[0].subject, "CN=old,O=Test");
+    EXPECT_EQ(entries[0].status, "valid");
     EXPECT_TRUE(entries[0].revoked_at.empty());
     const auto revoked = pki::revoke_certificate(ca(), "0a1b", pki::RevocationReason::cessation_of_operation);
-    EXPECT_EQ(revoked.subject, "CN=ancien,O=Essai");
+    EXPECT_EQ(revoked.subject, "CN=old,O=Test");
     EXPECT_EQ(pki::list_issued(ca())[0].reason, "cessationOfOperation");
     EXPECT_EQ(pki::publish_crl(ca(), kPass, 30).revoked, 1u);
 }
 
 TEST_F(CaTest, PublishedCrlIsAcceptedByInstancesOfBothRoles) {
-    const auto server_root = dir_.path() / "serveur";
+    const auto server_root = dir_.path() / "server";
     const auto client_root = dir_.path() / "client";
-    provision(server_root, Role::server, "CN=relay.essai,O=Essai", {"relay.essai"});
-    provision(client_root, Role::client, "CN=agence.essai,O=Essai", {});
+    provision(server_root, Role::server, "CN=relay.test,O=Test", {"relay.test"});
+    provision(client_root, Role::client, "CN=branch.test,O=Test", {});
     const auto client_cert = cert_of(read(client_root / "v1" / "cert.pem"));
     const auto server_cert = cert_of(read(server_root / "v1" / "cert.pem"));
-    const auto serial = pki::list_issued(ca()).back().serial;  // certificat client
+    const auto serial = pki::list_issued(ca()).back().serial;  // client certificate
     pki::revoke_certificate(ca(), serial, pki::RevocationReason::key_compromise);
     const auto crl = pki::publish_crl(ca(), kPass, 30);
     std::ofstream(dir_.path() / "crl.pem", std::ios::binary) << crl.pem;
@@ -515,21 +516,21 @@ TEST_F(CaTest, PublishedCrlIsAcceptedByInstancesOfBothRoles) {
     const auto on_client = pki::load_revocations(dir_.path() / "crl.pem", *client_gen.generation);
     ASSERT_TRUE(on_client.list);
     EXPECT_FALSE(on_client.list->is_revoked(server_cert.get()));
-    // Le client apprend que son propre certificat est révoqué.
+    // The client learns that its own certificate is revoked.
     ASSERT_FALSE(on_client.warnings.empty());
-    EXPECT_NE(on_client.warnings.front().message.find("cette instance"), std::string::npos);
+    EXPECT_NE(on_client.warnings.front().message.find("this instance"), std::string::npos);
 }
 
 TEST_F(CaTest, DescribeAuthoritySummarizesCertificatesAndCrl) {
     pki::SignRequest request;
     request.role = Role::client;
-    request.csr_pem = custom_csr("EC", "P-256", "a.essai");
+    request.csr_pem = custom_csr("EC", "P-256", "a.test");
     const auto a = pki::sign_request(ca(), kPass, request);
-    request.csr_pem = custom_csr("EC", "P-256", "b.essai");
+    request.csr_pem = custom_csr("EC", "P-256", "b.test");
     pki::sign_request(ca(), kPass, request);
     auto info = pki::describe_authority(ca());
-    EXPECT_EQ(info.root.subject, "CN=Essai AC Racine,O=Essai");
-    EXPECT_EQ(info.servers.subject, "CN=Essai AC Serveurs,O=Essai");
+    EXPECT_EQ(info.root.subject, "CN=Test Root CA,O=Test");
+    EXPECT_EQ(info.servers.subject, "CN=Test Servers CA,O=Test");
     EXPECT_EQ(info.root.fingerprint.size(), 32u * 3 - 1);
     EXPECT_EQ(info.issued, 2u);
     EXPECT_EQ(info.valid, 2u);
@@ -547,21 +548,21 @@ TEST_F(CaTest, DescribeAuthoritySummarizesCertificatesAndCrl) {
     EXPECT_THROW(pki::describe_authority(dir_.path() / "absent"), std::runtime_error);
 }
 
-// Changement de racine complet avec les fichiers produits par write_root_transition :
-// chaque étape passe le garde-fou de rotation (SPEC §7.3) sur un serveur et un client.
+// Full root change with the files produced by write_root_transition:
+// each step passes the rotation safeguard (SPEC §7.3) on a server and a client.
 TEST_F(CaTest, RootTransitionFilesDriveTheThreeSteps) {
-    const auto server_root = dir_.path() / "serveur";
+    const auto server_root = dir_.path() / "server";
     const auto client_root = dir_.path() / "client";
-    provision(server_root, Role::server, "CN=relay.essai,O=Essai", {"relay.essai"});
-    provision(client_root, Role::client, "CN=agence.essai,O=Essai", {});
+    provision(server_root, Role::server, "CN=relay.test,O=Test", {"relay.test"});
+    provision(client_root, Role::client, "CN=branch.test,O=Test", {});
     const auto new_ca = dir_.path() / "ac2";
     pki::AuthorityOptions options;
-    options.organization = "Essai";
+    options.organization = "Test";
     pki::init_authority(new_ca, kPass, options);
     EXPECT_THROW(pki::write_root_transition(ca(), ca(), dir_.path() / "x"), std::runtime_error);
     const auto out = dir_.path() / "transition";
     pki::write_root_transition(ca(), new_ca, out);
-    EXPECT_NE(read(out / "LISEZMOI.txt").find("Étape 3"), std::string::npos);
+    EXPECT_NE(read(out / "README.txt").find("Step 3"), std::string::npos);
     EXPECT_EQ(pki::read_audit(ca()).entries.back().operation, "root-transition");
     EXPECT_EQ(pki::read_audit(new_ca).entries.back().operation, "root-transition");
 
@@ -572,8 +573,8 @@ TEST_F(CaTest, RootTransitionFilesDriveTheThreeSteps) {
         std::vector<std::string> sans;
         std::string side;
     };
-    const Instance instances[] = {{server_root, Role::server, "CN=relay.essai,O=Essai", {"relay.essai"}, "serveur"},
-                                  {client_root, Role::client, "CN=agence.essai,O=Essai", {}, "client"}};
+    const Instance instances[] = {{server_root, Role::server, "CN=relay.test,O=Test", {"relay.test"}, "server"},
+                                  {client_root, Role::client, "CN=branch.test,O=Test", {}, "client"}};
     auto step = [&](const Instance& inst, const std::filesystem::path& authority, bool renew, bool transition_trust) {
         const auto csr = pki::generate_csr(inst.root, inst.subject, {});
         pki::SignRequest request;
@@ -590,15 +591,15 @@ TEST_F(CaTest, RootTransitionFilesDriveTheThreeSteps) {
             files.issuer = out / inst.side / "trust-issuer.pem";
         }
         const auto result = pki::install(inst.root, std::nullopt, files, pki::Requirements{inst.role, true, true});
-        for (const auto& e : result.check.errors) ADD_FAILURE() << inst.side << " " << csr.generation << " : " << e.message;
+        for (const auto& e : result.check.errors) ADD_FAILURE() << inst.side << " " << csr.generation << ": " << e.message;
         ASSERT_TRUE(result.check.generation);
         pki::activate(inst.root, result.generation);
     };
-    for (const auto& inst : instances) step(inst, ca(), true, true);       // étape 1 : pré-confiance
-    for (const auto& inst : instances) step(inst, new_ca, false, true);   // étape 2 : bascule
-    for (const auto& inst : instances) step(inst, new_ca, true, false);   // étape 3 : retrait
+    for (const auto& inst : instances) step(inst, ca(), true, true);       // step 1: pre-trust
+    for (const auto& inst : instances) step(inst, new_ca, false, true);   // step 2: switchover
+    for (const auto& inst : instances) step(inst, new_ca, true, false);   // step 3: withdrawal
     const auto final_gen = pki::load_current_generation(server_root, pki::Requirements{Role::server, true, true});
     ASSERT_TRUE(final_gen.generation);
     EXPECT_EQ(final_gen.generation->trust_roots.size(), 1u);
-    EXPECT_EQ(tls::subject_of(final_gen.generation->trust_roots.front().get()), "CN=Essai AC Racine,O=Essai");
+    EXPECT_EQ(tls::subject_of(final_gen.generation->trust_roots.front().get()), "CN=Test Root CA,O=Test");
 }

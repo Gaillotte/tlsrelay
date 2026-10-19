@@ -1,7 +1,0 @@
-# Configuration valide dont la liste blanche est invalide (tlsrelay-admin --check).
-mode: server
-instance: essai
-destination: { address: 127.0.0.1, port: 8080 }
-whitelist: { file: liste-invalide.yaml }
-ports:
-  plain: { listen: "127.0.0.1:9001" }

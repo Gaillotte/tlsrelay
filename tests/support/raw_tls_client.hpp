@@ -1,6 +1,6 @@
 #pragma once
 
-// Client TLS « brut » (OpenSSL bloquant) pour simuler des pairs non conformes.
+// "Raw" TLS client (blocking OpenSSL) to simulate non-conforming peers.
 
 #include "support/net_helpers.hpp"
 #include "support/test_pki.hpp"
@@ -17,10 +17,10 @@
 
 namespace testnet {
 
-// Client TLS « brut » (OpenSSL bloquant) pour simuler des pairs non conformes.
+// "Raw" TLS client (blocking OpenSSL) to simulate non-conforming peers.
 class RawTlsClient {
 public:
-    // identity : certificat présenté au serveur (mTLS), avec sa clé et sa chaîne.
+    // identity: certificate presented to the server (mTLS), with its key and its chain.
     RawTlsClient(std::uint16_t port, int max_version, std::optional<std::string> alpn, const X509* root = nullptr,
                  const testpki::Issued* identity = nullptr, const X509* chain = nullptr)
         : socket_(io_) {
@@ -53,7 +53,7 @@ public:
         return SSL_connect(ssl_.get()) == 1;
     }
 
-    // Lecture bloquante : retourne vide si le serveur ferme la connexion.
+    // Blocking read: returns empty if the server closes the connection.
     std::string read(std::size_t n) {
         std::string out(n, '\0');
         std::size_t got = 0;
@@ -66,7 +66,7 @@ public:
         return out;
     }
 
-    // Lecture bloquante d'au plus n octets : vide si le serveur ferme la connexion.
+    // Blocking read of at most n bytes: empty if the server closes the connection.
     std::string read_some(std::size_t n = 16 * 1024) {
         std::string out(n, '\0');
         std::size_t r = 0;
@@ -89,14 +89,14 @@ private:
     tlsrelay::tls::SslPtr ssl_;
 };
 
-// Pair tlsrelay minimal au-dessus d'un RawTlsClient : parle le protocole de
-// tunnel (SPEC §4) pour vérifier qu'un canal fonctionne de bout en bout.
+// Minimal tlsrelay peer on top of a RawTlsClient: speaks the tunnel
+// protocol (SPEC §4) to check that a channel works end to end.
 class TunnelProbe {
 public:
     explicit TunnelProbe(RawTlsClient& raw) : raw_(raw) {}
 
-    // OPEN puis attente de OPEN_OK. Retourne la réponse du serveur (OPEN_OK,
-    // OPEN_FAIL...) ; session tirée au hasard si elle n'est pas donnée.
+    // OPEN then wait for OPEN_OK. Returns the server's reply (OPEN_OK,
+    // OPEN_FAIL...); random session if none is given.
     std::optional<tlsrelay::tunnel::Frame> open_frame(tlsrelay::PortKind kind,
                                                       std::optional<tlsrelay::tunnel::SessionId> session = {}) {
         tlsrelay::tunnel::Open o;
@@ -123,10 +123,10 @@ public:
         return raw_.write(tlsrelay::tunnel::encode_data(seq_++, data.data(), data.size()));
     }
 
-    // Fermeture du canal par CLOSE(NORMAL).
-    bool close() { return raw_.write(tlsrelay::tunnel::encode_close(0, "fin")); }
+    // Closes the channel with CLOSE(NORMAL).
+    bool close() { return raw_.write(tlsrelay::tunnel::encode_close(0, "end")); }
 
-    // Données reçues (au plus n octets), jusqu'à la fermeture.
+    // Data received (at most n bytes), until the close.
     std::string receive(std::size_t n) {
         while (received_.size() < n) {
             const auto f = next();
@@ -141,7 +141,7 @@ public:
         return out;
     }
 
-    // Vrai quand le canal est fermé (CLOSE reçu ou connexion fermée).
+    // True when the channel is closed (CLOSE received or connection closed).
     bool closed() {
         for (;;) {
             const auto f = next();
@@ -149,7 +149,7 @@ public:
         }
     }
 
-    // Prochaine trame, ou std::nullopt à la fermeture de la connexion.
+    // Next frame, or std::nullopt when the connection closes.
     std::optional<tlsrelay::tunnel::Frame> next() {
         for (;;) {
             if (auto f = decoder_.next()) return f;

@@ -1,6 +1,6 @@
 #pragma once
 
-// Choix des éléments d'un paquet de déploiement (deployment.hpp).
+// Choice of the contents of a deployment package (deployment.hpp).
 
 #include "deployment.hpp"
 
@@ -16,8 +16,8 @@ class ExportDialog : public QDialog {
     Q_OBJECT
 
 public:
-    // request : configuration et textes à exporter ; le dialogue complète
-    // le répertoire de sortie, la plateforme, le kit et les CRL.
+    // request: configuration and texts to export; the dialog fills in
+    // the output directory, the platform, the kit and the CRLs.
     ExportDialog(ExportRequest request, QWidget* parent = nullptr);
 
     const ExportRequest& request() const { return request_; }

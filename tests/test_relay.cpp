@@ -1,6 +1,6 @@
-// Tests d'intégration du relais en clair (phase 1) : chaîne complète
-// application -> tlsrelay client -> tlsrelay serveur -> destination d'écho.
-// L'intégrité est vérifiée par l'empreinte SHA-256 des flux (PLAN §5.1).
+// Integration tests of the plain relay (phase 1): full chain
+// application -> tlsrelay client -> tlsrelay server -> echo destination.
+// Integrity is checked with the SHA-256 digest of the streams (PLAN §5.1).
 
 #include "support/net_helpers.hpp"
 
@@ -90,7 +90,7 @@ TEST(Relay, HalfClosePropagatesThroughTheChain) {
     const auto data = make_random_data(64 * 1024, 7);
     app.write(data);
     app.shutdown_send();
-    // L'écho renvoie tout puis ferme : la fin de flux doit revenir jusqu'à l'application.
+    // The echo sends everything back then closes: the end of stream must come back to the application.
     const auto received = app.read_until_eof(5s);
     EXPECT_EQ(sha256(received), sha256(data));
 }
@@ -110,7 +110,7 @@ TEST(Relay, IdleTimeoutClosesChannel) {
     EXPECT_TRUE(app.wait_closed(3s));
     EXPECT_GE(Clock::now() - start, 250ms);
     EXPECT_TRUE(eventually([&] { return client.stats().channels_idle_closed.load() == 1; }));
-    // La fermeture côté client se propage au serveur.
+    // The close on the client side propagates to the server.
     EXPECT_TRUE(eventually([&] { return server.stats().channels_closed.load() == 1; }));
 }
 
@@ -122,9 +122,9 @@ TEST(Relay, ActivityKeepsChannelOpen) {
     RunningService client(std::move(cfg));
 
     TestClient app(client.port());
-    for (int i = 0; i < 10; ++i) {  // 1 s d'activité, bien au-delà de idle_timeout
+    for (int i = 0; i < 10; ++i) {  // 1 s of activity, well beyond idle_timeout
         app.write("x");
-        ASSERT_EQ(app.read_exactly(1, 1s), "x") << "itération " << i;
+        ASSERT_EQ(app.read_exactly(1, 1s), "x") << "iteration " << i;
         std::this_thread::sleep_for(100ms);
     }
     EXPECT_EQ(client.stats().channels_idle_closed.load(), 0u);
@@ -134,9 +134,9 @@ TEST(Relay, DestinationUnreachableAfterThreeAttempts) {
     ReservedPort unreachable;
     auto cfg = server_config(unreachable.port());
     cfg.destination->dial_retries = 3;
-    cfg.destination->dial_backoff = 100ms;  // attentes : 100 ms puis 200 ms
+    cfg.destination->dial_backoff = 100ms;  // waits: 100 ms then 200 ms
     RunningService server(std::move(cfg));
-    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
+    RunningService client(client_config(server.port()));  // the server only speaks the tunnel protocol
 
     TestClient app(client.port());
     const auto start = Clock::now();
@@ -151,17 +151,17 @@ TEST(Relay, DestinationRetrySucceeds) {
     auto cfg = server_config(reserved.port());
     cfg.destination->dial_retries = 3;
     cfg.destination->dial_backoff = 200ms;
-    // Délai court : sous Windows, une connexion vers un port fermé n'est pas
-    // refusée immédiatement mais reste en attente jusqu'au délai.
+    // Short timeout: on Windows, a connection to a closed port is not
+    // refused immediately but stays pending until the timeout.
     cfg.destination->dial_timeout = 100ms;
     RunningService server(std::move(cfg));
-    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
+    RunningService client(client_config(server.port()));  // the server only speaks the tunnel protocol
 
-    // Essais : t=0 (échec avant 100 ms), ~200-300 ms (échec avant ~400 ms), puis ≥ 600 ms.
+    // Attempts: t=0 (failure before 100 ms), ~200-300 ms (failure before ~400 ms), then ≥ 600 ms.
     TestClient app(client.port());
-    app.write("hello");  // mis en tampon pendant les essais
+    app.write("hello");  // buffered during the attempts
     std::this_thread::sleep_for(500ms);
-    EchoServer echo(reserved);  // la destination devient disponible avant le 3e essai
+    EchoServer echo(reserved);  // the destination becomes available before the 3rd attempt
 
     EXPECT_EQ(app.read_exactly(5, 3s), "hello");
     EXPECT_EQ(server.stats().dial_attempt_failures.load(), 2u);
@@ -173,7 +173,7 @@ TEST(Relay, MaxChannelsRejectsExtraConnections) {
     auto cfg = server_config(echo.port());
     cfg.limits.max_channels = 2;
     RunningService server(std::move(cfg));
-    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
+    RunningService client(client_config(server.port()));  // the server only speaks the tunnel protocol
 
     TestClient first(client.port());
     TestClient second(client.port());
@@ -187,7 +187,7 @@ TEST(Relay, MaxChannelsRejectsExtraConnections) {
     EXPECT_EQ(server.stats().channels_rejected.load(), 1u);
 
     first.write("c");
-    EXPECT_EQ(first.read_exactly(1), "c");  // les canaux existants ne sont pas affectés
+    EXPECT_EQ(first.read_exactly(1), "c");  // existing channels are not affected
 }
 
 TEST(Relay, GracefulStopDrainsThenClosesRemainingChannels) {
@@ -195,7 +195,7 @@ TEST(Relay, GracefulStopDrainsThenClosesRemainingChannels) {
     auto cfg = server_config(echo.port());
     cfg.limits.shutdown_timeout = 300ms;
     RunningService server(std::move(cfg));
-    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
+    RunningService client(client_config(server.port()));  // the server only speaks the tunnel protocol
     const auto port = server.port();
 
     TestClient app(client.port());
@@ -203,12 +203,12 @@ TEST(Relay, GracefulStopDrainsThenClosesRemainingChannels) {
     ASSERT_EQ(app.read_exactly(1), "a");
 
     const auto start = Clock::now();
-    server.stop();  // le canal reste ouvert : fermeture forcée à l'échéance du drain
+    server.stop();  // the channel stays open: forced close when the drain expires
     const auto elapsed = Clock::now() - start;
     EXPECT_GE(elapsed, 250ms);
     EXPECT_LT(elapsed, 3s);
     EXPECT_TRUE(app.wait_closed(1s));
-    EXPECT_THROW(TestClient{port}, std::system_error);  // plus aucune connexion acceptée
+    EXPECT_THROW(TestClient{port}, std::system_error);  // no more connections accepted
 }
 
 TEST(Relay, GracefulStopWithoutChannelsIsImmediate) {
@@ -224,7 +224,7 @@ TEST(Relay, AbortClosesChannelsImmediately) {
     auto cfg = server_config(echo.port());
     cfg.limits.shutdown_timeout = 30s;
     RunningService server(std::move(cfg));
-    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
+    RunningService client(client_config(server.port()));  // the server only speaks the tunnel protocol
 
     TestClient app(client.port());
     app.write("a");
@@ -239,7 +239,7 @@ TEST(Relay, AbortClosesChannelsImmediately) {
 TEST(Relay, SignalTriggersGracefulStop) {
     EchoServer echo;
     RunningService server(server_config(echo.port()), relay::ServiceOptions{true, 2});
-    std::this_thread::sleep_for(50ms);  // run() a démarré
+    std::this_thread::sleep_for(50ms);  // run() has started
     std::raise(SIGINT);
     EXPECT_TRUE(server.wait_finished(3s));
 }
@@ -249,15 +249,15 @@ TEST(Relay, SecondSignalForcesImmediateStop) {
     auto cfg = server_config(echo.port());
     cfg.limits.shutdown_timeout = 30s;
     RunningService server(std::move(cfg), relay::ServiceOptions{true, 2});
-    RunningService client(client_config(server.port()));  // le serveur ne parle que le protocole de tunnel
+    RunningService client(client_config(server.port()));  // the server only speaks the tunnel protocol
 
     TestClient app(client.port());
     app.write("a");
     ASSERT_EQ(app.read_exactly(1), "a");
 
-    std::raise(SIGINT);  // drain de 30 s : le canal reste ouvert
+    std::raise(SIGINT);  // 30 s drain: the channel stays open
     std::this_thread::sleep_for(200ms);
-    std::raise(SIGINT);  // arrêt immédiat
+    std::raise(SIGINT);  // immediate shutdown
     EXPECT_TRUE(server.wait_finished(2s));
     EXPECT_TRUE(app.wait_closed(1s));
 }

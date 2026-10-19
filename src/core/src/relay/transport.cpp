@@ -9,18 +9,18 @@ namespace {
 
 constexpr std::string_view kTokenLabel = "EXPORTER-tlsrelay-resume";
 
-// Ferme le flux à l'échéance : l'opération en cours se termine alors en
-// erreur, sans dépendre de l'annulation par opération (portable).
+// Closes the stream at the deadline: the operation in progress then ends with an
+// error, without relying on per-operation cancellation (portable).
 class Deadline {
 public:
-    // Le gestionnaire garde expired et le flux en vie : il peut s'exécuter
-    // après la fin de l'opération si l'échéance tombe au même moment.
+    // The handler keeps expired and the stream alive: it may run
+    // after the end of the operation if the deadline falls at the same moment.
     Deadline(const asio::any_io_executor& ex, const std::shared_ptr<bool>& expired, const std::shared_ptr<Stream>& stream,
              Duration timeout)
         : timer_(ex) {
         timer_.expires_after(timeout);
         timer_.async_wait([expired, stream](std::error_code ec) {
-            if (ec) return;  // annulé : l'opération s'est terminée à temps
+            if (ec) return;  // cancelled: the operation finished in time
             *expired = true;
             stream->close();
         });
@@ -49,7 +49,7 @@ asio::awaitable<FrameRead> read_frame(Transport& t, Duration timeout) {
     auto expired = std::make_shared<bool>(false);
     FrameRead result;
     {
-        const auto executor = co_await asio::this_coro::executor;  // hors des arguments (GCC 12)
+        const auto executor = co_await asio::this_coro::executor;  // outside the arguments (GCC 12)
         Deadline deadline(executor, expired, t.stream, timeout);
         result = co_await read_frame(t);
     }
@@ -61,11 +61,11 @@ asio::awaitable<std::string> secure(std::shared_ptr<Stream> stream, Duration tim
     auto expired = std::make_shared<bool>(false);
     std::error_code ec;
     {
-        const auto executor = co_await asio::this_coro::executor;  // hors des arguments (GCC 12)
+        const auto executor = co_await asio::this_coro::executor;  // outside the arguments (GCC 12)
         Deadline deadline(executor, expired, stream, timeout);
         ec = co_await stream->handshake();
     }
-    if (*expired) co_return "délai de handshake dépassé (" + format_duration(timeout) + ")";
+    if (*expired) co_return "handshake timed out (" + format_duration(timeout) + ")";
     if (ec) {
         std::string reason = stream->failure_reason().empty() ? ec.message() : stream->failure_reason();
         co_return reason;

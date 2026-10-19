@@ -1,7 +1,7 @@
 #pragma once
 
-// Traitement d'une connexion du canal d'administration, commun au socket Unix
-// et au named pipe.
+// Handling of an administration channel connection, shared by the Unix socket
+// and the named pipe.
 
 #include "tlsrelay/admin/admin.hpp"
 
@@ -19,18 +19,18 @@ namespace tlsrelay::admin::detail {
 
 inline constexpr auto kRequestTimeout = std::chrono::seconds(5);
 
-// Ferme le flux à l'échéance (lecture ou écriture bloquée par un client lent).
+// Closes the stream when the delay expires (read or write blocked by a slow client).
 template <class Stream>
 void arm(asio::steady_timer& timer, Stream& stream, std::chrono::steady_clock::duration delay) {
     timer.expires_after(delay);
     timer.async_wait([&stream](std::error_code ec) {
-        if (ec) return;  // annulé : le flux peut ne plus exister
+        if (ec) return;  // cancelled: the stream may no longer exist
         std::error_code ignored;
         stream.close(ignored);
     });
 }
 
-// Paramètres par valeur : ils doivent vivre dans le cadre de la coroutine.
+// Parameters by value: they must live in the coroutine frame.
 template <class Stream>
 // cppcheck-suppress passedByValue
 asio::awaitable<void> serve_session(Stream stream, Handler& handler, std::string caller) {
@@ -41,18 +41,18 @@ asio::awaitable<void> serve_session(Stream stream, Handler& handler, std::string
     std::string request;
     auto [rec, n] = co_await asio::async_read_until(stream, asio::dynamic_buffer(request, kMaxRequest), '\n', use_tuple);
     timer.cancel();
-    if (rec && rec != asio::error::not_found) co_return;  // client parti ou délai dépassé
-    // Variables hors des conditions : GCC 12 gère mal une variable déclarée dans
-    // la condition d'un if dont le bloc contient un co_await.
+    if (rec && rec != asio::error::not_found) co_return;  // client gone or timed out
+    // Variables outside the conditions: GCC 12 mishandles a variable declared in
+    // the condition of an if whose block contains a co_await.
     std::optional<Request> parsed;
     if (!rec) parsed = parse_request(std::string_view(request).substr(0, n));
     Reply reply;
     if (rec == asio::error::not_found) {
-        reply = {false, "requête trop longue\n"};
+        reply = {false, "request too long\n"};
     } else if (parsed) {
         reply = co_await handler.handle(std::move(*parsed), caller);
     } else {
-        reply = {false, "requête invalide\n"};
+        reply = {false, "invalid request\n"};
     }
 
     arm(timer, stream, kRequestTimeout);
@@ -61,8 +61,8 @@ asio::awaitable<void> serve_session(Stream stream, Handler& handler, std::string
     (void)written;
     timer.cancel();
     if (!wec) {
-        // Le client ferme après avoir lu la réponse : on attend sa fermeture
-        // pour ne pas perdre de données non lues (named pipe).
+        // The client closes after reading the reply: wait for it to close
+        // so as not to lose unread data (named pipe).
         arm(timer, stream, std::chrono::seconds(2));
         char c;
         co_await stream.async_read_some(asio::buffer(&c, 1), use_tuple);
@@ -72,12 +72,12 @@ asio::awaitable<void> serve_session(Stream stream, Handler& handler, std::string
     stream.close(ignored);
 }
 
-// Lit une réponse « OK <n>\n<corps> » dans data ; std::nullopt si incomplète.
-// error est renseigné si l'en-tête est invalide.
+// Reads a reply "OK <n>\n<body>" from data; std::nullopt if incomplete.
+// error is set if the header is invalid.
 inline std::optional<Reply> decode_reply(const std::string& data, std::string& error) {
     const auto eol = data.find('\n');
     if (eol == std::string::npos) {
-        if (data.size() > 64) error = "réponse invalide";
+        if (data.size() > 64) error = "invalid reply";
         return std::nullopt;
     }
     const std::string header = data.substr(0, eol);
@@ -86,18 +86,18 @@ inline std::optional<Reply> decode_reply(const std::string& data, std::string& e
     if (header.rfind("OK ", 0) == 0) {
         r.ok = true;
         size = header.substr(3);
-    } else if (header.rfind("ERREUR ", 0) == 0) {
+    } else if (header.rfind("ERROR ", 0) == 0) {
         r.ok = false;
-        size = header.substr(7);
+        size = header.substr(6);
     } else {
-        error = "réponse invalide";
+        error = "invalid reply";
         return std::nullopt;
     }
     std::size_t length = 0;
     try {
         length = std::stoul(size);
     } catch (const std::exception&) {
-        error = "réponse invalide";
+        error = "invalid reply";
         return std::nullopt;
     }
     if (data.size() < eol + 1 + length) return std::nullopt;

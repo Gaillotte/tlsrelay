@@ -2,7 +2,7 @@
 
 > Test strategy, test environments, full description of every test, coverage of the requirements ([SPEC §11](SPEC.md#11-requirements)) by the tests, and code coverage with the new tests it calls for.
 > Scope: deliveries 1.0 (service `tlsrelay`, tool `tlsrelay-testkit`) and 1.1 (editor `tlsrelay-admin`).
-> Related documents: [PLAN.md](PLAN.md) §5 (original test strategy), [RECETTE.md](RECETTE.md) (acceptance procedure), [PV-RECETTE.md](PV-RECETTE.md) (acceptance sign-off record), [PENTEST.md](PENTEST.md) (penetration-test checklist).
+> Related documents: [PLAN.md](PLAN.md) §5 (original test strategy), [ACCEPTANCE.md](ACCEPTANCE.md) (acceptance procedure), [ACCEPTANCE-REPORT.md](ACCEPTANCE-REPORT.md) (acceptance sign-off record), [PENTEST.md](PENTEST.md) (penetration-test checklist).
 
 ## Contents
 
@@ -48,7 +48,7 @@
 | Security | libFuzzer, sanitizers, clang-tidy, cppcheck, MSVC `/analyze`, sslyze, testssl.sh, hardening and dependency checks; penetration-test checklist | See 3.10–3.12 | CI (automated parts); penetration test manual |
 | Performance and endurance | `tlsrelay-testkit`, `perf.sh`, `soak.sh` | Concurrent channels, throughput, latency, resource stability | CI (1,000 channels, 4-minute soak); full targets on a test machine |
 | Packaging | Container installs, MSI install/uninstall | Build, install, upgrade, uninstall, licences | CI, 5 Linux distributions and Windows |
-| Acceptance | `tools/recette.ps1` + manual steps | Business scenarios R01–R13, service steps M01–M09, editor steps E01–E10 | Automated part in CI (Linux console, Windows services); full run on the acceptance station |
+| Acceptance | `tools/acceptance.ps1` + manual steps | Business scenarios R01–R13, service steps M01–M09, editor steps E01–E10 | Automated part in CI (Linux console, Windows services); full run on the acceptance station |
 
 ### 1.4 Test design techniques
 
@@ -75,7 +75,7 @@
 | Performance targets met | Met (section 3.21) |
 | Line coverage of the delivered code ≥ 90 % | Met (section 6); enforced by the CI coverage job |
 | 72 h endurance | Manual, before production (4-minute soak in CI) |
-| Acceptance sign-off record signed | [PV-RECETTE.md](PV-RECETTE.md), to be signed by the project owner |
+| Acceptance sign-off record signed | [ACCEPTANCE-REPORT.md](ACCEPTANCE-REPORT.md), to be signed by the project owner |
 
 ### 1.6 Defect handling
 
@@ -89,21 +89,21 @@ A failing CI job blocks the merge of its branch. A failure is root-caused before
 
 | Job | Runner / image | Compiler, libraries | What runs |
 |---|---|---|---|
-| Linux GCC Release | ubuntu-24.04 | GCC 13, OpenSSL 3.0 (distribution), Qt 6.4 | ctest (GoogleTest, Qt Test, `Lifecycle.Console`, `Lifecycle.Pki`, `Admin.Check*`); `systemd.sh` (real systemd service, root); `tls-scan.sh` with sslyze and testssl.sh 3.2.1; `check-deps.sh`; `check-hardening.sh`; `recette.ps1 -Quick` in console mode (report uploaded) |
+| Linux GCC Release | ubuntu-24.04 | GCC 13, OpenSSL 3.0 (distribution), Qt 6.4 | ctest (GoogleTest, Qt Test, `Lifecycle.Console`, `Lifecycle.Pki`, `Admin.Check*`); `systemd.sh` (real systemd service, root); `tls-scan.sh` with sslyze and testssl.sh 3.2.1; `check-deps.sh`; `check-hardening.sh`; `acceptance.ps1 -Quick` in console mode (report uploaded) |
 | Linux Clang Release | ubuntu-24.04 | Clang 18, OpenSSL 3.0, Qt 6.4 | ctest |
 | Linux Clang ASan+UBSan | ubuntu-24.04 | Clang 18 Debug, AddressSanitizer + UndefinedBehaviorSanitizer | ctest |
 | Linux Clang TSan | ubuntu-24.04 | Clang 18 Debug, ThreadSanitizer (`halt_on_error=1`; races reported inside the Qt libraries, which are not instrumented, are suppressed by `tests/tsan.supp`) | ctest |
 | Linux OpenSSL 3.5 LTS | ubuntu-24.04 | GCC, OpenSSL 3.5 built from the official archive (SHA-512 verified) | Version check (`OpenSSL 3.5.x`), ctest with the matching `openssl` command |
-| Analyse statique (clang-tidy, cppcheck) | ubuntu-24.04 | clang-tidy 18, cppcheck | `tools/run-clang-tidy.sh`, `tools/run-cppcheck.sh` on the whole code base, editor included |
-| Couverture de code (gcovr) | ubuntu-24.04 | GCC 13 `--coverage`, Qt 6.4, gcovr 8.6 | `tools/coverage.sh`: instrumented build, all ctest entries, then `systemd.sh` as root on the instrumented binary, HTML report (`couverture` artifact); fails below 90 % of lines (section 6) |
-| Fuzzing (60 s par cible) | ubuntu-24.04 | Clang libFuzzer + ASan/UBSan | `tools/run-fuzz.sh` on the 6 targets from their corpus |
-| Performances et endurance | ubuntu-24.04 | Release build | `perf.sh` with 1,000 channels; `soak.sh` for 4 minutes (reports uploaded) |
-| Windows MSVC Release | windows-2022 | MSVC 2022, vcpkg (OpenSSL 3.5 LTS, Asio, CLI11, spdlog, yaml-cpp, GoogleTest), Qt 6.8 LTS | ctest; `check-hardening.ps1`; shipped OpenSSL version check; `windows-service.ps1` (real service); `windows-pki.ps1`; MSI build; MSI installation; installed editor check (without the runner's Qt); `recette.ps1 -Services -Quick` on the installed binaries; MSI uninstallation |
+| Static analysis (clang-tidy, cppcheck) | ubuntu-24.04 | clang-tidy 18, cppcheck | `tools/run-clang-tidy.sh`, `tools/run-cppcheck.sh` on the whole code base, editor included |
+| Code coverage (gcovr) | ubuntu-24.04 | GCC 13 `--coverage`, Qt 6.4, gcovr 8.6 | `tools/coverage.sh`: instrumented build, all ctest entries, then `systemd.sh` as root on the instrumented binary, HTML report (`coverage` artifact); fails below 90 % of lines (section 6) |
+| Fuzzing (60 s per target) | ubuntu-24.04 | Clang libFuzzer + ASan/UBSan | `tools/run-fuzz.sh` on the 6 targets from their corpus |
+| Performance and soak | ubuntu-24.04 | Release build | `perf.sh` with 1,000 channels; `soak.sh` for 4 minutes (reports uploaded) |
+| Windows MSVC Release | windows-2022 | MSVC 2022, vcpkg (OpenSSL 3.5 LTS, Asio, CLI11, spdlog, yaml-cpp, GoogleTest), Qt 6.8 LTS | ctest; `check-hardening.ps1`; shipped OpenSSL version check; `windows-service.ps1` (real service); `windows-pki.ps1`; MSI build; MSI installation; installed editor check (without the runner's Qt); `acceptance.ps1 -Services -Quick` on the installed binaries; MSI uninstallation |
 | Windows MSVC /analyze | windows-2022 | MSVC code analysis | Build with `/analyze`, findings are errors |
-| Paquets deb (ubuntu:22.04) | container | Distribution toolchain, bundled dependencies | `.deb` build |
-| Paquets rpm (rockylinux:9) | container | Distribution toolchain | `.rpm` build |
-| Installation deb/rpm (×5) | ubuntu:22.04, ubuntu:24.04, debian:12, rockylinux:9, almalinux:9 | — | `packaging/test-linux-package.sh`: install, run, upgrade in place, licences, uninstall |
-| Paquets de la livraison | ubuntu-24.04 | — | Gathers `.deb`, `.rpm`, `.msi` and `SHA256SUMS` into the `tlsrelay-livraison` artifact |
+| Packages deb (ubuntu:22.04) | container | Distribution toolchain, bundled dependencies | `.deb` build |
+| Packages rpm (rockylinux:9) | container | Distribution toolchain | `.rpm` build |
+| Install deb/rpm (×5) | ubuntu:22.04, ubuntu:24.04, debian:12, rockylinux:9, almalinux:9 | — | `packaging/test-linux-package.sh`: install, run, upgrade in place, licences, uninstall |
+| Release packages | ubuntu-24.04 | — | Gathers `.deb`, `.rpm`, `.msi` and `SHA256SUMS` into the `tlsrelay-release` artifact |
 
 Totals per push: 19 jobs; 213 ctest entries on Linux (204 GoogleTest cases, 20 Qt Test functions counted as one ctest entry, `Admin.CheckValid`, `Admin.CheckInvalid`, `Admin.CheckWhitelist`, `Admin.CheckUnreadable`, `Admin.CheckHeadless`, `Lifecycle.Console`, `Lifecycle.Pki`, `Lifecycle.Cli`); on Windows, 199 GoogleTest cases (5 are Linux-only, see 5.3) plus the Qt and `Admin.Check*` entries.
 
@@ -121,7 +121,7 @@ All automated tests run on one machine, on the loopback interface:
 - Whitelist tests use other loopback addresses (`127.0.0.2`, …) with the client's `source_address` to test the IP check.
 - The cut proxy sits between the two relays when a test needs network faults.
 
-### 2.3 Acceptance station (PLAN §5.7, RECETTE.md)
+### 2.3 Acceptance station (PLAN §5.7, ACCEPTANCE.md)
 
 | Item | Value |
 |---|---|
@@ -131,7 +131,7 @@ All automated tests run on one machine, on the loopback interface:
 | Network faults | `tlsrelay-testkit proxy` between client and server (scenario R06) |
 | Linux cross tests | Optional Ubuntu 22.04 Hyper-V VM on an internal switch, `.deb` package installed (R13) |
 | PKI | Created by the mini-CA itself (R01) |
-| Report | `rapport.md`: results, hashes, log extracts, versions of tlsrelay, OpenSSL and the OS |
+| Report | `report.md`: results, hashes, log extracts, versions of tlsrelay, OpenSSL and the OS |
 
 ### 2.4 Performance machine
 
@@ -150,7 +150,7 @@ The full performance targets (5,000 channels) were measured on a Linux developme
 | Fuzzing | Configure the `linux-fuzz` preset, then `tools/run-fuzz.sh build/linux-fuzz <seconds> [target…]` |
 | Performance / soak | `tests/perf/perf.sh build 5000 perf.json`; `tests/perf/soak.sh build 4320 soak.csv` (72 h) |
 | Service lifecycle | `sudo tests/lifecycle/systemd.sh build/src/app/tlsrelay`; Windows: `tests\lifecycle\windows-service.ps1 <bin dir>` as administrator |
-| Acceptance | `tools/recette.ps1` (see RECETTE.md) |
+| Acceptance | `tools/acceptance.ps1` (see ACCEPTANCE.md) |
 
 ---
 
@@ -259,7 +259,7 @@ Each table lists the tests of one suite, what each test does and checks, and the
 | `Dn.ParsesEscapesAndMatchesCertificateForm` | RFC 4514 DN parsing with escapes; multi-valued and hex values refused; matches the certificate's form | WL-03 |
 | `Whitelist.DiffReportsChanges` | The reload diff lists peers added, removed and modified | WL-04 |
 | `Whitelist.StructureErrors` | Root not a map, unknown top-level key, `peers` not a list, entry not a map, non-scalar value, YAML syntax error with line: each reported at its place | WL-01 |
-| `Whitelist.MissingFileIsReported` | Missing file: one error "absent ou illisible" | WL-01, WL-06 |
+| `Whitelist.MissingFileIsReported` | Missing file: one error "missing or unreadable file" | WL-01, WL-06 |
 
 ### 3.7 Instance PKI — `test_pki.cpp`
 
@@ -404,9 +404,9 @@ Each table lists the tests of one suite, what each test does and checks, and the
 
 | Test | Description | Req. |
 |---|---|---|
-| `AdminProtocol.ParsesRequestWords` | Request line split into command and arguments; empty lines and control characters refused; `OK <n>` / `ERREUR <n>` reply encoding | ADM-03 |
+| `AdminProtocol.ParsesRequestWords` | Request line split into command and arguments; empty lines and control characters refused; `OK <n>` / `ERROR <n>` reply encoding | ADM-03 |
 | `AdminTest.StatusDescribesInstance` | `status`: instance, mode, OpenSSL version, ports, whitelist size; `ping` answers `pong` | ADM-05 |
-| `AdminTest.UnknownOrMalformedCommandsAreRefused` | Unknown command, unexpected argument and over-long line: `ERREUR` reply with the command list, service unaffected | ADM-03 |
+| `AdminTest.UnknownOrMalformedCommandsAreRefused` | Unknown command, unexpected argument and over-long line: `ERROR` reply with the command list, service unaffected | ADM-03 |
 | `AdminTest.SecondExecutionOfSameInstanceIsRefused` | Instance lock; released at stop | ADM-04 |
 | `AdminTest.UnreachableInstanceIsReported` | Command to a stopped instance: clear error | ADM-05 |
 | `AdminTest.SocketIsRestrictedToOwnerAndGroup` | Socket `0660`, directory `0750` (Linux only) | ADM-03 |
@@ -418,7 +418,7 @@ Each table lists the tests of one suite, what each test does and checks, and the
 | `AdminTest.LogLevelChangesAtRuntime` | `log-level` changes global and per-category levels | LOG-02 |
 | `AdminTest.LogReopenStartsNewFileAfterRotation` | `log-reopen` after a rename creates a new file (Linux only) | LOG-02 |
 | `AdminTest.EndpointErrorsAreReported` | Endpoint path longer than `sun_path` (server and client), parent directory impossible to create, lock file that is a directory, endpoint occupied by a directory: each a clear error (Linux only) | ADM-03 |
-| `AdminTest.InvalidRepliesAreRejected` | Fake server answering an unknown header, a non-numeric size, 80 bytes without newline, a truncated body, or nothing: "réponse invalide" or "connexion fermée avant la fin de la réponse", no hang (Linux only) | ADM-03 |
+| `AdminTest.InvalidRepliesAreRejected` | Fake server answering an unknown header, a non-numeric size, 80 bytes without newline, a truncated body, or nothing: "invalid reply" or "connection closed before the end of the reply", no hang (Linux only) | ADM-03 |
 
 ### 3.15 Attack cases — `test_attacks.cpp`
 
@@ -456,11 +456,11 @@ Runs with the `offscreen` Qt platform. Earlier tests replace dialogs by injected
 | `pki_panel_full_cycle` | Open CA, sign server and client, renewal and refusal, expiry filter, revocation with CRLs, audit log contents | EDT-04 |
 | `pki_panel_refuses_wrong_passphrase_and_bad_directory` | Wrong passphrase and non-CA directory refused; cancelled entry does nothing | EDT-04 |
 | `sign_dialog_inspects_request` | Request details shown; renewal with a different subject flagged | EDT-04 |
-| `pki_root_change_preparation` | Root-change wizard produces the step files and `LISEZMOI.txt` | EDT-05 |
+| `pki_root_change_preparation` | Root-change wizard produces the step files and `README.txt` | EDT-05 |
 | `export_dialog_builds_request_and_warns` | Export menu on an invalid document refused; dialog: Export disabled without output directory, Windows target, kit and CRL fields reflected in the request, warning about Linux paths, success message, package written; Cancel writes nothing | EDT-03 |
 | `diff_dialog_is_shown_and_controls_saving` | Default confirmation is the diff dialog: first save shows both files, a later change shows only the changed one; Save writes with `.bak`, Cancel writes nothing and keeps the document modified | EDT-02 |
-| `revoke_and_crl_dialogs` | Revoke dialog on the selected certificate (reason, CRL validity, copy path) → revoked with reason, CRL copy written; CRL dialog → CRL n° 2; Cancel leaves the certificate valid | EDT-04, CA-05 |
-| `root_change_dialog_creates_ca_and_prepares_files` | Wizard: empty fields do nothing; new CA created from the wizard (directory picker, passphrase typed twice; mismatch refused first); step files and `LISEZMOI.txt` produced and shown | EDT-05, CA-07 |
+| `revoke_and_crl_dialogs` | Revoke dialog on the selected certificate (reason, CRL validity, copy path) → revoked with reason, CRL copy written; CRL dialog → CRL no. 2; Cancel leaves the certificate valid | EDT-04, CA-05 |
+| `root_change_dialog_creates_ca_and_prepares_files` | Wizard: empty fields do nothing; new CA created from the wizard (directory picker, passphrase typed twice; mismatch refused first); step files and `README.txt` produced and shown | EDT-05, CA-07 |
 | `sign_and_create_dialogs` | "New CA" (directory and organisation), "Open CA" in another panel, signing dialog (unreadable file shown, requested SAN extension listed as ignored, kit written), renewal of the selected certificate (subject and role pre-filled, old certificate superseded) | EDT-04, CA-02 |
 | `main_window_navigation_and_close` | Issue rows focus the configuration tab or the whitelist row; ignored keys listed; About box versions; unreadable file and impossible save reported; Open with unsaved changes asks first; Open and Save As through the file pickers; closing asks Cancel / Save / Discard; unmodified window closes without asking | EDT-01, EDT-02 |
 
@@ -469,9 +469,9 @@ Runs with the `offscreen` Qt platform. Earlier tests replace dialogs by injected
 | Test | Description | Req. |
 |---|---|---|
 | `Admin.CheckValid` | `tlsrelay-admin --check examples/client.yaml` exits 0 | EDT-06 |
-| `Admin.CheckInvalid` | `--check tests/admin/invalide.yaml` exits non-zero and reports `ports.plain.listen : adresse invalide` | EDT-06, EDT-01 |
+| `Admin.CheckInvalid` | `--check tests/admin/invalid.yaml` exits non-zero and reports `ports.plain.listen: invalid address` | EDT-06, EDT-01 |
 | `Admin.CheckWhitelist` | Valid server configuration whose whitelist has a bad address: the whitelist error is reported with its file and path | EDT-06, WL-01 |
-| `Admin.CheckUnreadable` | Missing file: "fichier illisible" | EDT-06 |
+| `Admin.CheckUnreadable` | Missing file: "unreadable file" | EDT-06 |
 | `Admin.CheckHeadless` | `--check` without `DISPLAY`, `WAYLAND_DISPLAY` nor `QT_QPA_PLATFORM` (Linux server): runs and reports the file valid (Linux only) | EDT-06 |
 
 ### 3.18 Lifecycle scripts — real binary
@@ -505,7 +505,7 @@ libFuzzer with ASan and UBSan, 60 s per target per push from the corpus in `fuzz
 |---|---|---|---|
 | AddressSanitizer + UndefinedBehaviorSanitizer | CI, full ctest | No report | SEC-02 |
 | ThreadSanitizer | CI, full ctest, `halt_on_error=1` | No report | SEC-02 |
-| clang-tidy, cppcheck | CI "Analyse statique" | No finding | SEC-02 |
+| clang-tidy, cppcheck | CI "Static analysis" | No finding | SEC-02 |
 | MSVC `/analyze` | CI "Windows MSVC /analyze" | No finding | SEC-02 |
 | `tools/check-hardening.sh` | CI, Linux binaries | PIE, full RELRO, stack protector, `_FORTIFY_SOURCE`, non-executable stack | SEC-01 |
 | `tools/check-hardening.ps1` | CI, Windows binaries | `/guard:cf`, DEP, ASLR (high entropy) | SEC-01 |
@@ -530,9 +530,9 @@ Measured on the Linux development machine (full mTLS chain): 5,000 concurrent ch
 | `packaging/test-linux-package.sh`: install, account and directories created, licence and notices present, mTLS exchange between an installed client and server, uninstall (and purge on Debian) | Ubuntu 22.04, 24.04, Debian 12, Rocky 9, Alma 9 | PKG-01, PKG-02, GEN-01 |
 | MSI build, silent install (`ADDLOCAL=ALL`), files and licences present, `tlsrelay version`, uninstall leaves no binary | Windows CI | PKG-01, PKG-02 |
 | Installed editor check: Qt DLLs and `qwindows.dll` deployed, LGPL/GPL texts, Start menu shortcut for all users, `--check` valid (0) and invalid (1) without the runner's Qt | Windows CI | EDT-06 |
-| `tlsrelay-livraison` artifact with `SHA256SUMS` | CI "Paquets de la livraison" | PKG-03 |
+| `tlsrelay-release` artifact with `SHA256SUMS` | CI "Release packages" | PKG-03 |
 
-### 3.23 Acceptance — `tools/recette.ps1`, [RECETTE.md](RECETTE.md)
+### 3.23 Acceptance — `tools/acceptance.ps1`, [ACCEPTANCE.md](ACCEPTANCE.md)
 
 Automated scenarios (CI runs them with `-Quick`: on Linux in console mode, on Windows as services on the installed MSI binaries):
 
@@ -668,13 +668,13 @@ Legend for the **Status** column: **Auto** — fully verified by automated tests
 | PERF-04 | 72 h endurance | `soak.sh` for 4 minutes | 72 h run before production | Partial (manual) |
 | PKG-01 | `.deb`, `.rpm`, `.msi` lifecycle | Package jobs, installs on 5 distributions, MSI install/uninstall | In-place upgrade (before production) | Auto + manual |
 | PKG-02 | Licences and notices shipped | `test-linux-package.sh`, Windows MSI checks | E01 | Auto |
-| PKG-03 | SHA-256 hashes of the delivery | `tlsrelay-livraison` artifact | M08 | Auto |
+| PKG-03 | SHA-256 hashes of the delivery | `tlsrelay-release` artifact | M08 | Auto |
 | EDT-01 | Editing with service validation, fields marked | Qt `validation_matches_service`, `invalid_fields_are_marked`, `fields_without_object_are_hidden_unless_filled`, `whitelist_editor_round_trip_and_marks`, `form_round_trips_examples`, `Admin.CheckInvalid`, Qt `main_window_navigation_and_close`, `Admin.CheckWhitelist` | E02 | Auto |
 | EDT-02 | Save pipeline: refusal, diff, `.bak`, atomic | Qt `open_edit_save_with_preview_and_backup`, `save_refused_while_invalid`, `new_document_is_saved_normalized`, `diff_preview_lists_changes`, `TextDiff.*`, Qt `diff_dialog_is_shown_and_controls_saving`, `main_window_navigation_and_close` | E03, E04 | Auto |
 | EDT-03 | Deployment package export | Qt `export_package_for_linux_and_windows`, Qt `export_dialog_builds_request_and_warns` | E05 | Auto |
 | EDT-04 | PKI module | Qt `pki_panel_full_cycle`, `pki_panel_refuses_wrong_passphrase_and_bad_directory`, `sign_dialog_inspects_request`, `CaTest.DescribeAuthoritySummarizesCertificatesAndCrl`, Qt `revoke_and_crl_dialogs`, `sign_and_create_dialogs` | E06–E09 | Auto |
 | EDT-05 | Root-change wizard | Qt `pki_root_change_preparation`, Qt `root_change_dialog_creates_ca_and_prepares_files` | E10 | Auto |
-| EDT-06 | Shipped in the MSI, `--check` | `Admin.CheckValid`, `Admin.CheckInvalid`, Windows "Éditeur installé" step, `Admin.CheckWhitelist`, `Admin.CheckUnreadable`, `Admin.CheckHeadless` | E01 | Auto |
+| EDT-06 | Shipped in the MSI, `--check` | `Admin.CheckValid`, `Admin.CheckInvalid`, Windows "Installed editor" step, `Admin.CheckWhitelist`, `Admin.CheckUnreadable`, `Admin.CheckHeadless` | E01 | Auto |
 
 ---
 
@@ -753,7 +753,7 @@ All 91 requirements have at least one automated verification on every push. Ever
 | Platform | Linux only. Windows-only files (`platform_windows.cpp`, named-pipe admin channel, Windows service glue) are not compiled there and are not in the figures; they are exercised by `windows-service.ps1`, `windows-pki.ps1` and the acceptance run on the installed MSI |
 | Branches | Counted by gcov with unreachable and exception-only branches excluded (`--exclude-unreachable-branches --exclude-throw-branches`) |
 | Command | `tools/coverage.sh [build dir] [minimum line %]` → `<build>/coverage/index.html`, `summary.txt`, `summary.json` |
-| CI | Job "Couverture de code (gcovr)" on every push; HTML report uploaded as the `couverture` artifact; **fails below 90 % of lines** |
+| CI | Job "Code coverage (gcovr)" on every push; HTML report uploaded as the `coverage` artifact; **fails below 90 % of lines** |
 | Target | **90 % of lines** of the delivered code; branch figures are reported for information |
 
 Figures vary by about ±0.1 % between runs, because a few lines run only on timing-dependent paths (retries, races between close and timeout). Counters written by the service process itself under systemd are lost (the service account cannot write into the build tree); the command-line processes that drive it run as root and are counted.
@@ -816,7 +816,7 @@ The editor dialog tests drive the real modal windows: a helper waits for the nex
 
 | Defect | Found by | Fix |
 |---|---|---|
-| `tlsrelay ca audit --dir <path>` on a directory that is not a CA (for example a mistyped path) reported "0 opération(s), chaîne d'empreintes intacte" and exit code 0: a typo looked like a clean audit | CT-08 (`cli.sh`) | `read_audit()` refuses a directory without `root.cert.pem` ("n'est pas un répertoire d'AC tlsrelay"); exit code 1. Checked by `CaTest.AuditLogRecordsOperationsAndDetectsTampering` and `cli.sh` |
+| `tlsrelay ca audit --dir <path>` on a directory that is not a CA (for example a mistyped path) reported "0 operation(s), hash chain intact" and exit code 0: a typo looked like a clean audit | CT-08 (`cli.sh`) | `read_audit()` refuses a directory without `root.cert.pem` ("is not a tlsrelay CA directory"); exit code 1. Checked by `CaTest.AuditLogRecordsOperationsAndDetectsTampering` and `cli.sh` |
 | `tlsrelay-admin --check` aborted on a Linux machine without a display (the Qt platform plugin could not start), so the headless check documented for servers did not work there; CI did not see it because its ctest environment sets `QT_QPA_PLATFORM=offscreen` | `tools/demo.sh` | In `--check` mode without a display, the offscreen platform is used (the Qt libraries and plugins are still loaded, so an incomplete installation is still detected). Checked by `Admin.CheckHeadless` |
 
 ### 6.6 Keeping the level

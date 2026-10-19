@@ -61,7 +61,7 @@ struct RevocationLoader {
         try {
             pem = detail::read_file(file);
         } catch (const std::exception&) {
-            result.errors.push_back({where, "fichier illisible"});
+            result.errors.push_back({where, "unreadable file"});
             return result;
         }
         auto list = std::make_shared<RevocationList>();
@@ -70,12 +70,12 @@ struct RevocationLoader {
         while (X509_CRL* crl = PEM_read_bio_X509_CRL(bio.get(), nullptr, nullptr, nullptr)) crls.emplace_back(crl);
         ERR_clear_error();
         if (crls.empty()) {
-            result.errors.push_back({where, "aucune CRL PEM trouvée"});
+            result.errors.push_back({where, "no PEM CRL found"});
             return result;
         }
 
-        // AC dont la CRL compte : celles attendues chez le pair. L'AC de
-        // l'instance (chain.pem) sert seulement à signaler sa propre révocation.
+        // CAs whose CRL counts: those expected from the peer. The instance's
+        // CA (chain.pem) only serves to report the instance's own revocation.
         auto signed_by = [](const X509_CRL* crl, const std::vector<tls::X509Ptr>& cas) -> const X509* {
             for (const auto& ca : cas) {
                 if (X509_NAME_cmp(X509_CRL_get_issuer(crl), X509_get_subject_name(ca.get())) != 0) continue;
@@ -97,17 +97,17 @@ struct RevocationLoader {
             const X509* ca = signed_by(crl.get(), gen.trust_issuers);
             if (!ca) {
                 if (names_issuer(crl.get(), gen.trust_issuers)) {
-                    result.errors.push_back({where, "CRL de « " + issuer + " » : signature invalide"});
+                    result.errors.push_back({where, "CRL of \"" + issuer + "\": invalid signature"});
                     continue;
                 }
-                // CRL d'une autre AC (fichier commun aux deux rôles) : sert
-                // seulement à signaler la révocation du certificat de l'instance.
+                // CRL of another CA (file shared by both roles): only serves
+                // to report the revocation of the instance's certificate.
                 if (gen.cert && signed_by(crl.get(), gen.chain)) {
                     X509_REVOKED* entry = nullptr;
                     if (X509_CRL_get0_by_cert(crl.get(), &entry, gen.cert.get()) == 1) {
-                        result.warnings.push_back({where, "le certificat de cette instance (" +
+                        result.warnings.push_back({where, "this instance's certificate (" +
                                                               tls::subject_of(gen.cert.get()) +
-                                                              ") est révoqué : le renouveler"});
+                                                              ") is revoked: renew it"});
                     }
                 }
                 continue;
@@ -117,12 +117,12 @@ struct RevocationLoader {
             }
             const ASN1_TIME* next = X509_CRL_get0_nextUpdate(crl.get());
             if (X509_cmp_current_time(X509_CRL_get0_lastUpdate(crl.get())) > 0) {
-                result.warnings.push_back({where, "CRL de « " + issuer + " » datée dans le futur (horloge ?)"});
+                result.warnings.push_back({where, "CRL of \"" + issuer + "\" dated in the future (clock?)"});
             }
             if (next && X509_cmp_current_time(next) < 0) {
-                result.warnings.push_back({where, "CRL de « " + issuer + " » périmée depuis le " +
+                result.warnings.push_back({where, "CRL of \"" + issuer + "\" stale since " +
                                                       tls::time_to_string(next) +
-                                                      " : toujours appliquée, à republier (ca crl)"});
+                                                      ": still applied, republish it (ca crl)"});
             }
             const auto next_text = next ? tls::time_to_string(next) : std::string();
             if (!next_text.empty() && (list->next_update_.empty() || next_text < list->next_update_)) {
@@ -132,9 +132,9 @@ struct RevocationLoader {
         }
         for (std::size_t i = 0; i < covered.size(); ++i) {
             if (!covered[i]) {
-                result.warnings.push_back({where, "aucune CRL pour l'AC « " +
+                result.warnings.push_back({where, "no CRL for CA \"" +
                                                       tls::subject_of(gen.trust_issuers[i].get()) +
-                                                      " » : ses certificats ne sont pas contrôlés"});
+                                                      "\": its certificates are not checked"});
             }
         }
         if (result.errors.empty()) result.list = std::move(list);

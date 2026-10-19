@@ -1,4 +1,4 @@
-// Chargeur de liste blanche (SPEC §6) : YAML arbitraire.
+// Whitelist loader (SPEC §6): arbitrary YAML.
 #include "tlsrelay/whitelist.hpp"
 
 #include <cstddef>

@@ -7,8 +7,8 @@
 
 namespace tlsrelay {
 
-// Adresse réseau sous la forme hôte:port. L'hôte peut être un nom, une IPv4,
-// ou une IPv6 entre crochets ("[::1]:9001").
+// Network address in the form host:port. The host can be a name, an IPv4,
+// or an IPv6 in brackets ("[::1]:9001").
 struct Endpoint {
     std::string host;
     std::uint16_t port = 0;
@@ -17,13 +17,13 @@ struct Endpoint {
     bool operator==(const Endpoint&) const = default;
 };
 
-// Le port 0 est accepté ici ; la validation de la configuration impose 1–65535.
+// Port 0 is accepted here; configuration validation requires 1–65535.
 std::optional<Endpoint> parse_endpoint(std::string_view text);
 
-// Vrai si le texte est une adresse IPv4 ou IPv6 littérale (sans crochets).
+// True if the text is a literal IPv4 or IPv6 address (without brackets).
 bool is_ip_literal(std::string_view host);
 
-// Vrai pour 0.0.0.0 et ::.
+// True for 0.0.0.0 and ::.
 bool is_wildcard_address(std::string_view host);
 
 }  // namespace tlsrelay

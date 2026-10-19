@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Test d'un paquet Linux de tlsrelay sur une distribution propre (conteneur) :
-# installation, compte et répertoire créés, échange mTLS entre un client et un
-# serveur installés, puis désinstallation (et purge pour Debian).
+# Test of a tlsrelay Linux package on a clean distribution (container):
+# installation, account and directory created, mTLS exchange between an installed
+# client and server, then uninstallation (and purge for Debian).
 #
-# Usage, depuis la racine du dépôt :
-#   docker run --rm -v "$PWD:/src" -w /src ubuntu:24.04 packaging/test-linux-package.sh paquets
+# Usage, from the repository root:
+#   docker run --rm -v "$PWD:/src" -w /src ubuntu:24.04 packaging/test-linux-package.sh packages
 set -euo pipefail
 
-dir=$(realpath "${1:?répertoire des paquets}")
+dir=$(realpath "${1:?packages directory}")
 . /etc/os-release
-fail() { echo "ÉCHEC : $*" >&2; exit 1; }
+fail() { echo "FAILED: $*" >&2; exit 1; }
 step() { echo "== $*"; }
 
 step "installation ($PRETTY_NAME)"
@@ -24,37 +24,37 @@ case "$ID" in
     dnf install -y -q "$dir"/tlsrelay-[0-9]*.rpm "$dir"/tlsrelay-testkit-[0-9]*.rpm >/dev/null
     kind=rpm
     ;;
-  *) fail "distribution non prise en charge : $ID" ;;
+  *) fail "unsupported distribution: $ID" ;;
 esac
 
 tlsrelay version
-[ "$(command -v tlsrelay)" = /usr/bin/tlsrelay ] || fail "tlsrelay absent de /usr/bin"
-command -v tlsrelay-testkit >/dev/null || fail "tlsrelay-testkit absent"
-getent passwd tlsrelay >/dev/null || fail "compte tlsrelay non créé"
-[ "$(stat -c '%a %U %G' /etc/tlsrelay)" = "750 root tlsrelay" ] || fail "droits de /etc/tlsrelay : $(stat -c '%a %U %G' /etc/tlsrelay)"
-# Contenu du paquet (les images minimisées n'installent pas /usr/share/doc).
+[ "$(command -v tlsrelay)" = /usr/bin/tlsrelay ] || fail "tlsrelay missing from /usr/bin"
+command -v tlsrelay-testkit >/dev/null || fail "tlsrelay-testkit missing"
+getent passwd tlsrelay >/dev/null || fail "tlsrelay account not created"
+[ "$(stat -c '%a %U %G' /etc/tlsrelay)" = "750 root tlsrelay" ] || fail "permissions of /etc/tlsrelay: $(stat -c '%a %U %G' /etc/tlsrelay)"
+# Package contents (minimized images do not install /usr/share/doc).
 if [ "$kind" = deb ]; then files=$(dpkg-deb -c "$dir"/tlsrelay_*.deb); else files=$(rpm -qlp "$dir"/tlsrelay-[0-9]*.rpm); fi
-grep -q 'share/doc/tlsrelay/THIRD-PARTY-NOTICES.txt' <<<"$files" || fail "avis des composants tiers absents du paquet"
-grep -q 'share/doc/tlsrelay/LICENSE' <<<"$files" || fail "licence absente du paquet"
+grep -q 'share/doc/tlsrelay/THIRD-PARTY-NOTICES.txt' <<<"$files" || fail "third-party notices missing from the package"
+grep -q 'share/doc/tlsrelay/LICENSE' <<<"$files" || fail "license missing from the package"
 for f in /usr/share/doc/tlsrelay/examples/*.yaml; do
   case "$f" in *whitelist*) continue ;; esac
-  tlsrelay check-config -c "$f" >/dev/null 2>&1 || true  # exemples commentés : chemins à adapter
+  tlsrelay check-config -c "$f" >/dev/null 2>&1 || true  # commented examples: paths to adapt
 done
 
-step "échange mTLS entre un client et un serveur installés"
+step "mTLS exchange between an installed client and server"
 work=$(mktemp -d)
 cd "$work"
 tlsrelay-testkit pki --out pki >/dev/null
 cat > wl.yaml <<'YAML'
 peers:
-  - { name: essai, ip: 127.0.0.1, ports: [mtls], subject: "CN=client.test,O=tlsrelay-test" }
+  - { name: trial, ip: 127.0.0.1, ports: [mtls], subject: "CN=client.test,O=tlsrelay-test" }
 YAML
 cat > server.yaml <<YAML
 mode: server
-instance: essai-serveur
+instance: trial-server
 admin: { endpoint: $work/server.sock }
 logging: { output: $work/server.log }
-credentials: { pki_root: $work/pki/serveur }
+credentials: { pki_root: $work/pki/server }
 whitelist: { file: $work/wl.yaml }
 destination: { address: 127.0.0.1, port: 28080 }
 ports:
@@ -62,7 +62,7 @@ ports:
 YAML
 cat > client.yaml <<YAML
 mode: client
-instance: essai-client
+instance: trial-client
 admin: { endpoint: $work/client.sock }
 logging: { output: $work/client.log }
 credentials: { pki_root: $work/pki/client }
@@ -72,19 +72,19 @@ YAML
 tlsrelay-testkit echo --listen 127.0.0.1:28080 >/dev/null &
 tlsrelay run -c server.yaml & tlsrelay run -c client.yaml &
 for _ in $(seq 50); do tlsrelay status -c client.yaml >/dev/null 2>&1 && tlsrelay status -c server.yaml >/dev/null 2>&1 && break; sleep 0.1; done
-tlsrelay-testkit load --target 127.0.0.1:27003 --channels 50 --bytes 256KiB || { tail -n 20 server.log client.log; fail "échange mTLS"; }
+tlsrelay-testkit load --target 127.0.0.1:27003 --channels 50 --bytes 256KiB || { tail -n 20 server.log client.log; fail "mTLS exchange"; }
 tlsrelay stop -c client.yaml >/dev/null
 tlsrelay stop -c server.yaml >/dev/null
 kill %1 2>/dev/null || true
 wait 2>/dev/null || true
 cd / && rm -rf "$work"
 
-step "désinstallation"
+step "uninstallation"
 if [ "$kind" = deb ]; then
   apt-get purge -y -q tlsrelay-testkit tlsrelay >/dev/null
 else
   dnf remove -y -q tlsrelay-testkit tlsrelay >/dev/null
 fi
-[ ! -e /usr/bin/tlsrelay ] || fail "binaire encore présent"
-[ -d /etc/tlsrelay ] || fail "/etc/tlsrelay supprimé (configurations et PKI à conserver)"
-echo "paquet $kind sur $PRETTY_NAME : OK"
+[ ! -e /usr/bin/tlsrelay ] || fail "binary still present"
+[ -d /etc/tlsrelay ] || fail "/etc/tlsrelay removed (configurations and PKI must be kept)"
+echo "$kind package on $PRETTY_NAME: OK"

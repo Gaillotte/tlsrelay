@@ -29,7 +29,7 @@ std::optional<PortKind> port_kind(const std::string& text) {
 
 WhitelistEditor::WhitelistEditor(QWidget* parent) : QWidget(parent), table_(new QTableWidget(0, column_count)) {
     table_->setHorizontalHeaderLabels(
-        {tr("Nom"), tr("Adresse IP ou plage"), "plain", "tls", "mtls", tr("Sujet du certificat (DN)")});
+        {tr("Name"), tr("IP address or range"), "plain", "tls", "mtls", tr("Certificate subject (DN)")});
     table_->horizontalHeader()->setSectionResizeMode(subject, QHeaderView::Stretch);
     table_->setColumnWidth(name, 160);
     table_->setColumnWidth(ip, 190);
@@ -39,10 +39,10 @@ WhitelistEditor::WhitelistEditor(QWidget* parent) : QWidget(parent), table_(new 
         if (!loading_) emit changed();
     });
 
-    auto* add = new QPushButton(tr("Ajouter"));
-    auto* remove = new QPushButton(tr("Supprimer"));
-    auto* up = new QPushButton(tr("Monter"));
-    auto* down = new QPushButton(tr("Descendre"));
+    auto* add = new QPushButton(tr("Add"));
+    auto* remove = new QPushButton(tr("Remove"));
+    auto* up = new QPushButton(tr("Move up"));
+    auto* down = new QPushButton(tr("Move down"));
     connect(add, &QPushButton::clicked, this, &WhitelistEditor::add_peer);
     connect(remove, &QPushButton::clicked, this, &WhitelistEditor::remove_selected);
     connect(up, &QPushButton::clicked, this, [this] { move_selected(-1); });
@@ -51,9 +51,9 @@ WhitelistEditor::WhitelistEditor(QWidget* parent) : QWidget(parent), table_(new 
     for (auto* b : {add, remove, up, down}) buttons->addWidget(b);
     buttons->addStretch();
 
-    auto* help = new QLabel(tr("Aucune case de port cochée : ports par défaut (plain et tls, plus mtls si un sujet est "
-                               "donné). Le port mtls exige un sujet ; adresse et sujet doivent figurer dans la même "
-                               "entrée."));
+    auto* help = new QLabel(tr("No port box checked: default ports (plain and tls, plus mtls if a subject is "
+                               "given). The mtls port requires a subject; address and subject must be in the same "
+                               "entry."));
     help->setWordWrap(true);
     auto* layout = new QVBoxLayout(this);
     layout->addWidget(table_);
@@ -109,10 +109,10 @@ std::vector<std::string> WhitelistEditor::load_yaml(const std::string& text) {
                     for (const auto& p : v) {
                         auto kind = p.IsScalar() ? port_kind(p.Scalar()) : std::nullopt;
                         if (kind) peer.ports->insert(*kind);
-                        else ignored.push_back(path + ".ports : " + (p.IsScalar() ? p.Scalar() : "?"));
+                        else ignored.push_back(path + ".ports: " + (p.IsScalar() ? p.Scalar() : "?"));
                     }
                     if (peer.ports->empty()) {
-                        ignored.push_back(path + ".ports : liste vide (ports par défaut)");
+                        ignored.push_back(path + ".ports: empty list (default ports)");
                         peer.ports.reset();
                     }
                 } else {
@@ -123,7 +123,7 @@ std::vector<std::string> WhitelistEditor::load_yaml(const std::string& text) {
             peers.push_back(std::move(peer));
         }
     } catch (const YAML::Exception& e) {
-        ignored.push_back("syntaxe YAML invalide : " + e.msg);
+        ignored.push_back("invalid YAML syntax: " + e.msg);
     }
     set_peers(peers);
     return ignored;
@@ -157,7 +157,7 @@ whitelist::LoadResult WhitelistEditor::validate() {
     for (const auto& issue : result.errors) {
         std::smatch m;
         const auto message = QString::fromStdString(issue.message);
-        if (!std::regex_match(issue.path, m, entry)) continue;  // « peers » : affiché dans la liste des erreurs
+        if (!std::regex_match(issue.path, m, entry)) continue;  // "peers": shown in the issue list
         const int row = std::stoi(m[1]);
         const std::string key = m[2];
         if (key == "name") mark(row, name, message);
@@ -192,7 +192,7 @@ void WhitelistEditor::mark(int row, int column, const QString& message) {
     loading_ = true;
     item->setBackground(QColor(255, 205, 210));
     item->setToolTip(item->toolTip().isEmpty() ? message : item->toolTip() + "\n" + message);
-    item->setData(Qt::UserRole, true);  // en erreur (tests)
+    item->setData(Qt::UserRole, true);  // in error (tests)
     loading_ = false;
 }
 

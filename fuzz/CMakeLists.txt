@@ -1,5 +1,5 @@
-# Cibles de fuzzing libFuzzer (PLAN §5) : clang uniquement, avec
-# TLSRELAY_SANITIZERS contenant fuzzer-no-link (préréglage linux-fuzz).
+# libFuzzer fuzzing targets (PLAN §5): clang only, with
+# TLSRELAY_SANITIZERS containing fuzzer-no-link (linux-fuzz preset).
 set(TLSRELAY_FUZZ_TARGETS frame config whitelist csr dn admin)
 foreach(name IN LISTS TLSRELAY_FUZZ_TARGETS)
     add_executable(fuzz_${name} fuzz_${name}.cpp)

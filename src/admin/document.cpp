@@ -26,7 +26,7 @@ void write_with_backup(const fs::path& path, const std::string& content) {
         auto backup = path;
         backup += ".bak";
         fs::copy_file(path, backup, fs::copy_options::overwrite_existing, ec);
-        if (ec) throw std::runtime_error("copie de sauvegarde impossible : " + backup.string() + " : " + ec.message());
+        if (ec) throw std::runtime_error("cannot create backup copy: " + backup.string() + ": " + ec.message());
     }
     auto tmp = path;
     tmp += ".tmp";
@@ -34,12 +34,12 @@ void write_with_backup(const fs::path& path, const std::string& content) {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         out << content;
         out.close();
-        if (!out) throw std::runtime_error("écriture impossible : " + tmp.string());
+        if (!out) throw std::runtime_error("cannot write: " + tmp.string());
     }
     fs::rename(tmp, path, ec);
     if (ec) {
         fs::remove(tmp, ec);
-        throw std::runtime_error("remplacement impossible : " + path.string());
+        throw std::runtime_error("cannot replace: " + path.string());
     }
 }
 

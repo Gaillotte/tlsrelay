@@ -1,0 +1,7 @@
+# Valid configuration whose whitelist is invalid (tlsrelay-admin --check).
+mode: server
+instance: test
+destination: { address: 127.0.0.1, port: 8080 }
+whitelist: { file: invalid-whitelist.yaml }
+ports:
+  plain: { listen: "127.0.0.1:9001" }

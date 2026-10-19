@@ -1,6 +1,6 @@
-// Intégration au gestionnaire de services Windows : service tlsrelay-<instance>,
-// exécuté sous le compte virtuel NT SERVICE\tlsrelay-<instance> (moindre
-// privilège), relancé automatiquement en cas d'échec.
+// Windows Service Control Manager integration: service tlsrelay-<instance>,
+// run under the virtual account NT SERVICE\tlsrelay-<instance> (least
+// privilege), restarted automatically on failure.
 
 #include "platform.hpp"
 
@@ -71,8 +71,8 @@ Handle open_manager(DWORD access) {
     Handle h(OpenSCManagerW(nullptr, nullptr, access));
     if (!h) {
         const DWORD err = GetLastError();
-        std::cerr << "erreur : gestionnaire de services inaccessible : " << error_text(err)
-                  << (err == ERROR_ACCESS_DENIED ? " (lancer en administrateur)" : "") << '\n';
+        std::cerr << "error: service manager unreachable: " << error_text(err)
+                  << (err == ERROR_ACCESS_DENIED ? " (run as administrator)" : "") << '\n';
     }
     return h;
 }
@@ -83,8 +83,8 @@ Handle open_service(const std::string& instance, DWORD access, bool report = tru
     Handle h(OpenServiceW(manager.get(), service_name(instance).c_str(), access));
     if (!h && report) {
         const DWORD err = GetLastError();
-        std::cerr << "erreur : service tlsrelay-" << instance << " : "
-                  << (err == ERROR_SERVICE_DOES_NOT_EXIST ? std::string("non installé") : error_text(err)) << '\n';
+        std::cerr << "error: service tlsrelay-" << instance << " : "
+                  << (err == ERROR_SERVICE_DOES_NOT_EXIST ? std::string("not installed") : error_text(err)) << '\n';
     }
     return h;
 }
@@ -99,7 +99,7 @@ std::optional<SERVICE_STATUS_PROCESS> query(SC_HANDLE service) {
     return status;
 }
 
-// Attend que le service quitte l'état transitoire pending.
+// Waits until the service leaves the transient pending state.
 std::optional<SERVICE_STATUS_PROCESS> wait_while(SC_HANDLE service, DWORD pending, Duration timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     for (;;) {
@@ -111,7 +111,7 @@ std::optional<SERVICE_STATUS_PROCESS> wait_while(SC_HANDLE service, DWORD pendin
     }
 }
 
-// Donne au compte du service le droit de modifier un répertoire (journaux).
+// Gives the service account the right to modify a directory (logs).
 bool grant_modify(const fs::path& dir, const std::wstring& who) {
     PACL old_acl = nullptr;
     PSECURITY_DESCRIPTOR sd = nullptr;
@@ -171,29 +171,29 @@ int service_install(const InstallOptions& options) {
                                   nullptr));
     if (!service) {
         const DWORD err = GetLastError();
-        std::cerr << "erreur : création du service impossible : "
-                  << (err == ERROR_SERVICE_EXISTS ? std::string("déjà installé") : error_text(err)) << '\n';
+        std::cerr << "error: cannot create the service: "
+                  << (err == ERROR_SERVICE_EXISTS ? std::string("already installed") : error_text(err)) << '\n';
         return kExitRuntime;
     }
 
-    std::wstring description = L"Relais TCP clair / TLS 1.3 / mTLS";
+    std::wstring description = L"Plain TCP / TLS 1.3 / mTLS relay";
     SERVICE_DESCRIPTIONW desc{description.data()};
     ChangeServiceConfig2W(service.get(), SERVICE_CONFIG_DESCRIPTION, &desc);
 
-    // Compte virtuel : identité propre au service, sans privilège particulier.
+    // Virtual account: an identity of its own for the service, with no special privilege.
     SERVICE_SID_INFO sid{SERVICE_SID_TYPE_UNRESTRICTED};
     ChangeServiceConfig2W(service.get(), SERVICE_CONFIG_SERVICE_SID_INFO, &sid);
     wchar_t privileges[] = L"SeChangeNotifyPrivilege\0";
     SERVICE_REQUIRED_PRIVILEGES_INFOW required{privileges};
     ChangeServiceConfig2W(service.get(), SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO, &required);
 
-    // Arrêt du système : le service reçoit PRESHUTDOWN et dispose du délai de drain.
+    // System shutdown: the service receives PRESHUTDOWN and gets the drain timeout.
     SERVICE_PRESHUTDOWN_INFO preshutdown{
         static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(options.shutdown_timeout).count() +
                            15000)};
     ChangeServiceConfig2W(service.get(), SERVICE_CONFIG_PRESHUTDOWN_INFO, &preshutdown);
 
-    // Relance automatique en cas d'arrêt anormal (3 fois, à 2 s d'intervalle, compteur remis à zéro chaque jour).
+    // Automatic restart after an abnormal stop (3 times, 2 s apart, counter reset every day).
     SC_ACTION actions[3] = {{SC_ACTION_RESTART, 2000}, {SC_ACTION_RESTART, 2000}, {SC_ACTION_RESTART, 2000}};
     SERVICE_FAILURE_ACTIONSW failure{};
     failure.dwResetPeriod = 86400;
@@ -201,19 +201,19 @@ int service_install(const InstallOptions& options) {
     failure.lpsaActions = actions;
     ChangeServiceConfig2W(service.get(), SERVICE_CONFIG_FAILURE_ACTIONS, &failure);
 
-    // Journaux par défaut d'un service (logging.output: stderr) : répertoire accessible au compte du service.
+    // Default logs of a service (logging.output: stderr): directory accessible to the service account.
     std::error_code ec;
     const auto logs = program_data() / "logs";
     fs::create_directories(logs, ec);
     if (ec || !grant_modify(logs, account(options.instance))) {
-        std::cerr << "avertissement : droits du service sur " << logs.string() << " non appliqués\n";
+        std::cerr << "warning: service permissions on " << logs.string() << " not applied\n";
     }
 
-    std::cout << "service tlsrelay-" << options.instance << " installé (configuration " << options.config.string()
-              << (options.boot ? ", démarrage au boot" : ", démarrage manuel") << ", compte NT SERVICE\\tlsrelay-"
+    std::cout << "service tlsrelay-" << options.instance << " installed (configuration " << options.config.string()
+              << (options.boot ? ", start at boot" : ", manual start") << ", account NT SERVICE\\tlsrelay-"
               << options.instance << ")\n"
-              << "ce compte doit pouvoir lire la configuration, la liste blanche et la PKI\n"
-              << "démarrage : tlsrelay start --instance " << options.instance << '\n';
+              << "this account must be able to read the configuration, the whitelist and the PKI\n"
+              << "to start: tlsrelay start --instance " << options.instance << '\n';
     return kExitOk;
 }
 
@@ -226,10 +226,10 @@ int service_uninstall(const std::string& instance) {
         wait_while(service.get(), SERVICE_STOP_PENDING, std::chrono::minutes(2));
     }
     if (!DeleteService(service.get())) {
-        std::cerr << "erreur : suppression du service impossible : " << error_text(GetLastError()) << '\n';
+        std::cerr << "error: cannot delete the service: " << error_text(GetLastError()) << '\n';
         return kExitRuntime;
     }
-    std::cout << "service tlsrelay-" << instance << " désinstallé\n";
+    std::cout << "service tlsrelay-" << instance << " uninstalled\n";
     return kExitOk;
 }
 
@@ -239,15 +239,15 @@ int service_start(const std::string& instance, Duration timeout) {
     if (!StartServiceW(service.get(), 0, nullptr)) {
         const DWORD err = GetLastError();
         if (err != ERROR_SERVICE_ALREADY_RUNNING) {
-            std::cerr << "erreur : démarrage impossible : " << error_text(err) << '\n';
+            std::cerr << "error: cannot start: " << error_text(err) << '\n';
             return kExitRuntime;
         }
     }
     const auto status = wait_while(service.get(), SERVICE_START_PENDING, timeout);
     if (!status || status->dwCurrentState != SERVICE_RUNNING) {
-        std::cerr << "erreur : le service n'a pas démarré";
+        std::cerr << "error: the service did not start";
         if (status && status->dwWin32ExitCode == ERROR_SERVICE_SPECIFIC_ERROR) {
-            std::cerr << " (code de sortie " << status->dwServiceSpecificExitCode << ", voir le journal)";
+            std::cerr << " (exit code " << status->dwServiceSpecificExitCode << ", see the log)";
         } else if (status && status->dwWin32ExitCode != NO_ERROR) {
             std::cerr << " (" << error_text(status->dwWin32ExitCode) << ")";
         }
@@ -273,12 +273,12 @@ int service_force_kill(const std::string& instance) {
     if (!service) return kExitRuntime;
     const auto status = query(service.get());
     if (!status || status->dwProcessId == 0) {
-        std::cerr << "erreur : processus du service introuvable\n";
+        std::cerr << "error: service process not found\n";
         return kExitRuntime;
     }
     HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, status->dwProcessId);
     if (!process || !TerminateProcess(process, 1)) {
-        std::cerr << "erreur : arrêt forcé impossible : " << error_text(GetLastError()) << '\n';
+        std::cerr << "error: cannot force stop: " << error_text(GetLastError()) << '\n';
         if (process) CloseHandle(process);
         return kExitRuntime;
     }
@@ -287,7 +287,7 @@ int service_force_kill(const std::string& instance) {
 }
 
 // ---------------------------------------------------------------------------
-// Processus du service
+// Service process
 
 namespace {
 
@@ -297,7 +297,7 @@ struct Dispatch {
     SERVICE_STATUS_HANDLE handle = nullptr;
     std::mutex mutex;
     SERVICE_STATUS status{};
-    std::function<void()> stop;  // protégé par mutex
+    std::function<void()> stop;  // guarded by mutex
     bool stop_requested = false;
 };
 
@@ -350,7 +350,7 @@ public:
             early = g_dispatch->stop_requested;
         }
         report(SERVICE_RUNNING);
-        if (early) request_stop();  // arrêt demandé pendant le démarrage
+        if (early) request_stop();  // stop requested during startup
     }
 };
 
@@ -378,8 +378,8 @@ int service_dispatch(const std::string& instance, std::function<int(ServiceContr
     SERVICE_TABLE_ENTRYW table[] = {{dispatch.name.data(), service_main}, {nullptr, nullptr}};
     if (!StartServiceCtrlDispatcherW(table)) {
         const DWORD err = GetLastError();
-        std::cerr << "erreur : service-run est réservé au gestionnaire de services ("
-                  << (err == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT ? std::string("utiliser « tlsrelay run »")
+        std::cerr << "error: service-run is reserved for the service manager ("
+                  << (err == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT ? std::string("use \"tlsrelay run\"")
                                                                      : error_text(err))
                   << ")\n";
         return kExitRuntime;

@@ -1,7 +1,7 @@
-name: Fuzzing de nuit
+name: Nightly fuzzing
 
-# PLAN §5 : 1 h de fuzzing par nuit et par cible ; le corpus s'enrichit d'une
-# nuit à l'autre (cache). Une entrée qui fait échouer une cible est publiée en artefact.
+# PLAN §5: 1 h of fuzzing per night and per target; the corpus grows from one
+# night to the next (cache). An input that makes a target fail is published as an artifact.
 on:
   schedule:
     - cron: "17 1 * * *"
@@ -22,20 +22,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dépendances
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
             libyaml-cpp-dev libspdlog-dev libcli11-dev libclang-rt-18-dev
 
-      - name: Corpus des nuits précédentes
+      - name: Corpus from previous nights
         uses: actions/cache@v4
         with:
           path: build/linux-fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
           restore-keys: fuzz-corpus-${{ matrix.target }}-
 
-      - name: Compilation
+      - name: Build
         run: |
           cmake --preset linux-fuzz
           cmake --build --preset linux-fuzz --target fuzz_${{ matrix.target }}
@@ -43,7 +43,7 @@ jobs:
       - name: Fuzzing (50 min)
         run: tools/run-fuzz.sh build/linux-fuzz 3000 ${{ matrix.target }}
 
-      - name: Entrées qui ont fait échouer la cible
+      - name: Inputs that made the target fail
         if: failure()
         uses: actions/upload-artifact@v4
         with:

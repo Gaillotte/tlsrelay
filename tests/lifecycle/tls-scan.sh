@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Configuration TLS des ports 2 et 3 vue de l'extérieur (PLAN §5.4, sslyze et
-# testssl.sh) : seul TLS 1.3 est accepté, avec les seules suites autorisées
-# (SPEC §3) ; pas de reprise de session ; certificat présenté conforme ;
-# aucune vulnérabilité connue signalée.
-# Usage : tls-scan.sh <chemin de tlsrelay>
-# TESTSSL=<chemin de testssl.sh> : ajoute l'analyse testssl.sh.
+# TLS configuration of ports 2 and 3 seen from outside (PLAN §5.4, sslyze and
+# testssl.sh): only TLS 1.3 is accepted, with only the allowed suites
+# (SPEC §3); no session resumption; compliant certificate presented;
+# no known vulnerability reported.
+# Usage: tls-scan.sh <path to tlsrelay>
+# TESTSSL=<path to testssl.sh>: adds the testssl.sh scan.
 set -euo pipefail
 
 bin=$(realpath "$1")
@@ -13,7 +13,7 @@ root=$(cd "$here/../.." && pwd)
 work=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$work"' EXIT
 cd "$work"
-fail() { echo "ÉCHEC : $*" >&2; exit 1; }
+fail() { echo "FAILED: $*" >&2; exit 1; }
 port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 
 "$root/tools/make-test-pki.sh" pki >/dev/null 2>&1
@@ -25,7 +25,7 @@ YAML
 cat > server.yaml <<YAML
 mode: server
 instance: scan
-credentials: { pki_root: $work/pki/serveur }
+credentials: { pki_root: $work/pki/server }
 whitelist: { file: $work/wl.yaml }
 destination: { address: 127.0.0.1, port: 9 }
 admin: { enabled: false }
@@ -38,7 +38,7 @@ YAML
 sleep 0.5
 
 for p in $tls $mtls; do
-  # Port mtls : le scanner présente le certificat client de la PKI de test.
+  # mtls port: the scanner presents the client certificate of the test PKI.
   client_auth=()
   [ "$p" = "$mtls" ] && client_auth=(--cert "$work/pki/client/v1/cert.pem" --key "$work/pki/client/v1/key.pem")
   python3 -W ignore -m sslyze "${client_auth[@]}" --json_out="scan-$p.json" --sslv2 --sslv3 --tlsv1 --tlsv1_1 --tlsv1_2 --tlsv1_3 \
@@ -53,25 +53,25 @@ problems = []
 for proto in ["ssl_2_0", "ssl_3_0", "tls_1_0", "tls_1_1", "tls_1_2"]:
     accepted = r[f"{proto}_cipher_suites"]["result"]["accepted_cipher_suites"]
     if accepted:
-        problems.append(f"{proto} accepté : {[c['cipher_suite']['name'] for c in accepted]}")
+        problems.append(f"{proto} accepted: {[c['cipher_suite']['name'] for c in accepted]}")
 tls13 = {c["cipher_suite"]["name"] for c in r["tls_1_3_cipher_suites"]["result"]["accepted_cipher_suites"]}
 if not tls13:
-    problems.append("TLS 1.3 non accepté")
+    problems.append("TLS 1.3 not accepted")
 if tls13 - allowed:
-    problems.append(f"suites non autorisées : {tls13 - allowed}")
+    problems.append(f"suites not allowed: {tls13 - allowed}")
 if r["heartbleed"]["result"]["is_vulnerable_to_heartbleed"]:
     problems.append("heartbleed")
 if r["openssl_ccs_injection"]["result"]["is_vulnerable_to_ccs_injection"]:
-    problems.append("injection CCS")
+    problems.append("CCS injection")
 resum = r["session_resumption"]["result"]
 if resum.get("session_id_resumption_result") == "FULLY_SUPPORTED" or resum.get("tls_ticket_resumption_result") == "SUCCEEDED":
-    problems.append("reprise de session TLS acceptée")
+    problems.append("TLS session resumption accepted")
 curves = r["elliptic_curves"]["result"]
 if curves and curves.get("supported_curves"):
     names = {c["name"] for c in curves["supported_curves"]}
     if names - {"X25519", "secp256r1", "prime256v1", "secp384r1"}:
-        problems.append(f"groupes non attendus : {names}")
-print(f"{sys.argv[1]} : TLS 1.3 seul, suites {sorted(tls13)}")
+        problems.append(f"unexpected groups: {names}")
+print(f"{sys.argv[1]}: TLS 1.3 only, suites {sorted(tls13)}")
 if problems:
     print("\n".join(problems)); sys.exit(1)
 PY
@@ -90,28 +90,28 @@ import json, sys
 findings = json.load(open(sys.argv[1]))
 by_id = {f["id"]: f for f in findings}
 problems = []
-# Protocoles : TLS 1.3 offert, tous les autres refusés.
+# Protocols: TLS 1.3 offered, all others refused.
 for pid in ["SSLv2", "SSLv3", "TLS1", "TLS1_1", "TLS1_2"]:
     f = by_id.get(pid)
     if f is None or not f["finding"].startswith("not offered"):
-        problems.append(f"{pid} : {f['finding'] if f else 'absent du rapport'}")
+        problems.append(f"{pid}: {f['finding'] if f else 'missing from the report'}")
 if not by_id.get("TLS1_3", {}).get("finding", "").startswith("offered"):
-    problems.append(f"TLS1_3 : {by_id.get('TLS1_3', {}).get('finding')}")
-# Aucune constatation de sévérité élevée ou critique, ni d'erreur d'analyse.
-# Écart accepté (docs/PENTEST.md) : pas de CRL ni d'OCSP, la révocation passe par
-# la liste blanche et le retrait des générations PKI (SPEC §6 et §7).
+    problems.append(f"TLS1_3: {by_id.get('TLS1_3', {}).get('finding')}")
+# No high or critical severity finding, and no scan error.
+# Accepted deviation (docs/PENTEST.md): no CRL or OCSP, revocation goes through
+# the whitelist and the retirement of PKI generations (SPEC §6 and §7).
 accepted = {"cert_revocation"}
 for f in findings:
     if f["id"] in accepted:
         continue
     if f["severity"] in ("HIGH", "CRITICAL") or (f["severity"] == "FATAL" and f["id"] != "scanProblem"):
-        problems.append(f"{f['id']} [{f['severity']}] : {f['finding']}")
+        problems.append(f"{f['id']} [{f['severity']}]: {f['finding']}")
     if f["id"] == "scanProblem":
-        problems.append(f"analyse incomplète : {f['finding']}")
-print(f"{sys.argv[1]} : {len(findings)} constatations, aucune de sévérité élevée" if not problems else "")
+        problems.append(f"incomplete scan: {f['finding']}")
+print(f"{sys.argv[1]}: {len(findings)} findings, none of high severity" if not problems else "")
 if problems:
     print("\n".join(problems)); sys.exit(1)
 PY
   done
 fi
-echo "configuration TLS des ports tls et mtls : OK"
+echo "TLS configuration of the tls and mtls ports: OK"

@@ -36,7 +36,7 @@ std::optional<Request> parse_request(std::string_view line) {
 }
 
 std::string encode_reply(const Reply& reply) {
-    return std::string(reply.ok ? "OK " : "ERREUR ") + std::to_string(reply.body.size()) + "\n" + reply.body;
+    return std::string(reply.ok ? "OK " : "ERROR ") + std::to_string(reply.body.size()) + "\n" + reply.body;
 }
 
 }  // namespace tlsrelay::admin

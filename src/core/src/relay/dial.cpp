@@ -23,7 +23,7 @@ asio::awaitable<bool> cancelled() {
     co_return state.cancelled() != asio::cancellation_type::none;
 }
 
-// Un essai : résolution du nom, puis connexion à chaque adresse obtenue.
+// One attempt: name resolution, then connection to each address obtained.
 asio::awaitable<std::optional<tcp::socket>> attempt(const DialOptions& options, std::error_code& last_error) {
     auto ex = co_await asio::this_coro::executor;
 
@@ -44,7 +44,7 @@ asio::awaitable<std::optional<tcp::socket>> attempt(const DialOptions& options, 
             continue;
         }
         if (options.source) {
-            if (options.source->is_v4() != ep.address().is_v4()) continue;  // famille différente
+            if (options.source->is_v4() != ep.address().is_v4()) continue;  // different family
             socket.bind(tcp::endpoint(*options.source, 0), ec);
             if (ec) {
                 last_error = ec;
@@ -85,20 +85,20 @@ asio::awaitable<std::optional<tcp::socket>> dial(DialOptions options, std::uint6
             if (co_await cancelled()) co_return std::nullopt;
         }
 
-        logging::activity().trace("canal={} essai de connexion {}/{} vers {}", channel_id, n, options.attempts, target);
+        logging::activity().trace("channel={} connection attempt {}/{} to {}", channel_id, n, options.attempts, target);
         std::error_code ec;
         auto socket = co_await attempt(options, ec);
         if (socket) co_return std::move(socket);
 
         if (last_error) *last_error = ec;
         ++stats.dial_attempt_failures;
-        logging::activity().debug("canal={} échec de connexion {}/{} vers {} : {}", channel_id, n, options.attempts,
+        logging::activity().debug("channel={} connection failure {}/{} to {}: {}", channel_id, n, options.attempts,
                                   target, ec.message());
         if (co_await cancelled()) co_return std::nullopt;
     }
 
     ++stats.dial_failures;
-    logging::activity().warn("canal={} {} injoignable après {} essai(s)", channel_id, target, options.attempts);
+    logging::activity().warn("channel={} {} unreachable after {} attempt(s)", channel_id, target, options.attempts);
     co_return std::nullopt;
 }
 

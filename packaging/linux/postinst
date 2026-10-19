@@ -1,6 +1,6 @@
 #!/bin/sh
-# Paquet Debian tlsrelay : compte système, répertoire de configuration ; après
-# une mise à jour, instances en service relancées avec le nouveau binaire.
+# tlsrelay Debian package: system account, configuration directory; after
+# an upgrade, running instances are restarted with the new binary.
 set -e
 if [ "$1" = configure ]; then
     getent group tlsrelay >/dev/null || groupadd --system tlsrelay

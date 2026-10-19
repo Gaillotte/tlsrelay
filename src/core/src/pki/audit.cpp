@@ -37,7 +37,7 @@ std::string sha256_hex(const std::string& data) {
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int size = 0;
     if (EVP_Digest(data.data(), data.size(), digest, &size, EVP_sha256(), nullptr) != 1) {
-        detail::fail("empreinte SHA-256 impossible");
+        detail::fail("cannot compute SHA-256 digest");
     }
     static constexpr char digits[] = "0123456789abcdef";
     std::string hex;
@@ -48,7 +48,7 @@ std::string sha256_hex(const std::string& data) {
     return hex;
 }
 
-// Empreinte d'une ligne, chaînée à la précédente.
+// Hash of a line, chained to the previous one.
 std::string link_hash(const std::string& previous, const std::string& body) {
     std::string data = previous;
     data += '\t';
@@ -98,14 +98,14 @@ std::string current_operator() {
     if (const passwd* pw = ::getpwuid(::geteuid()); pw && pw->pw_name) return pw->pw_name;
     if (const char* user = std::getenv("USER"); user && *user) return user;
 #endif
-    return "inconnu";
+    return "unknown";
 }
 
 AuditLog read_audit(const fs::path& ca_dir) {
-    // Un répertoire qui n'est pas une AC (faute de frappe) ne doit pas passer pour un journal intact.
+    // A directory that is not a CA (typo) must not pass for an intact log.
     std::error_code ec;
     if (!fs::is_regular_file(ca_dir / "root.cert.pem", ec)) {
-        throw std::runtime_error(ca_dir.string() + " n'est pas un répertoire d'AC tlsrelay (root.cert.pem absent)");
+        throw std::runtime_error(ca_dir.string() + " is not a tlsrelay CA directory (root.cert.pem missing)");
     }
     AuditLog log;
     std::ifstream in(ca_dir / kAuditFile, std::ios::binary);
@@ -118,13 +118,13 @@ AuditLog read_audit(const fs::path& ca_dir) {
         const auto fields = split_tabs(line);
         if (fields.size() != 5) {
             log.broken_line = number;
-            log.problem = "ligne mal formée";
+            log.problem = "malformed line";
             return log;
         }
         const auto body = line.substr(0, line.rfind('\t'));
         if (link_hash(previous, body) != fields[4]) {
             log.broken_line = number;
-            log.problem = "empreinte incorrecte : ligne modifiée, supprimée ou insérée";
+            log.problem = "wrong hash: line modified, deleted or inserted";
             return log;
         }
         previous = fields[4];
@@ -134,8 +134,8 @@ AuditLog read_audit(const fs::path& ca_dir) {
 }
 
 void append_audit(const fs::path& ca_dir, const std::string& operation, const std::string& details) {
-    // Dernière empreinte : celle de la dernière ligne, même si la chaîne est
-    // rompue plus haut (la vérification le signale ; l'ajout reste possible).
+    // Last hash: that of the last line, even if the chain is broken
+    // further up (verification reports it; appending remains possible).
     std::string previous = kZeroHash;
     {
         std::ifstream in(ca_dir / kAuditFile, std::ios::binary);
@@ -151,7 +151,7 @@ void append_audit(const fs::path& ca_dir, const std::string& operation, const st
     std::ofstream out(ca_dir / kAuditFile, std::ios::binary | std::ios::app);
     out << line;
     out.close();
-    if (!out) throw std::runtime_error("écriture du journal d'audit impossible : " + (ca_dir / kAuditFile).string());
+    if (!out) throw std::runtime_error("cannot write audit log: " + (ca_dir / kAuditFile).string());
 }
 
 }  // namespace tlsrelay::pki

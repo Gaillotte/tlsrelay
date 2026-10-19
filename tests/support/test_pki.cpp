@@ -16,7 +16,7 @@ namespace {
 using tlsrelay::tls::BioPtr;
 
 void check(bool ok, const char* what) {
-    if (!ok) throw std::runtime_error(std::string("PKI de test : ") + what + " : " + tlsrelay::tls::take_openssl_errors());
+    if (!ok) throw std::runtime_error(std::string("test PKI: ") + what + ": " + tlsrelay::tls::take_openssl_errors());
 }
 
 void add_extension(X509* cert, X509V3_CTX* ctx, int nid, const std::string& value) {
@@ -37,7 +37,7 @@ std::string read_bio(BIO* bio) {
 Issued make_certificate(const CertOptions& options, const Issued* issuer) {
     Issued out;
     out.key.reset(EVP_EC_gen(options.curve));
-    check(out.key != nullptr, "génération de clé");
+    check(out.key != nullptr, "key generation");
 
     out.cert.reset(X509_new());
     X509* cert = out.cert.get();
@@ -99,10 +99,10 @@ std::string encrypted_pem(const EVP_PKEY* key, const char* password) {
 
 Hierarchy Hierarchy::create(const std::string& label) {
     Hierarchy h;
-    h.root = make_certificate({.common_name = label + " Racine", .ca = true, .curve = "P-384"});
-    h.servers_ca = make_certificate({.common_name = label + " AC Serveurs", .ca = true, .usage = Usage::server,
+    h.root = make_certificate({.common_name = label + " Root", .ca = true, .curve = "P-384"});
+    h.servers_ca = make_certificate({.common_name = label + " Servers CA", .ca = true, .usage = Usage::server,
                                      .curve = "P-384"}, &h.root);
-    h.clients_ca = make_certificate({.common_name = label + " AC Clients", .ca = true, .usage = Usage::client,
+    h.clients_ca = make_certificate({.common_name = label + " Clients CA", .ca = true, .usage = Usage::client,
                                      .curve = "P-384"}, &h.root);
     h.server = make_certificate({.common_name = "relay.test", .usage = Usage::server, .dns = {"relay.test"},
                                  .ips = {"127.0.0.1"}}, &h.servers_ca);
@@ -123,7 +123,7 @@ void write_generation(const std::filesystem::path& pki_root, const std::string& 
     write("trust-roots.pem", files.trust_roots);
     write("trust-issuer.pem", files.trust_issuer);
     if (!activate) return;
-    // Fichier temporaire puis renommage : un service qui surveille current ne lit jamais un fichier partiel.
+    // Temporary file then rename: a service watching current never reads a partial file.
     std::ofstream(pki_root / "current.tmp", std::ios::binary) << name << "\n";
     std::filesystem::rename(pki_root / "current.tmp", pki_root / "current");
 }

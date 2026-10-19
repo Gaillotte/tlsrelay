@@ -12,7 +12,7 @@ namespace {
 
 using asio::ip::tcp;
 constexpr auto use_tuple = asio::as_tuple(asio::use_awaitable);
-// Un enregistrement TLS fait au plus 16 Kio de données plus l'en-tête et l'étiquette.
+// A TLS record holds at most 16 KiB of data plus the header and the tag.
 constexpr std::size_t kTlsBufferSize = 16 * 1024 + 512;
 
 asio::awaitable<bool> cancelled() {
@@ -33,7 +33,7 @@ Stream::Stream(tcp::socket socket, std::shared_ptr<const tls::Context> context, 
       flush_done_(socket_.get_executor()) {
     network_in_ = BIO_new(BIO_s_mem());
     network_out_ = BIO_new(BIO_s_mem());
-    // BIO vide : « réessayer plus tard » plutôt que fin de fichier.
+    // Empty BIO: "retry later" rather than end of file.
     BIO_set_mem_eof_return(network_in_, -1);
     SSL_set_bio(ssl_.get(), network_in_, network_out_);
     tls::set_failure_sink(ssl_.get(), &failure_reason_);
@@ -49,13 +49,13 @@ asio::awaitable<std::error_code> Stream::handshake() {
         ERR_clear_error();
         const int ret = SSL_do_handshake(ssl_.get());
         const int err = ret == 1 ? SSL_ERROR_NONE : SSL_get_error(ssl_.get(), ret);
-        // Envoie ce qu'OpenSSL a produit, y compris une alerte en cas d'échec.
+        // Sends what OpenSSL produced, including an alert on failure.
         const auto flush_ec = co_await flush();
-        // Connexion perdue (et non handshake refusé) : la reprise reste possible.
+        // Connection lost (and not handshake refused): resumption remains possible.
         const auto interrupted = [this](std::error_code ec) {
             handshake_interrupted_ = true;
-            failure_reason_ = ec == asio::error::eof ? "connexion fermée par le pair pendant le handshake"
-                                                      : "erreur réseau pendant le handshake : " + ec.message();
+            failure_reason_ = ec == asio::error::eof ? "connection closed by the peer during the handshake"
+                                                      : "network error during the handshake: " + ec.message();
             return ec;
         };
         if (err == SSL_ERROR_NONE) {
@@ -69,7 +69,7 @@ asio::awaitable<std::error_code> Stream::handshake() {
         }
         const long verify = SSL_get_verify_result(ssl_.get());
         if (verify != X509_V_OK && failure_reason_.empty()) {
-            failure_reason_ = std::string("certificat du pair refusé : ") + X509_verify_cert_error_string(verify);
+            failure_reason_ = std::string("peer certificate refused: ") + X509_verify_cert_error_string(verify);
         }
         auto ec = tls_error();
         if (failure_reason_.empty()) failure_reason_ = ec.message();
@@ -93,10 +93,10 @@ asio::awaitable<std::pair<std::error_code, std::size_t>> Stream::read_some(asio:
         std::size_t n = 0;
         const int ret = SSL_read_ex(ssl_.get(), buffer.data(), buffer.size(), &n);
         const int err = ret == 1 ? SSL_ERROR_NONE : SSL_get_error(ssl_.get(), ret);
-        // La lecture peut produire des messages à envoyer (messages post-handshake).
-        // Si un envoi est déjà en cours, il les emportera : la lecture ne doit
-        // jamais attendre l'écriture (un pair qui ne lit plus bloquerait sinon
-        // aussi la réception de ses propres trames).
+        // Reading may produce messages to send (post-handshake messages).
+        // If a send is already in progress, it will carry them: reading must
+        // never wait for writing (otherwise a peer that stops reading would
+        // also block the reception of its own frames).
         if (BIO_ctrl_pending(network_out_) > 0 && !flushing_) {
             if (auto ec = co_await flush()) co_return std::pair{ec, std::size_t{0}};
         }
@@ -104,7 +104,7 @@ asio::awaitable<std::pair<std::error_code, std::size_t>> Stream::read_some(asio:
         if (err == SSL_ERROR_ZERO_RETURN) co_return std::pair{std::error_code(asio::error::eof), std::size_t{0}};
         if (err == SSL_ERROR_WANT_READ) {
             if (auto ec = co_await fill()) {
-                // Fin TCP sans close_notify : flux tronqué, et non fin propre.
+                // TCP end without close_notify: truncated stream, not a clean end.
                 if (ec == asio::error::eof) ec = asio::ssl::error::stream_truncated;
                 co_return std::pair{ec, std::size_t{0}};
             }
@@ -121,7 +121,7 @@ std::error_code Stream::queue(asio::const_buffer buffer) {
     }
     ERR_clear_error();
     std::size_t written = 0;
-    // BIO mémoire : l'écriture est toujours complète, l'envoi réel se fait dans flush().
+    // Memory BIO: the write is always complete, the actual send happens in flush().
     if (SSL_write_ex(ssl_.get(), buffer.data(), buffer.size(), &written) != 1 || written != buffer.size()) {
         return tls_error();
     }
@@ -143,11 +143,11 @@ bool Stream::export_keying_material(std::string_view label, const std::uint8_t* 
 asio::awaitable<std::error_code> Stream::shutdown_send() {
     if (ssl_) {
         ERR_clear_error();
-        // Premier appel : envoie close_notify sans attendre celui du pair.
+        // First call: sends close_notify without waiting for the peer's.
         SSL_shutdown(ssl_.get());
         ERR_clear_error();
     }
-    // Les octets en attente (dernière trame, close_notify) partent avant la fin du sens d'émission.
+    // Pending bytes (last frame, close_notify) go out before the end of the send direction.
     const auto ec = co_await flush();
     std::error_code ignored;
     socket_.shutdown(tcp::socket::shutdown_send, ignored);
@@ -161,7 +161,7 @@ void Stream::close() {
 }
 
 std::string Stream::session_description() const {
-    if (!ssl_) return "clair";
+    if (!ssl_) return "plain";
     const SSL_CIPHER* cipher = SSL_get_current_cipher(ssl_.get());
     return std::string(SSL_get_version(ssl_.get())) + " " + (cipher ? SSL_CIPHER_get_name(cipher) : "?");
 }
@@ -175,10 +175,10 @@ std::string Stream::peer_subject() const {
 }
 
 asio::awaitable<std::error_code> Stream::flush() {
-    // Une seule écriture à la fois sur la socket : on attend la fin de l'envoi
-    // en cours, qui inclura les octets que nous venons de produire. Seule la
-    // coroutine qui envoie arme le minuteur ; les autres attendent sans le
-    // réarmer (sinon elles s'annuleraient mutuellement).
+    // A single write at a time on the socket: wait for the end of the send
+    // in progress, which will include the bytes we just produced. Only the
+    // coroutine that sends arms the timer; the others wait without
+    // re-arming it (otherwise they would cancel each other).
     while (flushing_) {
         co_await flush_done_.async_wait(use_tuple);
         if (co_await cancelled()) co_return asio::error::operation_aborted;

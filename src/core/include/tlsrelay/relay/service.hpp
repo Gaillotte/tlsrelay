@@ -28,64 +28,64 @@
 namespace tlsrelay::relay {
 
 struct ServiceOptions {
-    bool handle_signals = true;  // Ctrl+C / SIGTERM : arrêt propre ; second signal : arrêt immédiat
-    unsigned threads = 0;        // 0 : nombre de cœurs
-    Duration watch_interval = std::chrono::seconds(2);  // surveillance de la liste blanche et de la PKI
-    // Sortie de journal utilisée à la place de « stderr » (service Windows sans
-    // console) ; prise en compte aussi lors de la relecture de la configuration.
+    bool handle_signals = true;  // Ctrl+C / SIGTERM: graceful shutdown; second signal: immediate shutdown
+    unsigned threads = 0;        // 0: number of cores
+    Duration watch_interval = std::chrono::seconds(2);  // watching of the whitelist and the PKI
+    // Log output used instead of "stderr" (Windows service without a
+    // console); also applied when the configuration is reread.
     std::string stderr_log_replacement{};
-    std::string config_path{};  // fichier relu par la commande reload (vide : pas de relecture)
+    std::string config_path{};  // file reread by the reload command (empty: no reread)
 };
 
-// Le service ouvre les ports configurés. En mode client, chaque connexion
-// d'application devient un canal tunnelé vers l'upstream du port ; en mode
-// serveur, chaque tunnel ouvert (OPEN) devient un canal vers la destination,
-// et les reprises de session (RESUME) rejoignent leur canal (SPEC §4).
-// En mode serveur, il applique la liste blanche et la recharge quand son
-// fichier change. Quand le fichier <pki_root>/current désigne une nouvelle
-// génération, il bascule à chaud : les nouvelles connexions utilisent la
-// nouvelle génération, les connexions ouvertes finissent sur l'ancienne
+// The service opens the configured ports. In client mode, each application
+// connection becomes a channel tunneled to the port's upstream; in server
+// mode, each opened tunnel (OPEN) becomes a channel to the destination,
+// and session resumptions (RESUME) join their channel (SPEC §4).
+// In server mode, it applies the whitelist and reloads it when its
+// file changes. When the file <pki_root>/current designates a new
+// generation, it switches live: new connections use the
+// new generation, open connections finish on the old one
 // (SPEC §7.4).
 //
-// Si admin.enabled, le service ouvre le canal d'administration (SPEC §10), qui
-// sert aussi de verrou d'instance.
+// If admin.enabled, the service opens the administration channel (SPEC §10), which
+// also serves as the instance lock.
 class Service : private PeerAuthorizer, private admin::Handler {
 public:
-    // Charge la PKI si un port TLS est configuré, puis ouvre les ports d'écoute.
-    // Lève std::system_error si un port ne peut pas être ouvert,
-    // std::runtime_error si la PKI est invalide ou si la configuration demande
-    // une fonctionnalité absente de cette version.
+    // Loads the PKI if a TLS port is configured, then opens the listening ports.
+    // Throws std::system_error if a port cannot be opened,
+    // std::runtime_error if the PKI is invalid or if the configuration requests
+    // a feature missing from this version.
     explicit Service(Config config, ServiceOptions options = {});
     ~Service() override;
 
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
 
-    // Exécute le service jusqu'à son arrêt. Retourne le code de sortie.
+    // Runs the service until it stops. Returns the exit code.
     int run();
 
-    // Arrêt propre : plus aucune connexion acceptée, drain des canaux pendant
-    // limits.shutdown_timeout, puis fermeture des canaux restants.
+    // Graceful shutdown: no more connections accepted, channels drained for
+    // limits.shutdown_timeout, then the remaining channels are closed.
     void request_stop();
     void request_stop(Duration timeout);
 
-    // Arrêt immédiat, sans drain.
+    // Immediate shutdown, without drain.
     void request_abort();
 
-    // Recharge la PKI (nouvelle génération désignée par current) et la liste
-    // blanche, comme SIGHUP. kill_old : ferme aussi les connexions établies avec
-    // une génération retirée. Utilisable depuis n'importe quel thread.
+    // Reloads the PKI (new generation designated by current) and the
+    // whitelist, like SIGHUP. kill_old: also closes the connections established with
+    // a retired generation. Usable from any thread.
     void reload(bool kill_old = false);
 
-    // Génération PKI courante (vide sans port TLS) et générations encore
-    // utilisées par des connexions (courante comprise).
+    // Current PKI generation (empty without a TLS port) and generations still
+    // used by connections (current included).
     std::string current_generation() const;
     std::vector<std::string> live_generations() const;
 
-    // Point d'accès du canal d'administration (vide s'il est désactivé).
+    // Access point of the administration channel (empty if disabled).
     std::string admin_endpoint() const { return admin_ ? admin_->endpoint() : std::string(); }
 
-    // Contenus des commandes d'administration.
+    // Contents of the administration commands.
     std::string status_text() const;
     std::string metrics_text() const;
 
@@ -101,13 +101,13 @@ private:
         PortKind kind;
         PortConfig config;
         asio::ip::tcp::acceptor acceptor;
-        std::atomic<std::size_t> active{0};      // canaux
-        std::atomic<std::size_t> handshakes{0};  // serveur : connexions de transport pas encore attribuées
+        std::atomic<std::size_t> active{0};      // channels
+        std::atomic<std::size_t> handshakes{0};  // server: transport connections not yet assigned
     };
 
     struct Contexts {
-        std::shared_ptr<const tls::Context> tls;   // port tls
-        std::shared_ptr<const tls::Context> mtls;  // port mtls
+        std::shared_ptr<const tls::Context> tls;   // tls port
+        std::shared_ptr<const tls::Context> mtls;  // mtls port
     };
     struct RetiredGeneration {
         std::string name;
@@ -122,8 +122,8 @@ private:
     void close_retired_generations();
     void sweep_generations();
     std::optional<std::string> read_pki_pointer() const;
-    // CRL (SPEC §7.7) : <pki_root>/crl.pem contrôlé pour la génération donnée.
-    // initial : au démarrage, un fichier invalide est une erreur fatale.
+    // CRL (SPEC §7.7): <pki_root>/crl.pem checked for the given generation.
+    // initial: at startup, an invalid file is a fatal error.
     bool load_crl(const pki::Generation& generation, bool initial);
     bool verifies_peers() const;
     std::optional<std::string> read_crl_file() const;
@@ -139,8 +139,8 @@ private:
     asio::awaitable<std::string> channels_text();
     std::string reload_config();
     asio::awaitable<void> accept_loop(Port& port);
-    // Serveur : authentifie une connexion de transport, puis ouvre un canal
-    // (OPEN) ou la confie au canal dont elle reprend la session (RESUME).
+    // Server: authenticates a transport connection, then opens a channel
+    // (OPEN) or hands it to the channel whose session it resumes (RESUME).
     asio::awaitable<void> serve(Port& port, asio::ip::tcp::socket socket, std::uint64_t id);
     asio::awaitable<void> drain(Duration timeout);
     asio::awaitable<void> wait_signals();
@@ -152,32 +152,32 @@ private:
     Config config_;
     ServiceOptions options_;
     asio::io_context io_;
-    asio::strand<asio::io_context::executor_type> control_;  // arrêt et signaux
-    std::list<Port> ports_;  // adresses stables : référencées par les boucles d'acceptation
+    asio::strand<asio::io_context::executor_type> control_;  // shutdown and signals
+    std::list<Port> ports_;  // stable addresses: referenced by the accept loops
     asio::signal_set signals_;
-    bool signals_done_ = false;  // accédé uniquement sur control_
+    bool signals_done_ = false;  // accessed only on control_
     std::optional<asio::ip::address> source_address_;
 
-    // PKI : génération courante, ses contextes, et générations retirées en drain.
+    // PKI: current generation, its contexts, and retired generations being drained.
     mutable std::mutex pki_mutex_;
     std::shared_ptr<const pki::Generation> generation_;
     Contexts contexts_;
     std::vector<RetiredGeneration> retired_;
-    std::optional<std::string> pki_pointer_;  // contenu de current, accédé sur control_ après le démarrage
+    std::optional<std::string> pki_pointer_;  // content of current, accessed on control_ after startup
     std::shared_ptr<tls::Revocations> revocations_ = std::make_shared<tls::Revocations>();
-    std::optional<std::string> crl_content_;  // contenu de crl.pem, accédé sur control_ après le démarrage
+    std::optional<std::string> crl_content_;  // content of crl.pem, accessed on control_ after startup
 
     mutable std::mutex whitelist_mutex_;
     std::shared_ptr<const whitelist::Whitelist> whitelist_;
-    std::optional<std::string> whitelist_content_;  // accédé uniquement sur control_ après le démarrage
+    std::optional<std::string> whitelist_content_;  // accessed only on control_ after startup
     asio::steady_timer watch_timer_;
 
     mutable std::mutex channels_mutex_;
     std::unordered_map<std::uint64_t, std::weak_ptr<Channel>> channels_;
-    std::unordered_map<std::string, std::weak_ptr<Channel>> sessions_;      // serveur : par session_id (hex)
-    std::unordered_map<std::uint64_t, std::weak_ptr<Stream>> handshakes_;   // serveur : connexions en attente
-    // Serveur : sessions terminées normalement, gardées pendant renegotiation_grace
-    // pour répondre à une reprise dont la connexion a perdu l'acquittement final.
+    std::unordered_map<std::string, std::weak_ptr<Channel>> sessions_;      // server: by session_id (hex)
+    std::unordered_map<std::uint64_t, std::weak_ptr<Stream>> handshakes_;   // server: pending connections
+    // Server: sessions finished normally, kept during renegotiation_grace
+    // to answer a resumption whose connection lost the final acknowledgement.
     struct FinishedSession {
         tunnel::Token token;
         std::chrono::steady_clock::time_point expiry;

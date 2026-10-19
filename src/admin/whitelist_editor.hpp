@@ -1,7 +1,7 @@
 #pragma once
 
-// Éditeur de liste blanche de tlsrelay-admin : une ligne par pair. La
-// validation passe par le chargeur du service (Whitelist::load_string).
+// Whitelist editor of tlsrelay-admin: one row per peer. Validation
+// goes through the service loader (Whitelist::load_string).
 
 #include "tlsrelay/whitelist.hpp"
 
@@ -23,16 +23,16 @@ public:
 
     explicit WhitelistEditor(QWidget* parent = nullptr);
 
-    // Charge un fichier de liste blanche (même invalide) ; retourne les
-    // éléments ignorés (clés inconnues, ports inconnus).
+    // Loads a whitelist file (even invalid); returns the
+    // ignored items (unknown keys, unknown ports).
     std::vector<std::string> load_yaml(const std::string& text);
     void set_peers(const std::vector<whitelist::PeerSpec>& peers);
-    // Pairs saisis ; aucune case de port cochée : ports par défaut (SPEC §6).
+    // Entered peers; no port box checked: default ports (SPEC §6).
     std::vector<whitelist::PeerSpec> peers() const;
 
-    // Texte à enregistrer (to_yaml).
+    // Text to save (to_yaml).
     std::string yaml() const;
-    // Valide comme le service ; met en évidence les cellules en erreur.
+    // Validates like the service; highlights the cells in error.
     whitelist::LoadResult validate();
 
     QTableWidget* table() const { return table_; }

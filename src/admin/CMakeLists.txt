@@ -1,9 +1,9 @@
-# Éditeur tlsrelay-admin (livraison 1.1) : Qt 6 Widgets, liaison dynamique (LGPLv3).
+# tlsrelay-admin editor (release 1.1): Qt 6 Widgets, dynamic linking (LGPLv3).
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
 
 set(CMAKE_AUTOMOC ON)
 
-# Bibliothèque de l'éditeur : partagée par l'exécutable et les tests Qt.
+# Editor library: shared by the executable and the Qt tests.
 add_library(tlsrelay_admin_lib STATIC
     config_form.cpp
     whitelist_editor.cpp
@@ -21,8 +21,8 @@ target_link_libraries(tlsrelay_admin_lib
 
 add_executable(tlsrelay-admin WIN32 main.cpp)
 
-# Visite de l'éditeur pour la vidéo de démonstration (tools/video) : hors de la
-# compilation par défaut, jamais installée.
+# Editor tour for the demonstration video (tools/video): excluded from the
+# default build, never installed.
 add_executable(tlsrelay-admin-tour EXCLUDE_FROM_ALL "${PROJECT_SOURCE_DIR}/tools/video/editor_tour.cpp")
 target_include_directories(tlsrelay-admin-tour PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(tlsrelay-admin-tour PRIVATE tlsrelay_admin_lib tlsrelay::options)
@@ -30,16 +30,16 @@ target_link_libraries(tlsrelay-admin PRIVATE tlsrelay_admin_lib tlsrelay::option
 install(TARGETS tlsrelay-admin RUNTIME DESTINATION bin COMPONENT admin)
 
 if(WIN32)
-    # DLL et modules d'extension de Qt (windeployqt) à côté de l'exécutable, dans
-    # la fonctionnalité « tlsrelay-admin » du MSI. Le runtime MSVC est déjà
-    # installé par le composant service (InstallRequiredSystemLibraries).
+    # Qt DLLs and plugins (windeployqt) next to the executable, in the
+    # "tlsrelay-admin" feature of the MSI. The MSVC runtime is already
+    # installed by the service component (InstallRequiredSystemLibraries).
     qt_generate_deploy_app_script(TARGET tlsrelay-admin OUTPUT_SCRIPT admin_deploy_script
         NO_UNSUPPORTED_PLATFORM_ERROR NO_TRANSLATIONS NO_COMPILER_RUNTIME)
     install(SCRIPT "${admin_deploy_script}" COMPONENT admin)
 endif()
 install(FILES "${PROJECT_SOURCE_DIR}/LICENSES/LGPL-3.0.txt" "${PROJECT_SOURCE_DIR}/LICENSES/GPL-3.0.txt"
         DESTINATION ${TLSRELAY_DOC_DIR}/LICENSES COMPONENT admin)
-install(FILES "${PROJECT_SOURCE_DIR}/docs/EDITEUR.md" DESTINATION ${TLSRELAY_DOC_DIR} COMPONENT admin)
+install(FILES "${PROJECT_SOURCE_DIR}/docs/EDITOR.md" DESTINATION ${TLSRELAY_DOC_DIR} COMPONENT admin)
 
 if(TLSRELAY_BUILD_TESTS)
     find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
@@ -50,25 +50,25 @@ if(TLSRELAY_BUILD_TESTS)
     target_compile_definitions(tlsrelay_admin_tests PRIVATE
         TLSRELAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
     add_test(NAME Admin.QtTests COMMAND tlsrelay_admin_tests)
-    # Contrôle sans fenêtre (--check) : exemple valide, fichier invalide.
+    # Check without a window (--check): valid example, invalid file.
     add_test(NAME Admin.CheckValid COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/examples/client.yaml")
-    add_test(NAME Admin.CheckInvalid COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/tests/admin/invalide.yaml")
-    # Le diagnostic attendu, et non un simple code d'échec (qui couvrirait un plantage).
-    set_tests_properties(Admin.CheckInvalid PROPERTIES PASS_REGULAR_EXPRESSION "ports.plain.listen : adresse invalide")
-    # Liste blanche invalide derrière une configuration valide ; fichier absent.
+    add_test(NAME Admin.CheckInvalid COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/tests/admin/invalid.yaml")
+    # The expected diagnostic, not just a failure code (which would also cover a crash).
+    set_tests_properties(Admin.CheckInvalid PROPERTIES PASS_REGULAR_EXPRESSION "ports.plain.listen: invalid address")
+    # Invalid whitelist behind a valid configuration; missing file.
     add_test(NAME Admin.CheckWhitelist
-             COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/tests/admin/serveur-liste-invalide.yaml")
-    set_tests_properties(Admin.CheckWhitelist PROPERTIES PASS_REGULAR_EXPRESSION "liste-invalide.yaml : peers\\[0\\]\\.ip")
+             COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/tests/admin/server-invalid-whitelist.yaml")
+    set_tests_properties(Admin.CheckWhitelist PROPERTIES PASS_REGULAR_EXPRESSION "invalid-whitelist.yaml: peers\\[0\\]\\.ip")
     add_test(NAME Admin.CheckUnreadable COMMAND tlsrelay-admin --check "${PROJECT_SOURCE_DIR}/tests/admin/absent.yaml")
-    set_tests_properties(Admin.CheckUnreadable PROPERTIES PASS_REGULAR_EXPRESSION "absent.yaml : fichier illisible")
-    # --check sur une machine sans affichage (serveur Linux) : aucune variable Qt ni DISPLAY.
+    set_tests_properties(Admin.CheckUnreadable PROPERTIES PASS_REGULAR_EXPRESSION "absent.yaml: unreadable file")
+    # --check on a machine without a display (Linux server): no Qt variable, no DISPLAY.
     if(NOT WIN32)
         add_test(NAME Admin.CheckHeadless
                  COMMAND ${CMAKE_COMMAND} -E env --unset=DISPLAY --unset=WAYLAND_DISPLAY --unset=QT_QPA_PLATFORM
                          $<TARGET_FILE:tlsrelay-admin> --check "${PROJECT_SOURCE_DIR}/examples/client.yaml")
-        set_tests_properties(Admin.CheckHeadless PROPERTIES PASS_REGULAR_EXPRESSION "client.yaml : valide" TIMEOUT 60)
+        set_tests_properties(Admin.CheckHeadless PROPERTIES PASS_REGULAR_EXPRESSION "client.yaml: valid" TIMEOUT 60)
     endif()
-    # Sans affichage : plateforme Qt « offscreen ».
+    # Without a display: Qt "offscreen" platform.
     set_tests_properties(Admin.QtTests Admin.CheckValid Admin.CheckInvalid Admin.CheckWhitelist Admin.CheckUnreadable PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
 endif()

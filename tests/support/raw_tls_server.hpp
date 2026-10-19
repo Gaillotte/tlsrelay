@@ -1,7 +1,7 @@
 #pragma once
 
-// Serveur TLS « brut » (OpenSSL bloquant) pour simuler un faux serveur tlsrelay :
-// présente le certificat donné et compte les octets applicatifs reçus.
+// "Raw" TLS server (blocking OpenSSL) to simulate a fake tlsrelay server:
+// presents the given certificate and counts the application bytes received.
 
 #include "support/net_helpers.hpp"
 #include "support/test_pki.hpp"
@@ -18,7 +18,7 @@ namespace testnet {
 
 class RawTlsServer {
 public:
-    // identity : certificat présenté aux clients, avec sa clé et la chaîne jusqu'à la racine (exclue).
+    // identity: certificate presented to clients, with its key and the chain up to the root (excluded).
     RawTlsServer(const testpki::Issued& identity, const X509* chain) : acceptor_(io_) {
         acceptor_.open(tcp::v4());
         acceptor_.bind(tcp::endpoint(loopback(), 0));
@@ -35,7 +35,7 @@ public:
 
     ~RawTlsServer() {
         stopping_ = true;
-        // Débloque accept() s'il attend encore.
+        // Unblocks accept() if it is still waiting.
         std::error_code ignored;
         asio::io_context io;
         tcp::socket poke(io);
@@ -47,10 +47,10 @@ public:
     RawTlsServer& operator=(const RawTlsServer&) = delete;
 
     std::uint16_t port() const { return port_; }
-    int handshakes() const { return handshakes_.load(); }        // handshakes TLS aboutis côté serveur
-    std::size_t received() const { return received_.load(); }     // octets applicatifs reçus
+    int handshakes() const { return handshakes_.load(); }        // TLS handshakes completed on the server side
+    std::size_t received() const { return received_.load(); }     // application bytes received
 
-    // Octets applicatifs reçus (concaténés), à lire une fois les clients fermés.
+    // Application bytes received (concatenated), to be read once the clients are closed.
     std::string data() const {
         std::lock_guard lock(mutex_);
         return data_;

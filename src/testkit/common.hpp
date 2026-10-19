@@ -1,7 +1,7 @@
 #pragma once
 
-// Outils communs de tlsrelay-testkit : exécution multi-thread, données
-// pseudo-aléatoires reproductibles, empreintes, statistiques.
+// Common tlsrelay-testkit tools: multi-threaded execution, reproducible
+// pseudo-random data, hashes, statistics.
 
 #include <asio/as_tuple.hpp>
 #include <asio/io_context.hpp>
@@ -24,7 +24,7 @@ using asio::ip::tcp;
 using Clock = std::chrono::steady_clock;
 inline constexpr auto use_tuple = asio::as_tuple(asio::use_awaitable);
 
-// Exécute io sur n threads jusqu'à épuisement du travail.
+// Runs io on n threads until the work runs out.
 inline void run_threads(asio::io_context& io, unsigned n) {
     if (n == 0) n = std::max(1u, std::thread::hardware_concurrency());
     std::vector<std::thread> threads;
@@ -33,7 +33,7 @@ inline void run_threads(asio::io_context& io, unsigned n) {
     for (auto& t : threads) t.join();
 }
 
-// Générateur xorshift64* : flux reproductible pour une graine donnée.
+// xorshift64* generator: reproducible stream for a given seed.
 class Pattern {
 public:
     explicit Pattern(std::uint64_t seed) : state_(seed * 0x9E3779B97F4A7C15ULL + 1) {}
@@ -51,7 +51,7 @@ private:
     std::uint64_t state_;
 };
 
-// Empreinte SHA-256 incrémentale.
+// Incremental SHA-256 hash.
 class Digest {
 public:
     Digest() : ctx_(EVP_MD_CTX_new(), EVP_MD_CTX_free) { EVP_DigestInit_ex(ctx_.get(), EVP_sha256(), nullptr); }
@@ -73,7 +73,7 @@ private:
     std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx_;
 };
 
-// Percentile (0-100) d'un échantillon de durées en microsecondes.
+// Percentile (0-100) of a sample of durations in microseconds.
 inline double percentile(std::vector<double> values, double p) {
     if (values.empty()) return 0;
     std::sort(values.begin(), values.end());

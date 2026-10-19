@@ -22,48 +22,48 @@ ExportDialog::ExportDialog(ExportRequest request, QWidget* parent)
       kit_(new QLineEdit),
       crl_(new QLineEdit),
       warnings_(new QLabel) {
-    setWindowTitle(tr("Exporter le paquet de déploiement"));
-    // Noms d'objet : repères stables pour les tests de l'interface.
-    out_->setObjectName("sortie");
-    platform_->setObjectName("plateforme");
+    setWindowTitle(tr("Export deployment package"));
+    // Object names: stable handles for the UI tests.
+    out_->setObjectName("output");
+    platform_->setObjectName("platform");
     kit_->setObjectName("kit");
     crl_->setObjectName("crl");
-    warnings_->setObjectName("avertissements");
+    warnings_->setObjectName("warnings");
     resize(700, 380);
     platform_->addItem(tr("Linux"), static_cast<int>(TargetPlatform::linux_host));
     platform_->addItem(tr("Windows"), static_cast<int>(TargetPlatform::windows_host));
-    kit_->setPlaceholderText(tr("(facultatif) kit produit par la signature : cert.pem, chain.pem, trust-*.pem"));
-    crl_->setPlaceholderText(tr("(facultatif) CRL publiées par l'AC"));
+    kit_->setPlaceholderText(tr("(optional) kit produced by signing: cert.pem, chain.pem, trust-*.pem"));
+    crl_->setPlaceholderText(tr("(optional) CRLs published by the CA"));
     warnings_->setWordWrap(true);
     warnings_->setStyleSheet("color: #e65100;");
 
     auto browse = [this](QLineEdit* edit, bool directory) {
         auto* row = new QHBoxLayout;
-        auto* button = new QPushButton(tr("Parcourir…"));
+        auto* button = new QPushButton(tr("Browse…"));
         row->addWidget(edit);
         row->addWidget(button);
         connect(button, &QPushButton::clicked, this, [this, edit, directory] {
-            const auto chosen = directory ? QFileDialog::getExistingDirectory(this, tr("Répertoire"), edit->text())
-                                          : QFileDialog::getOpenFileName(this, tr("Fichier"), edit->text(),
-                                                                         tr("CRL (*.pem *.crl);;Tous (*)"));
+            const auto chosen = directory ? QFileDialog::getExistingDirectory(this, tr("Directory"), edit->text())
+                                          : QFileDialog::getOpenFileName(this, tr("File"), edit->text(),
+                                                                         tr("CRL (*.pem *.crl);;All (*)"));
             if (!chosen.isEmpty()) edit->setText(chosen);
         });
         return row;
     };
     auto* form = new QFormLayout;
-    form->addRow(tr("Répertoire de sortie"), browse(out_, true));
-    form->addRow(tr("Machine cible"), platform_);
-    form->addRow(tr("Kit PKI"), browse(kit_, true));
+    form->addRow(tr("Output directory"), browse(out_, true));
+    form->addRow(tr("Target machine"), platform_);
+    form->addRow(tr("PKI kit"), browse(kit_, true));
     form->addRow(tr("CRL"), browse(crl_, false));
 
-    auto* intro = new QLabel(tr("Le paquet est créé dans un sous-répertoire au nom de l'instance (« %1 ») : "
-                                "configuration, liste blanche, kit et CRL éventuels, script d'installation et "
-                                "LISEZMOI.txt.")
+    auto* intro = new QLabel(tr("The package is created in a subdirectory named after the instance (\"%1\"): "
+                                "configuration, whitelist, optional kit and CRLs, installation script and "
+                                "README.txt.")
                                  .arg(QString::fromStdString(request_.config.instance)));
     intro->setWordWrap(true);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    buttons->button(QDialogButtonBox::Ok)->setText(tr("Exporter"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Annuler"));
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Export"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
         if (!out_->text().isEmpty()) accept();
     });

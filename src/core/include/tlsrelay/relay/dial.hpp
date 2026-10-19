@@ -16,15 +16,15 @@ namespace tlsrelay::relay {
 
 struct DialOptions {
     Endpoint target;
-    std::optional<asio::ip::address> source;  // adresse source imposée (mode client)
-    Duration timeout{};                       // par essai et par adresse résolue
+    std::optional<asio::ip::address> source;  // imposed source address (client mode)
+    Duration timeout{};                       // per attempt and per resolved address
     std::uint32_t attempts = 1;
-    Duration backoff{};                       // attente avant le 2e essai, doublée ensuite
+    Duration backoff{};                       // wait before the 2nd attempt, doubled afterwards
 };
 
-// Ouvre une connexion TCP sortante, avec essais successifs (SPEC §5.4).
-// Retourne std::nullopt si tous les essais échouent ou si l'opération est annulée ;
-// last_error, s'il est fourni, reçoit l'erreur du dernier essai.
+// Opens an outgoing TCP connection, with successive attempts (SPEC §5.4).
+// Returns std::nullopt if all attempts fail or if the operation is cancelled;
+// last_error, if given, receives the error of the last attempt.
 asio::awaitable<std::optional<asio::ip::tcp::socket>> dial(DialOptions options, std::uint64_t channel_id, Stats& stats,
                                                            std::error_code* last_error = nullptr);
 

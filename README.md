@@ -1,72 +1,72 @@
 # tlsrelay
 
-Relais TCP en ligne de commande, fonctionnant par paire (client / serveur), qui transporte les données d'une application vers une destination selon trois modes :
+Command-line TCP relay that works in pairs (client / server) and carries an application's data to a destination in one of three modes:
 
 | Port | Mode |
 |---|---|
-| 1 | Clair |
+| 1 | Plaintext |
 | 2 | TLS 1.3 |
-| 3 | mTLS (TLS 1.3, authentification mutuelle) |
+| 3 | mTLS (TLS 1.3, mutual authentication) |
 
-Principales caractéristiques :
+Main features:
 
-- C++20, OpenSSL 3 (liaison dynamique), Windows 64 bits et Linux
-- Plusieurs canaux en parallèle par port
-- Rotation à chaud des bi-clés, certificats et AC jusqu'à la racine, sans interruption de service
-- Durée d'inactivité et durée de session maximales, avec renégociation complète et transparente
-- Liste blanche des pairs côté serveur (IP + sujet du certificat + AC émettrice)
-- Service au démarrage du système, arrêt / redémarrage / arrêt forcé, instances nommées
-- Mode verbose (logs d'activité et des opérations de configuration)
-- Éditeur Windows de configuration et de PKI (`tlsrelay-admin`, livraison 1.1)
+- C++20, OpenSSL 3 (dynamically linked), 64-bit Windows and Linux
+- Several parallel channels per port
+- Hot rotation of key pairs, certificates and CAs up to the root, without service interruption
+- Maximum idle time and maximum session lifetime, with full, transparent renegotiation
+- Server-side peer whitelist (IP + certificate subject + issuing CA)
+- Service started at system boot, stop / restart / forced stop, named instances
+- Verbose mode (activity and configuration operation logs)
+- Windows configuration and PKI editor (`tlsrelay-admin`, release 1.1)
 
 ## Documentation
 
-- [Design document (English)](docs/DESIGN.md) : architecture, sécurité, protocole, PKI, éditeur, qualité ; en 10 slides : [tlsrelay-design-slides.pdf](docs/tlsrelay-design-slides.pdf)
-- [Éditeur tlsrelay-admin](docs/EDITEUR.md) : configuration, liste blanche, paquets de déploiement, mini-AC (livraison 1.1)
-- [Compilation et tests sous Windows](docs/BUILD-WINDOWS.md) (en anglais) : outils à installer, compilation, tests, paquet MSI, dépannage
-- [Installation](docs/INSTALLATION.md) : paquets `.deb`, `.rpm` et `.msi`, première instance, mise à jour, désinstallation
-- [Exploitation](docs/EXPLOITATION.md) : commandes courantes, journaux, supervision, PKI, sauvegarde, dépannage
-- [Plan de développement](docs/PLAN.md) : décisions, architecture, planning, stratégie de tests, recette
-- [Spécification technique](docs/SPEC.md) (en anglais) : TLS, protocole de tunnel, liste blanche, PKI, configuration, cycle de vie
-- [Plan et rapport de tests](docs/TESTS.md) (en anglais) : stratégie, environnements, description de tous les tests, couverture des exigences
-- [Grille de test d'intrusion](docs/PENTEST.md) : points de contrôle, méthode, résultat attendu, couverture automatisée
-- [Cahier de recette](docs/RECETTE.md) et [procès-verbal](docs/PV-RECETTE.md) : scénarios automatisés (`tools/recette.ps1`) et étapes manuelles
+- [Design document](docs/DESIGN.md): architecture, security, protocol, PKI, editor, quality; in 10 slides: [tlsrelay-design-slides.pdf](docs/tlsrelay-design-slides.pdf)
+- [tlsrelay-admin editor](docs/EDITOR.md): configuration, whitelist, deployment packages, mini-CA (release 1.1)
+- [Building and testing on Windows](docs/BUILD-WINDOWS.md): tools to install, build, tests, MSI package, troubleshooting
+- [Installation](docs/INSTALLATION.md): `.deb`, `.rpm` and `.msi` packages, first instance, upgrade, uninstallation
+- [Operations](docs/OPERATIONS.md): common commands, logs, monitoring, PKI, backup, troubleshooting
+- [Development plan](docs/PLAN.md): decisions, architecture, schedule, test strategy, acceptance
+- [Technical specification](docs/SPEC.md): TLS, tunnel protocol, whitelist, PKI, configuration, lifecycle
+- [Test plan and report](docs/TESTS.md): strategy, environments, description of every test, requirements coverage
+- [Penetration test checklist](docs/PENTEST.md): checkpoints, method, expected result, automated coverage
+- [Acceptance test plan](docs/ACCEPTANCE.md) and [acceptance report](docs/ACCEPTANCE-REPORT.md): automated scenarios (`tools/acceptance.ps1`) and manual steps
 
-## État
+## Status
 
-| Phase | Contenu | État |
+| Phase | Content | Status |
 |---|---|---|
-| 0 | Spécification | Terminée |
-| 1 | Socle : CMake/vcpkg, configuration et validation, logs et mode verbose, relais en clair, multi-canaux, `idle_timeout`, essais vers la destination, arrêt propre | Terminée |
-| 2 | TLS 1.3 sur OpenSSL : port `tls`, ALPN `tlsrelay/1`, vérification du nom et de l'AC émettrice du serveur, chargement et contrôle de la PKI | Terminée |
-| 3 | mTLS (certificat client émis par l'AC Clients) et liste blanche des pairs (IP, sujet, ports), rechargée à chaud | Terminée |
-| 4 | Rotation à chaud des certificats et des AC jusqu'à la racine (générations, drain, garde-fou, `check-pki`, `pki activate`, `SIGHUP`) | Terminée |
-| 5 | Protocole de tunnel `tlsrelay/1` (trames, acquittements, contre-pression, demi-fermeture), renégociation transparente à l'échéance de `session_lifetime`, reprise de session après coupure | Terminée |
-| 6 | Cycle de vie : services systemd et Windows (boot, start, stop, restart, kill), instances nommées, canal d'administration, métriques Prometheus, journalisation à chaud | Terminée |
-| 7 | PKI en ligne de commande : `pki gen-csr`, `pki install`, mini-AC (`ca init`, `ca sign`, `ca list`) | Terminée |
-| 8 | Durcissement : PING périodique (lien muet), fuzzing libFuzzer (6 cibles, nuit de 1 h), clang-tidy et cppcheck sans alerte, scan TLS (sslyze), OpenSSL 3.5 sous Linux | Terminée |
-| 9 | Outillage de test `tlsrelay-testkit` (charge, débit, latence, perturbations réseau, PKI de test), objectifs de performance mesurés, endurance | Terminée |
-| 10 | Campagne de sécurité : cas d'attaque automatisés, testssl.sh, MSVC `/analyze`, durcissement et dépendances vérifiés en CI, grille de test d'intrusion ; kit de recette (`recette.ps1`, cahier, procès-verbal) | Terminée |
-| 11 | Paquets `.deb`, `.rpm` et `.msi` (OpenSSL 3.5 LTS sous Windows), testés à l'installation sur Ubuntu 22.04 et 24.04, Debian 12, RHEL 9 et équivalents, Windows ; guides d'installation et d'exploitation | Terminée |
+| 0 | Specification | Done |
+| 1 | Foundation: CMake/vcpkg, configuration and validation, logs and verbose mode, plaintext relay, multiple channels, `idle_timeout`, dial attempts to the destination, graceful shutdown | Done |
+| 2 | TLS 1.3 on OpenSSL: `tls` port, ALPN `tlsrelay/1`, verification of the server name and issuing CA, PKI loading and checks | Done |
+| 3 | mTLS (client certificate issued by the Clients CA) and peer whitelist (IP, subject, ports), hot-reloaded | Done |
+| 4 | Hot rotation of certificates and CAs up to the root (generations, drain, safeguard, `check-pki`, `pki activate`, `SIGHUP`) | Done |
+| 5 | `tlsrelay/1` tunnel protocol (frames, acknowledgements, backpressure, half-close), transparent renegotiation when `session_lifetime` expires, session resumption after a cut | Done |
+| 6 | Lifecycle: systemd and Windows services (boot, start, stop, restart, kill), named instances, administration channel, Prometheus metrics, hot log-level changes | Done |
+| 7 | Command-line PKI: `pki gen-csr`, `pki install`, mini-CA (`ca init`, `ca sign`, `ca list`) | Done |
+| 8 | Hardening: periodic PING (silent link), libFuzzer fuzzing (6 targets, 1 h nightly), clang-tidy and cppcheck warning-free, TLS scan (sslyze), OpenSSL 3.5 on Linux | Done |
+| 9 | `tlsrelay-testkit` test tooling (load, throughput, latency, network disturbances, test PKI), measured performance targets, soak testing | Done |
+| 10 | Security campaign: automated attack cases, testssl.sh, MSVC `/analyze`, hardening and dependencies checked in CI, penetration test checklist; acceptance kit (`acceptance.ps1`, test plan, report) | Done |
+| 11 | `.deb`, `.rpm` and `.msi` packages (OpenSSL 3.5 LTS on Windows), install-tested on Ubuntu 22.04 and 24.04, Debian 12, RHEL 9 and equivalents, Windows; installation and operations guides | Done |
 
-Livraison 1.1 (éditeur `tlsrelay-admin`, [PLAN §4](docs/PLAN.md)) :
+Release 1.1 (`tlsrelay-admin` editor, [PLAN §4](docs/PLAN.md)):
 
-| Phase | Contenu | État |
+| Phase | Content | Status |
 |---|---|---|
-| 12 | Socle de l'éditeur : écriture normalisée de la configuration et de la liste blanche, différences ; mini-AC : révocation (`ca revoke`), CRL (`ca crl`), journal d'audit chaîné (`ca audit`) ; CRL appliquées par le service (`pki crl`, rechargement à chaud) | Terminée |
-| 13 | Application Qt `tlsrelay-admin` : formulaire de configuration et liste blanche validés par les règles du service, aperçu des différences et copie `.bak` à l'enregistrement, export des paquets de déploiement (Linux, Windows) | Terminée |
-| 14 | Module PKI de l'éditeur : reprise ou création de la mini-AC, inventaire (filtres, expirations), signature et renouvellement des demandes, révocation et CRL, journal d'audit, assistant de changement de racine (`ca root-change` en ligne de commande) | Terminée |
-| 15 | Éditeur dans le MSI (fonctionnalité « tlsrelay-admin » : DLL Qt déployées, raccourci, textes LGPL et GPL), contrôle sans fenêtre (`--check`), guide de l'éditeur, scénarios de recette E01 à E10 | Terminée |
+| 12 | Editor foundation: normalized writing of the configuration and whitelist, diffs; mini-CA: revocation (`ca revoke`), CRL (`ca crl`), hash-chained audit log (`ca audit`); CRLs enforced by the service (`pki crl`, hot reload) | Done |
+| 13 | `tlsrelay-admin` Qt application: configuration form and whitelist validated by the service's rules, diff preview and `.bak` copy on save, deployment package export (Linux, Windows) | Done |
+| 14 | Editor PKI module: open or create the mini-CA, inventory (filters, expiry), signing and renewal of requests, revocation and CRL, audit log, root change wizard (`ca root-change` on the command line) | Done |
+| 15 | Editor in the MSI ("tlsrelay-admin" feature: deployed Qt DLLs, shortcut, LGPL and GPL texts), headless check (`--check`), editor guide, acceptance scenarios E01 to E10 | Done |
 
-Les trois ports sont disponibles. Le client et le serveur dialoguent avec le protocole de tunnel (SPEC §4) : sur les ports `tls` et `mtls`, le client renégocie la session à l'échéance de `session_lifetime` (nouvelle connexion, handshake complet avec la génération PKI courante) sans que l'application ne voie de coupure, et reprend la session si la connexion tombe. Le serveur n'accepte que des tlsrelay clients : une application ne peut pas s'y connecter directement.
+All three ports are available. The client and server talk over the tunnel protocol (SPEC §4): on the `tls` and `mtls` ports, the client renegotiates the session when `session_lifetime` expires (new connection, full handshake with the current PKI generation) without the application seeing any cut, and resumes the session if the connection drops. The server only accepts tlsrelay clients: an application cannot connect to it directly.
 
-En mode serveur, la liste blanche est obligatoire (exemple commenté : [examples/whitelist.yaml](examples/whitelist.yaml)).
+In server mode, the whitelist is mandatory (commented example: [examples/whitelist.yaml](examples/whitelist.yaml)).
 
-## Compilation
+## Building
 
 ### Linux
 
-Dépendances (Ubuntu 24.04) :
+Dependencies (Ubuntu 24.04):
 
 ```sh
 sudo apt-get install cmake ninja-build g++ libssl-dev libasio-dev libyaml-cpp-dev \
@@ -79,56 +79,56 @@ cmake --build --preset linux-release
 ctest --preset linux-release
 ```
 
-Avec AddressSanitizer et UBSan (Clang, paquet `libclang-rt-18-dev`) : préréglage `linux-asan`.
+With AddressSanitizer and UBSan (Clang, `libclang-rt-18-dev` package): `linux-asan` preset.
 
-Durcissement (Linux) :
+Hardening (Linux):
 
 ```sh
-tools/run-clang-tidy.sh build/linux-release          # analyse statique (paquet clang-tidy-18)
-tools/run-cppcheck.sh build/linux-release            # analyse statique (paquet cppcheck)
+tools/run-clang-tidy.sh build/linux-release          # static analysis (clang-tidy-18 package)
+tools/run-cppcheck.sh build/linux-release            # static analysis (cppcheck package)
 cmake --preset linux-fuzz && cmake --build --preset linux-fuzz
-tools/run-fuzz.sh build/linux-fuzz 60                # 60 s par cible libFuzzer
-tests/lifecycle/tls-scan.sh build/linux-release/src/app/tlsrelay   # configuration TLS (sslyze)
-tools/coverage.sh build/coverage                     # couverture de code (paquet gcovr) : build/coverage/coverage/index.html
+tools/run-fuzz.sh build/linux-fuzz 60                # 60 s per libFuzzer target
+tests/lifecycle/tls-scan.sh build/linux-release/src/app/tlsrelay   # TLS configuration (sslyze)
+tools/coverage.sh build/coverage                     # code coverage (gcovr package): build/coverage/coverage/index.html
 ```
 
-Couverture mesurée (au moins 90 % des lignes du code livré, contrôlé par la CI) : [TESTS.md §6](docs/TESTS.md#6-code-coverage).
+Measured coverage (at least 90% of lines of the shipped code, enforced by CI): [TESTS.md §6](docs/TESTS.md#6-code-coverage).
 
-### Éditeur tlsrelay-admin (Qt 6)
+### tlsrelay-admin editor (Qt 6)
 
-L'éditeur se compile avec l'option `-DTLSRELAY_BUILD_ADMIN=ON` (Qt 6.4 ou plus récent, liaison dynamique) :
+The editor is built with the `-DTLSRELAY_BUILD_ADMIN=ON` option (Qt 6.4 or later, dynamically linked):
 
 ```sh
-sudo apt-get install qt6-base-dev          # Linux (paquet de la distribution)
+sudo apt-get install qt6-base-dev          # Linux (distribution package)
 cmake --preset linux-release -DTLSRELAY_BUILD_ADMIN=ON
 cmake --build --preset linux-release && build/linux-release/src/admin/tlsrelay-admin examples/server.yaml
 ```
 
-Sous Windows, Qt 6.8 LTS (msvc2022_64) est indiqué par `-DCMAKE_PREFIX_PATH=<répertoire de Qt>`. Les tests de l'éditeur (Qt Test) tournent sans affichage (`QT_QPA_PLATFORM=offscreen`) et vérifient notamment que l'éditeur et le service signalent exactement les mêmes erreurs.
+On Windows, Qt 6.8 LTS (msvc2022_64) is given with `-DCMAKE_PREFIX_PATH=<Qt directory>`. The editor tests (Qt Test) run headless (`QT_QPA_PLATFORM=offscreen`) and check, among other things, that the editor and the service report exactly the same errors.
 
-L'éditeur ouvre une configuration et, en mode serveur, sa liste blanche ; chaque saisie est validée par le chargeur du service. L'enregistrement montre les différences, réécrit les fichiers sous une forme normalisée (les commentaires ne sont pas conservés) et garde l'original en `.bak`. L'onglet « PKI » reprend un répertoire de mini-AC (créé par `tlsrelay ca init` ou par l'éditeur) : inventaire des certificats émis (révoqués en rouge, expirant dans 30 jours en orange), signature d'une demande examinée avant signature, assistant de renouvellement, révocation suivie de la publication des CRL, journal d'audit et contrôle de son intégrité, assistant de changement de racine (fichiers de confiance et commandes des trois étapes). La phrase de passe de l'AC est demandée à chaque opération et n'est jamais conservée.
+The editor opens a configuration and, in server mode, its whitelist; every input is validated by the service's loader. Saving shows the differences, rewrites the files in a normalized form (comments are not kept) and keeps the original as `.bak`. The "PKI" tab opens a mini-CA directory (created by `tlsrelay ca init` or by the editor): inventory of issued certificates (revoked in red, expiring within 30 days in orange), signing of a request that is reviewed before signing, renewal wizard, revocation followed by CRL publication, audit log and integrity check, root change wizard (trust files and commands for the three steps). The CA passphrase is asked for at each operation and never stored.
 
-« Exporter le paquet de déploiement » crée un répertoire à copier sur la machine de l'instance : configuration, liste blanche, kit PKI et CRL éventuels, `install.sh` ou `install.ps1` et `LISEZMOI.txt`.
+"Export deployment package" creates a directory to copy to the instance's machine: configuration, whitelist, PKI kit and CRL if any, `install.sh` or `install.ps1` and `README.txt`.
 
-### Paquets
+### Packages
 
 ```sh
-# Linux, dans un conteneur de la distribution la plus ancienne visée (dépendances embarquées) :
-docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 packaging/build-linux.sh paquets   # .deb
-docker run --rm -v "$PWD:/src" -w /src rockylinux:9 packaging/build-linux.sh paquets   # .rpm
-docker run --rm -v "$PWD:/src" -w /src debian:12 packaging/test-linux-package.sh paquets   # test d'installation
+# Linux, in a container of the oldest targeted distribution (bundled dependencies):
+docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 packaging/build-linux.sh packages   # .deb
+docker run --rm -v "$PWD:/src" -w /src rockylinux:9 packaging/build-linux.sh packages   # .rpm
+docker run --rm -v "$PWD:/src" -w /src debian:12 packaging/test-linux-package.sh packages   # installation test
 ```
 
 ```bat
-rem Windows, après la compilation :
+rem Windows, after building:
 cd build\windows-msvc && cpack -C Release -G WIX
 ```
 
-`-DTLSRELAY_FETCH_DEPS=ON` remplace les dépendances du système (Asio, CLI11, spdlog, yaml-cpp) par des versions épinglées, liées statiquement ; seul OpenSSL reste celui de la distribution. Licence : [LICENSE](LICENSE) ; composants tiers : [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
+`-DTLSRELAY_FETCH_DEPS=ON` replaces the system dependencies (Asio, CLI11, spdlog, yaml-cpp) with pinned, statically linked versions; only OpenSSL remains the distribution's. License: [LICENSE](LICENSE); third-party components: [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
 
 ### Windows (x64)
 
-Prérequis : Visual Studio 2022 et [vcpkg](https://github.com/microsoft/vcpkg), avec la variable `VCPKG_ROOT`. Les dépendances, dont OpenSSL, sont installées par vcpkg à partir de `vcpkg.json`.
+Prerequisites: Visual Studio 2022 and [vcpkg](https://github.com/microsoft/vcpkg), with the `VCPKG_ROOT` variable set. The dependencies, including OpenSSL, are installed by vcpkg from `vcpkg.json`.
 
 ```bat
 cmake --preset windows-msvc
@@ -136,150 +136,150 @@ cmake --build --preset windows-release
 ctest --preset windows-release
 ```
 
-Guide complet (installation des outils, éditeur Qt, tous les tests Windows, paquet MSI, dépannage) : [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md).
+Complete guide (tool installation, Qt editor, all Windows tests, MSI package, troubleshooting): [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md).
 
-## Utilisation
+## Usage
 
 ```sh
-tlsrelay check-config -c examples/server.yaml   # valide une configuration
-tlsrelay run -c examples/server.yaml            # serveur, au premier plan
-tlsrelay run -c examples/client.yaml -v         # client, mode verbose (-vv : trace)
-tlsrelay version                                # versions de tlsrelay et d'OpenSSL
+tlsrelay check-config -c examples/server.yaml   # validate a configuration
+tlsrelay run -c examples/server.yaml            # server, in the foreground
+tlsrelay run -c examples/client.yaml -v         # client, verbose mode (-vv: trace)
+tlsrelay version                                # tlsrelay and OpenSSL versions
 ```
 
-### Essai en TLS
+### Trying TLS
 
-La PKI est lue dans le répertoire `credentials.pki_root` (format décrit dans [SPEC §7.2](docs/SPEC.md)). Pour un essai, `tools/make-test-pki.sh` crée une PKI de test (racine, AC Serveurs, AC Clients, certificats) et les deux répertoires prêts à l'emploi :
+The PKI is read from the `credentials.pki_root` directory (format described in [SPEC §7.2](docs/SPEC.md)). For a trial, `tools/make-test-pki.sh` creates a test PKI (root, Servers CA, Clients CA, certificates) and the two ready-to-use directories:
 
 ```sh
-tools/make-test-pki.sh /tmp/pki-test          # nécessite la commande openssl
+tools/make-test-pki.sh /tmp/pki-test          # requires the openssl command
 ```
 
 ```yaml
-# serveur                                   # client
-credentials: { pki_root: /tmp/pki-test/serveur }   credentials: { pki_root: /tmp/pki-test/client }
+# server                                    # client
+credentials: { pki_root: /tmp/pki-test/server }    credentials: { pki_root: /tmp/pki-test/client }
 ports:                                      ports:
-  tls: { listen: "0.0.0.0:9002" }             tls: { listen: "127.0.0.1:7002", upstream: "relais:9002", server_name: relay.test }
+  tls: { listen: "0.0.0.0:9002" }             tls: { listen: "127.0.0.1:7002", upstream: "relay:9002", server_name: relay.test }
 ```
 
-Pour le port `mtls`, le client présente le certificat `CN=client.test,O=tlsrelay-test` de la PKI de test ; la liste blanche du serveur doit contenir ce sujet :
+For the `mtls` port, the client presents the test PKI's `CN=client.test,O=tlsrelay-test` certificate; the server's whitelist must contain this subject:
 
 ```yaml
 peers:
-  - { name: poste-local, ip: 127.0.0.1, ports: [mtls], subject: "CN=client.test,O=tlsrelay-test" }
+  - { name: local-host, ip: 127.0.0.1, ports: [mtls], subject: "CN=client.test,O=tlsrelay-test" }
 ```
 
-Les clés produites par ce script ne sont pas chiffrées : il est réservé aux essais. Pour une PKI réelle, utiliser la mini-AC (ci-dessous).
+The keys produced by this script are not encrypted: it is for trials only. For a real PKI, use the mini-CA (below).
 
-### PKI de production : mini-AC et demandes de signature
+### Production PKI: mini-CA and signing requests
 
-La clé de chaque instance est générée sur sa machine et ne la quitte jamais ; seule la demande de signature (CSR) circule. L'AC (racine, AC Serveurs, AC Clients, clés chiffrées par phrase de passe) reste sur un poste d'administration.
+Each instance's key is generated on its own machine and never leaves it; only the signing request (CSR) travels. The CA (root, Servers CA, Clients CA, passphrase-encrypted keys) stays on an administration workstation.
 
 ```sh
-# Poste d'administration, une seule fois
-tlsrelay ca init --dir /ac --org MonEntreprise
+# Administration workstation, once
+tlsrelay ca init --dir /ca --org MyCompany
 
-# Machine du serveur tlsrelay
-tlsrelay pki gen-csr -c serveur.yaml --subject "CN=relais.exemple,O=MonEntreprise" --san relais.exemple
-#   → transmettre <pki_root>/v1/request.csr au poste d'administration
+# tlsrelay server machine
+tlsrelay pki gen-csr -c server.yaml --subject "CN=relay.example,O=MyCompany" --san relay.example
+#   → send <pki_root>/v1/request.csr to the administration workstation
 
-# Poste d'administration : signature selon la politique de l'AC
-tlsrelay ca sign --dir /ac --role server --csr request.csr --san relais.exemple --out kit-relais
-#   → retransmettre le répertoire kit-relais
+# Administration workstation: signing according to the CA policy
+tlsrelay ca sign --dir /ca --role server --csr request.csr --san relay.example --out relay-kit
+#   → send the relay-kit directory back
 
-# Machine du serveur
-tlsrelay pki install  -c serveur.yaml --from kit-relais   # complète v1 et la contrôle
-tlsrelay pki activate -c serveur.yaml v1
+# Server machine
+tlsrelay pki install  -c server.yaml --from relay-kit   # completes v1 and checks it
+tlsrelay pki activate -c server.yaml v1
 ```
 
-Même parcours pour un client mTLS avec `--role client` (sans `--san`). La politique de l'AC impose une clé ECDSA P-256 et ses propres extensions (celles de la demande sont ignorées), refuse un sujet déjà attribué (sauf `--renew`) et tient l'inventaire (`tlsrelay ca list --dir /ac`). La phrase de passe est demandée au clavier, ou lue dans `--passphrase-file` ou la variable `TLSRELAY_CA_PASSPHRASE`.
+Same process for an mTLS client with `--role client` (without `--san`). The CA policy requires an ECDSA P-256 key and applies its own extensions (those in the request are ignored), refuses a subject that is already assigned (unless `--renew`) and keeps the inventory (`tlsrelay ca list --dir /ca`). The passphrase is prompted for on the keyboard, or read from `--passphrase-file` or the `TLSRELAY_CA_PASSPHRASE` variable.
 
-Révocation : `tlsrelay ca revoke --dir /ac --serial <série> --reason keyCompromise --out crl.pem` publie les CRL, à installer sur chaque instance avec `tlsrelay pki crl -c <config> crl.pem` ; le certificat est refusé au handshake et les canaux qui l'utilisent sont fermés (SPEC §7.7). Les CRL se republient avant échéance (`tlsrelay ca crl`, 30 jours par défaut). Toutes les opérations de l'AC sont tracées dans un journal d'audit chaîné par SHA-256 (`tlsrelay ca audit --dir /ac`).
+Revocation: `tlsrelay ca revoke --dir /ca --serial <serial> --reason keyCompromise --out crl.pem` publishes the CRLs, to be installed on each instance with `tlsrelay pki crl -c <config> crl.pem`; the certificate is refused at handshake and the channels using it are closed (SPEC §7.7). CRLs are republished before they expire (`tlsrelay ca crl`, 30 days by default). Every CA operation is recorded in a SHA-256 hash-chained audit log (`tlsrelay ca audit --dir /ca`).
 
-### Rotation des certificats
+### Certificate rotation
 
-Une génération PKI est un répertoire `vN` du `pki_root` ; le fichier `current` désigne la génération en service. Pour renouveler un certificat (nouvelle clé) :
+A PKI generation is a `vN` directory of the `pki_root`; the `current` file designates the generation in service. To renew a certificate (new key):
 
 ```sh
-tlsrelay pki gen-csr -c serveur.yaml --subject "CN=relais.exemple,O=MonEntreprise"   # crée v2
-tlsrelay ca sign --dir /ac --role server --csr request.csr --san relais.exemple --renew --out kit-v2
-tlsrelay pki install  -c serveur.yaml --from kit-v2   # fichiers de confiance repris de v1 ; garde-fou vérifié
-tlsrelay pki activate -c serveur.yaml v2              # prise en compte en 2 s par le service en cours
+tlsrelay pki gen-csr -c server.yaml --subject "CN=relay.example,O=MyCompany"   # creates v2
+tlsrelay ca sign --dir /ca --role server --csr request.csr --san relay.example --renew --out kit-v2
+tlsrelay pki install  -c server.yaml --from kit-v2   # trust files taken from v1; safeguard checked
+tlsrelay pki activate -c server.yaml v2              # picked up within 2 s by the running service
 ```
 
-Les nouvelles connexions utilisent v2. Les canaux déjà ouverts restent sur v1 jusqu'à leur prochaine renégociation (au plus `limits.session_lifetime`, 1 h par défaut), qui les fait passer sur v2 sans coupure ; v1 est libérée quand plus aucune connexion ne l'utilise. Pour changer de racine, suivre les 3 étapes de [SPEC §7.5](docs/SPEC.md).
+New connections use v2. Channels already open stay on v1 until their next renegotiation (at most `limits.session_lifetime`, 1 h by default), which moves them to v2 without a cut; v1 is released when no connection uses it any more. To change the root, follow the 3 steps in [SPEC §7.5](docs/SPEC.md).
 
-### Renégociation
+### Renegotiation
 
-Sur les ports `tls` et `mtls`, chaque canal change de connexion TLS à l'échéance de `limits.session_lifetime` (± `session_jitter`). Les données continuent de passer pendant la renégociation et l'application ne voit aucune coupure. Le même mécanisme reprend la session si la connexion tombe, dans la limite de `limits.renegotiation_grace` (30 s par défaut). Avec `logging.level: debug`, chaque renégociation est journalisée.
+On the `tls` and `mtls` ports, each channel switches to a new TLS connection when `limits.session_lifetime` (± `session_jitter`) expires. Data keeps flowing during renegotiation and the application sees no cut. The same mechanism resumes the session if the connection drops, within `limits.renegotiation_grace` (30 s by default). With `logging.level: debug`, each renegotiation is logged.
 
-### Outillage de test : tlsrelay-testkit
+### Test tooling: tlsrelay-testkit
 
 ```sh
-tlsrelay-testkit pki --out /tmp/pki                         # PKI de test (relancé : nouvelle génération)
-tlsrelay-testkit echo --listen 127.0.0.1:8080               # destination d'écho
-tlsrelay-testkit load --target 127.0.0.1:7003 --channels 5000 --bytes 1MiB --hold 10s   # empreinte SHA-256 par canal
-tlsrelay-testkit throughput --target 127.0.0.1:7003 --duration 10s     # --rate 200 : débit limité (Mbit/s)
-tlsrelay-testkit latency --target 127.0.0.1:7003            # comparer avec --target 127.0.0.1:8080 (direct)
+tlsrelay-testkit pki --out /tmp/pki                         # test PKI (run again: new generation)
+tlsrelay-testkit echo --listen 127.0.0.1:8080               # echo destination
+tlsrelay-testkit load --target 127.0.0.1:7003 --channels 5000 --bytes 1MiB --hold 10s   # SHA-256 digest per channel
+tlsrelay-testkit throughput --target 127.0.0.1:7003 --duration 10s     # --rate 200: capped throughput (Mbit/s)
+tlsrelay-testkit latency --target 127.0.0.1:7003            # compare with --target 127.0.0.1:8080 (direct)
 tlsrelay-testkit proxy --listen 127.0.0.1:9100 --target 127.0.0.1:9003 --delay 20ms --cut-every 60s
 ```
 
-`--json` donne un résultat exploitable par un script. `tests/perf/perf.sh <build> [canaux]` vérifie les objectifs de performance ; `tests/perf/soak.sh <build> <minutes>` mène l'endurance (72 h : 4320 minutes, sur une machine dédiée).
+`--json` gives a result that a script can process. `tests/perf/perf.sh <build> [channels]` checks the performance targets; `tests/perf/soak.sh <build> <minutes>` runs the soak test (72 h: 4320 minutes, on a dedicated machine).
 
-Mesures (Linux, poste de développement, chaîne mTLS complète client → serveur) :
+Measurements (Linux, development workstation, full mTLS chain client → server):
 
-| Indicateur | Objectif | Mesuré |
+| Indicator | Target | Measured |
 |---|---|---|
-| Canaux simultanés | 5 000 | 5 000, tous intègres |
-| Débit par canal | 100 Mbit/s | ≈ 800 Mbit/s |
-| Latence ajoutée (aller-retour) | < 1 ms | ≈ 0,35 ms |
-| Mémoire | — | ≈ 50 Kio par canal ouvert et par relais (≈ 250 Mio pour 5 000 canaux) |
+| Concurrent channels | 5,000 | 5,000, all intact |
+| Throughput per channel | 100 Mbit/s | ≈ 800 Mbit/s |
+| Added latency (round trip) | < 1 ms | ≈ 0.35 ms |
+| Memory | — | ≈ 50 KiB per open channel and per relay (≈ 250 MiB for 5,000 channels) |
 
-En CI, `perf.sh` mesure le débit cadencé à 500 Mbit/s (variable `RATE`, 0 : sans limite) et le flux continu de l'endurance tourne à 200 Mbit/s (`STREAM_RATE`).
+In CI, `perf.sh` measures throughput paced at 500 Mbit/s (`RATE` variable, 0: unlimited) and the soak test's continuous stream runs at 200 Mbit/s (`STREAM_RATE`).
 
-**Limite connue : flux saturé sur la boucle locale.** Un canal poussé à son maximum dans les deux sens à la fois (≈ 1 Gbit/s, relais et destination sur la même machine) peut se figer plusieurs dizaines de secondes, sans perte ni corruption de données. Le relais applique alors sa contre-pression et suspend la lecture d'une socket ; le noyau jette des segments en réception (`TCPRcvQDrop` dans `nstat`) au lieu de fermer la fenêtre à temps, et l'émetteur attend entre deux retransmissions un délai qui double à chaque essai (jusqu'à 25 s et plus). Observé sur les machines de CI GitHub, non reproduit sur un poste de développement ; l'analyse continue hors de la CI de chaque push. `tlsrelay channels` (état du contrôle de flux de chaque canal) et le workflow « Stress performances » servent au diagnostic.
+**Known limitation: saturated stream on the loopback.** A channel pushed to its maximum in both directions at once (≈ 1 Gbit/s, relay and destination on the same machine) can stall for several tens of seconds, without data loss or corruption. The relay then applies backpressure and stops reading from a socket; the kernel drops received segments (`TCPRcvQDrop` in `nstat`) instead of closing the window in time, and the sender waits between two retransmissions for a delay that doubles at each attempt (up to 25 s and more). Observed on GitHub CI machines, not reproduced on a development workstation; the investigation continues outside the per-push CI. `tlsrelay channels` (flow-control state of each channel) and the "Performance stress" workflow are used for diagnosis.
 
-### Sécurité et recette
+### Security and acceptance
 
-| Outil | Vérifie |
+| Tool | Checks |
 |---|---|
-| `tests/test_attacks.cpp` | Certificats expirés ou pas encore valides, mauvais usage, faux serveur, trames hostiles, inondation sans handshake, injection et secrets dans les journaux |
-| `tests/lifecycle/tls-scan.sh` | Configuration TLS vue de l'extérieur (sslyze ; testssl.sh avec `TESTSSL=<chemin>`) |
-| `tools/check-hardening.sh`, `tools/check-hardening.ps1` | PIE, RELRO, NX, protection de pile, FORTIFY ; ASLR, DEP, CFG |
-| `tools/check-deps.sh` | OpenSSL livré sous Windows à la dernière version corrective de la branche 3.5 |
-| `cmake -DTLSRELAY_MSVC_ANALYZE=ON` | Analyse statique MSVC (`/analyze`) |
-| `tools/recette.ps1` | Recette automatisée sur une station (voir le [cahier de recette](docs/RECETTE.md)) |
+| `tests/test_attacks.cpp` | Expired or not-yet-valid certificates, wrong usage, fake server, hostile frames, flooding without handshake, injection and secrets in logs |
+| `tests/lifecycle/tls-scan.sh` | TLS configuration seen from outside (sslyze; testssl.sh with `TESTSSL=<path>`) |
+| `tools/check-hardening.sh`, `tools/check-hardening.ps1` | PIE, RELRO, NX, stack protection, FORTIFY; ASLR, DEP, CFG |
+| `tools/check-deps.sh` | OpenSSL shipped on Windows at the latest patch release of the 3.5 branch |
+| `cmake -DTLSRELAY_MSVC_ANALYZE=ON` | MSVC static analysis (`/analyze`) |
+| `tools/acceptance.ps1` | Automated acceptance on a single workstation (see the [acceptance test plan](docs/ACCEPTANCE.md)) |
 
 ```powershell
-.\tools\recette.ps1 -BuildDir 'C:\Program Files\tlsrelay' -Services -Keep   # rapport.md dans %ProgramData%\tlsrelay\recette-<date>
+.\tools\acceptance.ps1 -BuildDir 'C:\Program Files\tlsrelay' -Services -Keep   # report.md in %ProgramData%\tlsrelay\acceptance-<date>
 ```
 
-Sous Linux (PowerShell 7), en mode console : `pwsh tools/recette.ps1 -BuildDir build/linux-release/src/app -TestkitDir build/linux-release/src/testkit`.
+On Linux (PowerShell 7), in console mode: `pwsh tools/acceptance.ps1 -BuildDir build/linux-release/src/app -TestkitDir build/linux-release/src/testkit`.
 
-### Démonstration et vidéo
+### Demo and video
 
-`tools/demo.sh` montre toute la solution en 3 minutes sur une machine Linux, avec les binaires réels et un commentaire en anglais : PKI par la mini-AC, client et serveur sur les trois ports, TLS vu de l'extérieur (openssl), liste blanche rechargée, renégociation transparente, reprise après coupures réseau, rotation de la PKI à chaud, révocation (CRL), administration et métriques, éditeur, arrêt et audit. Chaque étape se termine par des contrôles (25 au total) ; code de sortie 0 s'ils réussissent tous.
+`tools/demo.sh` shows the whole solution in 3 minutes on a Linux machine, with the real binaries and an English commentary: PKI from the mini-CA, client and server on all three ports, TLS seen from outside (openssl), whitelist reload, transparent renegotiation, resumption after network cuts, hot PKI rotation, revocation (CRL), administration and metrics, editor, shutdown and audit. Each step ends with checks (25 in total); exit code 0 if they all pass.
 
 ```sh
-tools/demo.sh build/linux-release              # DEMO_PAUSE=1 : attend Entrée entre les étapes (présentation en direct)
-DEMO_DIR=/tmp/demo tools/demo.sh build/linux-release   # conserve configurations, PKI, journaux et captures
+tools/demo.sh build/linux-release              # DEMO_PAUSE=1: wait for Enter between steps (live presentation)
+DEMO_DIR=/tmp/demo tools/demo.sh build/linux-release   # keeps configurations, PKI, logs and captures
 ```
 
-`tools/video/make-video.sh <build> [sortie.mp4]` en tire une vidéo (MP4 1280×720, sans son, sous-titres en anglais, environ 3 minutes) : enregistrement réel de `demo.sh`, rejoué dans un terminal avec des cartons de chapitre, puis les écrans de l'éditeur (`tlsrelay-admin-tour`, cible hors compilation par défaut). Prérequis : build avec l'éditeur, node et le paquet playwright avec son Chromium, ffmpeg, accès npm (xterm.js).
+`tools/video/make-video.sh <build> [output.mp4]` turns it into a video (MP4 1280×720, no sound, English subtitles, about 3 minutes): a real recording of `demo.sh`, replayed in a terminal with chapter cards, followed by the editor screens (`tlsrelay-admin-tour`, a target excluded from the default build). Prerequisites: a build with the editor, node and the playwright package with its Chromium, ffmpeg, npm access (xterm.js).
 
-### Service et administration
+### Service and administration
 
 ```sh
-sudo tlsrelay service install --instance agence --boot   # config : /etc/tlsrelay/agence.yaml
-sudo tlsrelay start   --instance agence
-sudo tlsrelay status  --instance agence                  # PID, OpenSSL, génération PKI, canaux par port
-sudo tlsrelay reload  --instance agence                  # liste blanche, PKI, niveaux de journalisation
-sudo tlsrelay stop    --instance agence --timeout 30s    # drain puis arrêt ; kill : arrêt immédiat
+sudo tlsrelay service install --instance branch --boot   # config: /etc/tlsrelay/branch.yaml
+sudo tlsrelay start   --instance branch
+sudo tlsrelay status  --instance branch                  # PID, OpenSSL, PKI generation, channels per port
+sudo tlsrelay reload  --instance branch                  # whitelist, PKI, log levels
+sudo tlsrelay stop    --instance branch --timeout 30s    # drain then stop; kill: immediate stop
 ```
 
-Sous Windows, dans une console administrateur : mêmes commandes (service `tlsrelay-agence`, configuration `%ProgramData%\tlsrelay\agence.yaml`, compte `NT SERVICE\tlsrelay-agence`). Le compte du service doit pouvoir lire la configuration, la liste blanche et la PKI.
+On Windows, in an administrator console: same commands (service `tlsrelay-branch`, configuration `%ProgramData%\tlsrelay\branch.yaml`, account `NT SERVICE\tlsrelay-branch`). The service account must be able to read the configuration, the whitelist and the PKI.
 
-Une instance lancée en console (`tlsrelay run`) se pilote de la même façon avec `-c <config>` au lieu de `--instance`. Autres commandes : `channels` (canaux ouverts), `metrics` (format Prometheus), `log-level debug` (journalisation à chaud), `log-reopen` (rotation). Détails : [SPEC §10](docs/SPEC.md).
+An instance started in a console (`tlsrelay run`) is controlled the same way with `-c <config>` instead of `--instance`. Other commands: `channels` (open channels), `metrics` (Prometheus format), `log-level debug` (hot log-level change), `log-reopen` (rotation). Details: [SPEC §10](docs/SPEC.md).
 
-- Ctrl+C (ou `SIGTERM`) : arrêt propre, avec drain des canaux pendant `limits.shutdown_timeout` ; un second Ctrl+C force l'arrêt immédiat.
-- Codes de sortie : 0 (succès), 1 (erreur d'exécution), 2 (configuration invalide).
+- Ctrl+C (or `SIGTERM`): graceful shutdown, draining channels for `limits.shutdown_timeout`; a second Ctrl+C forces an immediate stop.
+- Exit codes: 0 (success), 1 (runtime error), 2 (invalid configuration).

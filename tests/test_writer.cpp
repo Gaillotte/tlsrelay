@@ -1,5 +1,5 @@
-// Écriture normalisée de la configuration et de la liste blanche, et
-// différences de texte (socle de l'éditeur tlsrelay-admin).
+// Normalized writing of the configuration and the whitelist, and
+// text differences (foundation of the tlsrelay-admin editor).
 #include "tlsrelay/config.hpp"
 #include "tlsrelay/text_diff.hpp"
 #include "tlsrelay/units.hpp"
@@ -24,7 +24,7 @@ std::string read(const std::string& path) {
 
 std::string dump(const std::vector<Issue>& issues) {
     std::string s;
-    for (const auto& i : issues) s += i.path + " : " + i.message + "\n";
+    for (const auto& i : issues) s += i.path + ": " + i.message + "\n";
     return s;
 }
 
@@ -59,7 +59,7 @@ TEST(ConfigWriter, ExamplesRoundTrip) {
 TEST(ConfigWriter, EveryFieldRoundTrips) {
     Config c;
     c.mode = Mode::client;
-    c.instance = "agence-2";
+    c.instance = "branch-2";
     c.logging = {LogLevel::debug, LogLevel::trace, LogLevel::error, LogFormat::json, "/var/log/tlsrelay/a b.log"};
     c.credentials = Credentials{"C:\\ProgramData\\tlsrelay\\pki", false, std::chrono::days(10)};
     c.limits.idle_timeout = 90s;
@@ -93,8 +93,8 @@ TEST(ConfigWriter, DefaultsAreOmittedAndHeaderIsCommented) {
     s.ports[PortKind::plain] = {{"0.0.0.0", 9001}, std::nullopt, std::nullopt};
     s.destination = Destination{{"10.0.0.5", 8080}};
     s.whitelist = WhitelistRef{"wl.yaml"};
-    const auto text = to_yaml(s, "Écrit par tlsrelay-admin\n\nligne 3");
-    EXPECT_EQ(text.rfind("# Écrit par tlsrelay-admin\n#\n# ligne 3\nmode: server\n", 0), 0u) << text;
+    const auto text = to_yaml(s, "Written by tlsrelay-admin\n\nline 3");
+    EXPECT_EQ(text.rfind("# Written by tlsrelay-admin\n#\n# line 3\nmode: server\n", 0), 0u) << text;
     const auto body = text.substr(text.find("mode:"));
     for (const char* absent : {"limits", "logging", "admin", "dial_timeout", "revoke_mode"}) {
         EXPECT_EQ(body.find(absent), std::string::npos) << absent << "\n" << text;
@@ -105,17 +105,17 @@ TEST(ConfigWriter, DefaultsAreOmittedAndHeaderIsCommented) {
 TEST(WhitelistWriter, RoundTripKeepsDefaultPorts) {
     const std::vector<whitelist::PeerSpec> specs = {
         {"site-a", "192.0.2.10", std::nullopt, ""},
-        {"site-b", "198.51.100.0/24", std::set<PortKind>{PortKind::mtls}, "CN=site-b,O=Exemple"},
+        {"site-b", "198.51.100.0/24", std::set<PortKind>{PortKind::mtls}, "CN=site-b,O=Example"},
         {"site-c", "2001:db8::/32", std::set<PortKind>{PortKind::plain, PortKind::tls}, "CN=a: #b,O=x"},
         {"site-d", "203.0.113.7", std::nullopt, "CN=site-d"},
     };
-    const auto text = whitelist::to_yaml(specs, "Liste blanche");
+    const auto text = whitelist::to_yaml(specs, "Whitelist");
     auto result = whitelist::Whitelist::load_string(text);
     ASSERT_TRUE(result.whitelist) << dump(result.errors) << text;
     std::vector<whitelist::PeerSpec> back;
     for (const auto& p : result.whitelist->peers()) back.push_back(whitelist::to_spec(p));
     EXPECT_EQ(back, specs) << text;
-    EXPECT_TRUE(result.whitelist->peers()[3].ports.count(PortKind::mtls));  // défaut avec sujet
+    EXPECT_TRUE(result.whitelist->peers()[3].ports.count(PortKind::mtls));  // default with subject
 
     const auto empty = whitelist::to_yaml({});
     auto none = whitelist::Whitelist::load_string(empty);

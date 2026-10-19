@@ -181,7 +181,7 @@ src/testkit/    tlsrelay-testkit: traffic generators, disturbance proxy, test PK
 src/admin/      tlsrelay-admin: Qt widgets and dialogs, deployment export
 tests/          GoogleTest suites, Qt tests (tests/admin), lifecycle scripts, performance and soak scripts
 fuzz/           libFuzzer targets (frame, config, whitelist, DN, CSR, admin request)
-tools/          static analysis wrappers, hardening checks, acceptance scripts (recette*.ps1)
+tools/          static analysis wrappers, hardening checks, acceptance scripts (acceptance*.ps1)
 packaging/      Linux build and install-test scripts, maintainer scripts
 cmake/          compiler options, dependencies (system / fetched), packaging
 docs/           SPEC, PLAN, INSTALLATION, EXPLOITATION, EDITEUR, RECETTE, PENTEST, this document
@@ -233,7 +233,7 @@ Refusal happens inside the handshake: the peer receives an alert and, on the ser
 
 ```yaml
 peers:
-  - name: agence-lyon
+  - name: branch-lyon
     ip: 192.0.2.10              # address or CIDR range, IPv4 or IPv6
     ports: [mtls]               # subset of plain, tls, mtls
     subject: "CN=relay-lyon.example,O=Example"   # required for mtls
@@ -569,7 +569,7 @@ Only log levels are applied live from a modified configuration; other changes ar
 ### 10.2 Administration channel
 
 - Unix socket `/run/tlsrelay/<instance>.sock` (`0660`, group `tlsrelay`) or named pipe `\\.\pipe\tlsrelay-<instance>` (administrators, SYSTEM, the instance account; remote clients refused).
-- One command per connection: a single text line (4 KiB max, 5 s to send it); the answer is `OK <n>` or `ERREUR <n>` followed by *n* bytes of UTF-8.
+- One command per connection: a single text line (4 KiB max, 5 s to send it); the answer is `OK <n>` or `ERROR <n>` followed by *n* bytes of UTF-8.
 - Each command is logged with the caller identity (uid/pid on Linux, pid on Windows).
 - The endpoint is also the **instance lock**: a second process for the same instance is refused (`flock` on Linux, first pipe instance on Windows); a stale socket left by a crash is replaced.
 
@@ -586,7 +586,7 @@ Two categories (`activity`, `config`) with independent levels; text or JSON outp
 
 ### 10.4 Metrics
 
-Prometheus text format (0.0.4) on the admin channel, all series labelled with `instance`: info and uptime, process memory and descriptors, active channels per port, PKI generation and live generations, CRL entries; counters for channels (opened, closed, rejected, idle-closed), dial failures, handshake failures, whitelist refusals and revocations, certificate revocations, PKI rotations and reload failures, CRL reload failures, renegotiations, resume failures, protocol errors, bytes in each direction. Alert recommendations are in [EXPLOITATION.md](EXPLOITATION.md).
+Prometheus text format (0.0.4) on the admin channel, all series labelled with `instance`: info and uptime, process memory and descriptors, active channels per port, PKI generation and live generations, CRL entries; counters for channels (opened, closed, rejected, idle-closed), dial failures, handshake failures, whitelist refusals and revocations, certificate revocations, PKI rotations and reload failures, CRL reload failures, renegotiations, resume failures, protocol errors, bytes in each direction. Alert recommendations are in [OPERATIONS.md](OPERATIONS.md).
 
 ---
 
@@ -622,7 +622,7 @@ Fields irrelevant to the selected mode are hidden while empty, but stay visible 
 
 ### 11.4 Deployment package
 
-`<out>/<instance>/` contains the configuration, the whitelist, an optional PKI kit and CRL, an installation script (`install.sh` or `install.ps1`, UTF-8 with BOM for Windows PowerShell 5.1) and `LISEZMOI.txt` with the remaining steps (CSR, activation, file permissions, service). Warnings flag relative paths (resolved from the service's working directory), an explicit `admin.endpoint` for a service, and inconsistent kit/CRL choices.
+`<out>/<instance>/` contains the configuration, the whitelist, an optional PKI kit and CRL, an installation script (`install.sh` or `install.ps1`, UTF-8 with BOM for Windows PowerShell 5.1) and `README.txt` with the remaining steps (CSR, activation, file permissions, service). Warnings flag relative paths (resolved from the service's working directory), an explicit `admin.endpoint` for a service, and inconsistent kit/CRL choices.
 
 ### 11.5 PKI panel
 
@@ -674,7 +674,7 @@ The test strategy, environments, the description of every test, the requirements
 | Fuzzing | libFuzzer targets for frames, configuration, whitelist, DN, CSR and admin requests (60 s per target in CI, longer runs offline) |
 | Performance and soak | `tests/perf/perf.sh` (channels, throughput, latency), `soak.sh` (rotations, renegotiations, cuts; resource stability) |
 | External TLS scan | sslyze and testssl.sh against a running instance |
-| Acceptance (recette) | `tools/recette.ps1`: 12 automated scenarios (R01–R12, including the root change under traffic), manual steps M01–M09 for the service and E01–E10 for the editor, sign-off record ([RECETTE.md](RECETTE.md), [PV-RECETTE.md](PV-RECETTE.md)) |
+| Acceptance | `tools/acceptance.ps1`: 12 automated scenarios (R01–R12, including the root change under traffic), manual steps M01–M09 for the service and E01–E10 for the editor, sign-off record ([ACCEPTANCE.md](ACCEPTANCE.md), [ACCEPTANCE-REPORT.md](ACCEPTANCE-REPORT.md)) |
 
 ### 13.2 Continuous integration
 

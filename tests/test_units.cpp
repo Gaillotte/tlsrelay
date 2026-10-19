@@ -62,10 +62,10 @@ TEST(FormatDuration, UsesLargestExactUnit) {
     EXPECT_EQ(format_duration(Duration(std::chrono::days(2))), "2d");
 }
 
-// Dépassements et blancs (CT-14) : refus sans repli silencieux.
+// Overflows and blanks (CT-14): refused without silent fallback.
 TEST(ParseSize, RejectsOverflow) {
-    EXPECT_FALSE(parse_size("99999999999999999999"));   // au-delà de 2^64
-    EXPECT_FALSE(parse_size("17179869184GiB"));         // 2^34 Gio = 2^64 octets
+    EXPECT_FALSE(parse_size("99999999999999999999"));   // beyond 2^64
+    EXPECT_FALSE(parse_size("17179869184GiB"));         // 2^34 GiB = 2^64 bytes
     EXPECT_EQ(parse_size("17179869183GiB"), (17179869183ULL << 30));
     EXPECT_EQ(parse_size("\t4MiB\t"), 4ULL << 20);
 }
@@ -75,7 +75,7 @@ TEST(ParsePercent, Bounds) {
     EXPECT_FALSE(parse_percent("100.0001%"));
     EXPECT_FALSE(parse_percent("-0.5%"));
     EXPECT_FALSE(parse_percent("1e400%"));
-    // Au-delà de 100 % : écrit tel quel, même s'il ne se relit pas.
+    // Above 100%: written as is, even if it cannot be read back.
     EXPECT_EQ(format_percent(2.0), "200%");
 }
 

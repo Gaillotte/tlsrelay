@@ -1,13 +1,13 @@
 #pragma once
 
-// Module PKI de tlsrelay-admin : reprise ou création d'une mini-AC,
-// inventaire des certificats émis, signature des demandes (et
-// renouvellements), révocation et publication des CRL, journal d'audit,
-// préparation d'un changement de racine. Les opérations sont celles de la
-// ligne de commande (« tlsrelay ca … »), sur le même répertoire d'AC.
+// PKI module of tlsrelay-admin: opening or creating a mini-CA,
+// inventory of issued certificates, signing of requests (and
+// renewals), revocation and CRL publication, audit log,
+// preparation of a root change. The operations are those of the
+// command line ("tlsrelay ca …"), on the same CA directory.
 //
-// La phrase de passe de l'AC n'est jamais conservée : elle est demandée à
-// chaque opération qui utilise une clé d'AC.
+// The CA passphrase is never kept: it is asked for at
+// each operation that uses a CA key.
 
 #include "tlsrelay/pki/authority.hpp"
 
@@ -26,14 +26,14 @@ class QTableWidget;
 
 namespace tlsrelay::admin {
 
-// Paramètres d'une signature (dialogue « Signer une demande »).
+// Parameters of a signing operation ("Sign a request" dialog).
 struct SignOptions {
     std::filesystem::path csr;
     pki::Role role = pki::Role::server;
-    std::vector<std::string> sans;  // « dns:nom », « ip:adresse » ou valeur seule
+    std::vector<std::string> sans;  // "dns:name", "ip:address" or bare value
     int days = 365;
     bool renew = false;
-    std::filesystem::path out;  // répertoire du kit
+    std::filesystem::path out;  // kit directory
 };
 
 class PkiPanel : public QWidget {
@@ -61,17 +61,17 @@ public:
     QTableWidget* inventory() const { return inventory_; }
     QTableWidget* audit() const { return audit_; }
     QLabel* audit_status() const { return audit_status_; }
-    // Série du certificat sélectionné dans l'inventaire (vide si aucun).
+    // Serial of the certificate selected in the inventory (empty if none).
     std::string selected_serial() const;
 
-    // Points d'interaction remplaçables (tests) : phrase de passe (confirm :
-    // saisie en double, pour une nouvelle AC), erreurs, informations.
+    // Replaceable interaction points (tests): passphrase (confirm:
+    // typed twice, for a new CA), errors, information.
     std::function<std::optional<std::string>(const QString& prompt, bool confirm)> ask_passphrase;
     std::function<void(const QString&)> report;
     std::function<void(const QString&)> inform;
 
 signals:
-    // Une autre AC a été ouverte (ou créée).
+    // Another CA was opened (or created).
     void authority_changed();
 
 private:

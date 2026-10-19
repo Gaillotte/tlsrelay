@@ -14,7 +14,7 @@ std::string_view trim(std::string_view s) {
     return s;
 }
 
-// Sépare la partie numérique entière de son suffixe.
+// Separates the integer numeric part from its suffix.
 std::optional<std::pair<std::uint64_t, std::string_view>> split_number(std::string_view text) {
     text = trim(text);
     std::uint64_t value = 0;
@@ -82,7 +82,7 @@ std::string format_size(std::uint64_t bytes) {
 }
 
 std::string format_percent(double fraction) {
-    // Écriture la plus courte qui redonne exactement la même fraction.
+    // Shortest writing that gives back exactly the same fraction.
     char buffer[64];
     for (int precision = 0; precision <= 17; ++precision) {
         auto [end, ec] = std::to_chars(buffer, buffer + sizeof buffer, fraction * 100.0, std::chars_format::fixed,

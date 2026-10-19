@@ -1,7 +1,7 @@
 #pragma once
 
-// Pointeurs intelligents pour les objets OpenSSL : aucune libération manuelle
-// dans le reste du code (PLAN §6, risques mémoire du C++).
+// Smart pointers for OpenSSL objects: no manual freeing in the rest of
+// the code (PLAN §6, C++ memory risks).
 
 #include <openssl/bio.h>
 #include <openssl/evp.h>
@@ -33,24 +33,24 @@ using X509NamePtr = std::unique_ptr<X509_NAME, X509NameDeleter>;
 using X509StorePtr = std::unique_ptr<X509_STORE, X509StoreDeleter>;
 using X509StoreCtxPtr = std::unique_ptr<X509_STORE_CTX, X509StoreCtxDeleter>;
 
-// Vide la file d'erreurs OpenSSL du thread et retourne les messages, séparés par « ; ».
+// Empties the thread's OpenSSL error queue and returns the messages, separated by "; ".
 std::string take_openssl_errors();
 
-// Sujet d'un certificat au format RFC 2253 (ex. "CN=relay.example,O=MonEntreprise").
+// Subject of a certificate in RFC 2253 format (e.g. "CN=relay.example,O=MyCompany").
 std::string subject_of(const X509* cert);
 
-// Nom distinctif au format RFC 4514, l'élément le plus spécifique en premier
-// (ex. "CN=relay-lyon.example,O=MonEntreprise"). Les noms à plusieurs valeurs
-// (« + ») et les valeurs hexadécimales (« # ») ne sont pas acceptés.
-// Retourne nullptr et remplit error en cas d'erreur.
+// Distinguished name in RFC 4514 format, most specific element first
+// (e.g. "CN=relay-lyon.example,O=MyCompany"). Multi-valued names
+// ("+") and hexadecimal values ("#") are not accepted.
+// Returns nullptr and fills error on error.
 X509NamePtr parse_dn(std::string_view text, std::string& error);
 
 std::string name_to_string(const X509_NAME* name);
 
-// Date de fin de validité, en UTC (ex. "2027-10-11 12:00:00Z").
+// Expiry date, in UTC (e.g. "2027-10-11 12:00:00Z").
 std::string not_after_of(const X509* cert);
 
-// Date en UTC, même format ; "?" si illisible.
+// Date in UTC, same format; "?" if unreadable.
 std::string time_to_string(const ASN1_TIME* time);
 
 }  // namespace tlsrelay::tls

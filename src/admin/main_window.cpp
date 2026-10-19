@@ -37,8 +37,8 @@ MainWindow::MainWindow(QWidget* parent)
       issues_(new QListWidget),
       status_(new QLabel) {
     tabs_->addTab(form_, tr("Configuration"));
-    tabs_->addTab(whitelist_, tr("Liste blanche"));
-    tabs_->addTab(pki_, tr("PKI (autorité de certification)"));
+    tabs_->addTab(whitelist_, tr("Whitelist"));
+    tabs_->addTab(pki_, tr("PKI (certificate authority)"));
     auto* split = new QSplitter(Qt::Vertical);
     split->addWidget(tabs_);
     split->addWidget(issues_);
@@ -64,7 +64,7 @@ MainWindow::MainWindow(QWidget* parent)
         set_modified(true);
         revalidate();
     });
-    // La liste des erreurs concerne la configuration et la liste blanche, pas la PKI.
+    // The issue list covers the configuration and the whitelist, not the PKI.
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) { issues_->setVisible(index != 2); });
     connect(issues_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) { go_to_issue(issues_->row(item)); });
     build_menus();
@@ -72,28 +72,28 @@ MainWindow::MainWindow(QWidget* parent)
 }
 
 void MainWindow::build_menus() {
-    // QAction créée puis connectée : même écriture de Qt 6.4 à 6.8 (sans surcharge dépréciée).
+    // QAction created then connected: same code from Qt 6.4 to 6.8 (no deprecated overload).
     auto action = [this](QMenu* menu, const QString& text, auto slot, const QKeySequence& key = {}) {
         QAction* a = menu->addAction(text);
         a->setShortcut(key);
         connect(a, &QAction::triggered, this, slot);
     };
-    auto* file = menuBar()->addMenu(tr("&Fichier"));
-    action(file, tr("Nouvelle configuration &serveur"), [this] { new_document(Mode::server); });
-    action(file, tr("Nouvelle configuration &client"), [this] { new_document(Mode::client); }, QKeySequence::New);
-    action(file, tr("&Ouvrir…"), [this] { choose_and_open(); }, QKeySequence::Open);
-    action(file, tr("&Enregistrer"), [this] { save(); }, QKeySequence::Save);
-    action(file, tr("Enregistrer &sous…"), [this] { choose_and_save(); }, QKeySequence::SaveAs);
+    auto* file = menuBar()->addMenu(tr("&File"));
+    action(file, tr("New &server configuration"), [this] { new_document(Mode::server); });
+    action(file, tr("New &client configuration"), [this] { new_document(Mode::client); }, QKeySequence::New);
+    action(file, tr("&Open…"), [this] { choose_and_open(); }, QKeySequence::Open);
+    action(file, tr("&Save"), [this] { save(); }, QKeySequence::Save);
+    action(file, tr("Save &As…"), [this] { choose_and_save(); }, QKeySequence::SaveAs);
     file->addSeparator();
-    action(file, tr("E&xporter le paquet de déploiement…"), [this] { choose_and_export(); },
+    action(file, tr("E&xport deployment package…"), [this] { choose_and_export(); },
            QKeySequence(tr("Ctrl+E")));
     file->addSeparator();
-    action(file, tr("&Quitter"), [this] { close(); }, QKeySequence::Quit);
-    auto* help = menuBar()->addMenu(tr("&Aide"));
-    help->addAction(tr("À &propos"), this, [this] {
-        QMessageBox::about(this, tr("À propos de tlsrelay-admin"),
-                           tr("<b>tlsrelay-admin</b> %1<br>Éditeur de configuration et de PKI de tlsrelay.<br><br>"
-                              "%2<br>Qt %3, sous licence LGPLv3 (liaison dynamique).")
+    action(file, tr("&Quit"), [this] { close(); }, QKeySequence::Quit);
+    auto* help = menuBar()->addMenu(tr("&Help"));
+    help->addAction(tr("&About"), this, [this] {
+        QMessageBox::about(this, tr("About tlsrelay-admin"),
+                           tr("<b>tlsrelay-admin</b> %1<br>Configuration and PKI editor for tlsrelay.<br><br>"
+                              "%2<br>Qt %3, licensed under LGPLv3 (dynamic linking).")
                                .arg(QString::fromStdString(std::string(kVersion)),
                                     QString::fromStdString(openssl_runtime_version()), qVersion()));
     });
@@ -115,14 +115,14 @@ void MainWindow::new_document(Mode mode) {
 bool MainWindow::open_file(const std::filesystem::path& path) {
     const auto text = read_text(path);
     if (!text) {
-        report(tr("Lecture impossible : %1").arg(to_qstring(path)));
+        report(tr("Cannot read: %1").arg(to_qstring(path)));
         return false;
     }
     loading_ = true;
     load_notes_.clear();
     for (const auto& key : form_->load_yaml(*text)) {
-        load_notes_.push_back(tr("Configuration : %1 ignoré (non modifiable dans l'éditeur, absent à "
-                                 "l'enregistrement)").arg(QString::fromStdString(key)));
+        load_notes_.push_back(tr("Configuration: %1 ignored (not editable in the editor, dropped when "
+                                 "saving)").arg(QString::fromStdString(key)));
     }
     config_path_ = path;
     whitelist_->set_peers({});
@@ -130,10 +130,10 @@ bool MainWindow::open_file(const std::filesystem::path& path) {
         const auto wl_path = whitelist_path();
         if (const auto wl = read_text(wl_path)) {
             for (const auto& key : whitelist_->load_yaml(*wl)) {
-                load_notes_.push_back(tr("Liste blanche : %1 ignoré").arg(QString::fromStdString(key)));
+                load_notes_.push_back(tr("Whitelist: %1 ignored").arg(QString::fromStdString(key)));
             }
         } else {
-            load_notes_.push_back(tr("Liste blanche %1 absente : elle sera créée à l'enregistrement")
+            load_notes_.push_back(tr("Whitelist %1 missing: it will be created when saving")
                                       .arg(to_qstring(wl_path)));
         }
     }
@@ -161,11 +161,11 @@ void MainWindow::revalidate() {
     };
     const auto config = form_->validate();
     for (const auto& e : config.errors) {
-        add(tr("Configuration — %1 : %2").arg(QString::fromStdString(e.path), QString::fromStdString(e.message)), true,
+        add(tr("Configuration — %1: %2").arg(QString::fromStdString(e.path), QString::fromStdString(e.message)), true,
             kFromConfig, e.path);
     }
     for (const auto& w : config.warnings) {
-        add(tr("Configuration — %1 : %2").arg(QString::fromStdString(w.path), QString::fromStdString(w.message)), false,
+        add(tr("Configuration — %1: %2").arg(QString::fromStdString(w.path), QString::fromStdString(w.message)), false,
             kFromConfig, w.path);
     }
     const bool server = form_->mode() == Mode::server;
@@ -173,17 +173,17 @@ void MainWindow::revalidate() {
     if (server) {
         const auto wl = whitelist_->validate();
         for (const auto& e : wl.errors) {
-            add(tr("Liste blanche — %1 : %2").arg(QString::fromStdString(e.path), QString::fromStdString(e.message)),
+            add(tr("Whitelist — %1: %2").arg(QString::fromStdString(e.path), QString::fromStdString(e.message)),
                 true, kFromWhitelist, e.path);
         }
         for (const auto& w : wl.warnings) {
-            add(tr("Liste blanche — %1 : %2").arg(QString::fromStdString(w.path), QString::fromStdString(w.message)),
+            add(tr("Whitelist — %1: %2").arg(QString::fromStdString(w.path), QString::fromStdString(w.message)),
                 false, kFromWhitelist, w.path);
         }
     }
     for (const auto& note : load_notes_) add(note, false, -1, {});
-    status_->setText(errors_ == 0 ? tr("Configuration valide (règles du service tlsrelay)")
-                                  : tr("%n erreur(s) à corriger", nullptr, errors_));
+    status_->setText(errors_ == 0 ? tr("Valid configuration (tlsrelay service rules)")
+                                  : tr("%n error(s) to fix", nullptr, errors_));
 }
 
 void MainWindow::go_to_issue(int row) {
@@ -217,7 +217,7 @@ bool MainWindow::save_to(const std::filesystem::path& path) {
     const auto whitelist = whitelist_->validate();
     const bool server = config.config && config.config->mode == Mode::server;
     if (!config.config || (server && !whitelist.whitelist)) {
-        report(tr("%n erreur(s) à corriger avant d'enregistrer (liste en bas de la fenêtre).", nullptr, errors_));
+        report(tr("%n error(s) to fix before saving (list at the bottom of the window).", nullptr, errors_));
         return false;
     }
     std::vector<FileChange> changes;
@@ -233,14 +233,14 @@ bool MainWindow::save_to(const std::filesystem::path& path) {
             if (change.changed()) write_with_backup(change.path, change.after);
         }
     } catch (const std::exception& e) {
-        report(tr("Enregistrement impossible : %1").arg(QString::fromStdString(e.what())));
+        report(tr("Cannot save: %1").arg(QString::fromStdString(e.what())));
         return false;
     }
     config_path_ = path;
     load_notes_.clear();
     set_modified(false);
     revalidate();
-    statusBar()->showMessage(any ? tr("Enregistré : %1").arg(to_qstring(path)) : tr("Aucune modification à enregistrer"),
+    statusBar()->showMessage(any ? tr("Saved: %1").arg(to_qstring(path)) : tr("No changes to save"),
                              5000);
     return true;
 }
@@ -250,7 +250,7 @@ std::optional<ExportRequest> MainWindow::export_request() {
     const auto config = load_config_string(form_->raw_yaml());
     const bool server = config.config && config.config->mode == Mode::server;
     if (!config.config || (server && !whitelist_->validate().whitelist)) {
-        report(tr("%n erreur(s) à corriger avant d'exporter.", nullptr, errors_));
+        report(tr("%n error(s) to fix before exporting.", nullptr, errors_));
         return std::nullopt;
     }
     ExportRequest request;
@@ -263,27 +263,27 @@ std::optional<ExportRequest> MainWindow::export_request() {
 std::optional<std::filesystem::path> MainWindow::export_package(const ExportRequest& request) {
     try {
         auto dir = admin::export_package(request);
-        statusBar()->showMessage(tr("Paquet exporté : %1").arg(to_qstring(dir)), 8000);
+        statusBar()->showMessage(tr("Package exported: %1").arg(to_qstring(dir)), 8000);
         return dir;
     } catch (const std::exception& e) {
-        report(tr("Export impossible : %1").arg(QString::fromStdString(e.what())));
+        report(tr("Cannot export: %1").arg(QString::fromStdString(e.what())));
         return std::nullopt;
     }
 }
 
 void MainWindow::choose_and_open() {
     if (modified_ && QMessageBox::question(this, tr("tlsrelay-admin"),
-                                           tr("Abandonner les modifications non enregistrées ?")) != QMessageBox::Yes) {
+                                           tr("Discard unsaved changes?")) != QMessageBox::Yes) {
         return;
     }
-    const auto file = QFileDialog::getOpenFileName(this, tr("Ouvrir une configuration"), {},
-                                                   tr("Configuration tlsrelay (*.yaml *.yml);;Tous (*)"));
+    const auto file = QFileDialog::getOpenFileName(this, tr("Open a configuration"), {},
+                                                   tr("tlsrelay configuration (*.yaml *.yml);;All (*)"));
     if (!file.isEmpty()) open_file(to_path(file));
 }
 
 void MainWindow::choose_and_save() {
-    const auto file = QFileDialog::getSaveFileName(this, tr("Enregistrer la configuration"),
-                                                   to_qstring(config_path_), tr("Configuration tlsrelay (*.yaml)"));
+    const auto file = QFileDialog::getSaveFileName(this, tr("Save configuration"),
+                                                   to_qstring(config_path_), tr("tlsrelay configuration (*.yaml)"));
     if (!file.isEmpty()) save_to(to_path(file));
 }
 
@@ -294,7 +294,7 @@ void MainWindow::choose_and_export() {
     if (dialog.exec() != QDialog::Accepted) return;
     if (const auto dir = export_package(dialog.request())) {
         QMessageBox::information(this, tr("tlsrelay-admin"),
-                                 tr("Paquet créé dans %1.\nSuivre LISEZMOI.txt sur la machine de l'instance.")
+                                 tr("Package created in %1.\nFollow README.txt on the instance's machine.")
                                      .arg(to_qstring(*dir)));
     }
 }
@@ -305,7 +305,7 @@ void MainWindow::set_modified(bool modified) {
 }
 
 void MainWindow::update_title() {
-    const auto name = config_path_.empty() ? tr("nouvelle configuration") : to_qstring(config_path_);
+    const auto name = config_path_.empty() ? tr("new configuration") : to_qstring(config_path_);
     setWindowTitle(QString("%1%2 — tlsrelay-admin").arg(name, modified_ ? "*" : ""));
 }
 
@@ -314,7 +314,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         event->accept();
         return;
     }
-    const auto answer = QMessageBox::question(this, tr("tlsrelay-admin"), tr("Enregistrer les modifications ?"),
+    const auto answer = QMessageBox::question(this, tr("tlsrelay-admin"), tr("Save changes?"),
                                               QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
     if (answer == QMessageBox::Cancel || (answer == QMessageBox::Save && !save())) {
         event->ignore();

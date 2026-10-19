@@ -26,13 +26,13 @@ using tunnel::CloseCode;
 using tunnel::FrameType;
 constexpr auto use_tuple = asio::as_tuple(asio::use_awaitable);
 
-constexpr std::uint64_t kAckBytes = 64ULL * 1024;        // ACK immédiat au-delà (SPEC §4.4)
-constexpr auto kAckDelay = 100ms;                      // sinon, ACK après ce délai
-constexpr std::size_t kFlushBytes = 256ULL * 1024;       // DATA écrites avant de rendre la main
-constexpr auto kGoodbyeTimeout = 1s;                   // envoi de la dernière trame
-constexpr auto kRetryFirst = 250ms;                    // renégociation : premier délai entre essais
+constexpr std::uint64_t kAckBytes = 64ULL * 1024;        // immediate ACK beyond this (SPEC §4.4)
+constexpr auto kAckDelay = 100ms;                      // otherwise, ACK after this delay
+constexpr std::size_t kFlushBytes = 256ULL * 1024;       // DATA written before yielding
+constexpr auto kGoodbyeTimeout = 1s;                   // sending of the last frame
+constexpr auto kRetryFirst = 250ms;                    // renegotiation: first delay between attempts
 constexpr auto kRetryMax = 5s;
-constexpr int kOpenAttempts = 3;                       // réouvertures du tunnel avant OPEN_OK
+constexpr int kOpenAttempts = 3;                       // reopenings of the tunnel before OPEN_OK
 
 std::string describe_peer(const tcp::socket& s) {
     std::error_code ec;
@@ -78,20 +78,20 @@ Duration scale(Duration d, double factor) {
 std::string_view to_string(CloseReason r) {
     switch (r) {
         case CloseReason::normal: return "normal";
-        case CloseReason::idle_timeout: return "inactivite";
-        case CloseReason::shutdown: return "arret";
-        case CloseReason::dial_failed: return "destination_injoignable";
-        case CloseReason::tls_failed: return "tls_refuse";
-        case CloseReason::not_authorized: return "non_autorise";
-        case CloseReason::peer_revoked: return "pair_retire";
-        case CloseReason::certificate_revoked: return "certificat_revoque";
-        case CloseReason::generation_retired: return "generation_retiree";
-        case CloseReason::io_error: return "erreur_reseau";
-        case CloseReason::lifetime_exceeded: return "duree_de_vie_depassee";
-        case CloseReason::protocol_error: return "erreur_protocole";
-        case CloseReason::resume_refused: return "reprise_refusee";
-        case CloseReason::closed_by_peer: return "ferme_par_le_pair";
-        case CloseReason::internal_error: return "erreur_interne";
+        case CloseReason::idle_timeout: return "idle_timeout";
+        case CloseReason::shutdown: return "shutdown";
+        case CloseReason::dial_failed: return "destination_unreachable";
+        case CloseReason::tls_failed: return "tls_refused";
+        case CloseReason::not_authorized: return "not_authorized";
+        case CloseReason::peer_revoked: return "peer_removed";
+        case CloseReason::certificate_revoked: return "certificate_revoked";
+        case CloseReason::generation_retired: return "generation_retired";
+        case CloseReason::io_error: return "network_error";
+        case CloseReason::lifetime_exceeded: return "lifetime_exceeded";
+        case CloseReason::protocol_error: return "protocol_error";
+        case CloseReason::resume_refused: return "resume_refused";
+        case CloseReason::closed_by_peer: return "closed_by_peer";
+        case CloseReason::internal_error: return "internal_error";
     }
     return "?";
 }
@@ -115,7 +115,7 @@ asio::awaitable<void> Channel::Event::wait() {
 }
 
 // ---------------------------------------------------------------------------
-// Démarrage
+// Startup
 
 Channel::Channel(std::uint64_t id, asio::any_io_executor strand, ChannelSettings settings, Stats& stats,
                  ClosedCallback on_closed)
@@ -166,7 +166,7 @@ void Channel::spawn(asio::awaitable<void> task) {
                            try {
                                std::rethrow_exception(e);
                            } catch (const std::exception& ex) {
-                               logging::activity().error("canal={} exception inattendue : {}", self->id_, ex.what());
+                               logging::activity().error("channel={} unexpected exception: {}", self->id_, ex.what());
                            }
                            self->stop(CloseReason::internal_error);
                        }
@@ -181,14 +181,14 @@ Duration Channel::next_lifetime() { return scale(settings_.session_lifetime, ran
 asio::awaitable<void> Channel::run_client() {
     opened_at_ = last_activity_ = Clock::now();
     if (RAND_bytes(session_.data(), static_cast<int>(session_.size())) != 1) {
-        logging::activity().error("canal={} génération de l'identifiant de session impossible", id_);
+        logging::activity().error("channel={} cannot generate the session identifier", id_);
         stop(CloseReason::internal_error);
         co_return;
     }
-    logging::activity().debug("canal={} ouvert port={} application={} session={} upstream={}", id_,
+    logging::activity().debug("channel={} opened port={} application={} session={} upstream={}", id_,
                               to_string(settings_.port), raw_peer_, tunnel::to_hex(session_.data(), session_.size()),
                               settings_.dial.target.to_string());
-    // L'application peut écrire avant OPEN_OK : ses données attendent dans la file d'émission.
+    // The application may write before OPEN_OK: its data waits in the send queue.
     spawn(uplink());
     spawn(watchdog());
 
@@ -199,18 +199,18 @@ asio::awaitable<void> Channel::run_client() {
         transport = co_await connect_transport(failure, failure_reason);
         if (closing_) co_return;
         if (transport) break;
-        // Connexion perdue pendant le handshake : même règle qu'une perte avant
-        // OPEN_OK (la file d'émission attend) ; un refus n'est pas retenté.
+        // Connection lost during the handshake: same rule as a loss before
+        // OPEN_OK (the send queue waits); a refusal is not retried.
         if (failure_reason == CloseReason::io_error && open_attempts_ < kOpenAttempts) {
             ++open_attempts_;
-            logging::activity().info("canal={} tunnel vers {} impossible ({}) : nouvel essai {}/{}", id_,
+            logging::activity().info("channel={} tunnel to {} failed ({}): new attempt {}/{}", id_,
                                      settings_.dial.target.to_string(), failure, open_attempts_, kOpenAttempts);
             retry_timer_.expires_after(std::chrono::milliseconds(100) * open_attempts_);
             co_await retry_timer_.async_wait(use_tuple);
             if (closing_) co_return;
             continue;
         }
-        logging::activity().info("canal={} tunnel vers {} impossible : {}", id_, settings_.dial.target.to_string(),
+        logging::activity().info("channel={} tunnel to {} failed: {}", id_, settings_.dial.target.to_string(),
                                  failure);
         stop(failure_reason);
         co_return;
@@ -225,9 +225,9 @@ asio::awaitable<void> Channel::run_client() {
     spawn(keepalive());
 }
 
-// Client : nouvelle connexion de transport et nouvelle session après la perte
-// de la précédente avant OPEN_OK. Les données de l'application attendent dans
-// la file d'émission (rien n'a été envoyé avant OPEN_OK).
+// Client: new transport connection and new session after the loss of
+// the previous one before OPEN_OK. The application data waits in
+// the send queue (nothing was sent before OPEN_OK).
 asio::awaitable<void> Channel::reopen() {
     retry_timer_.expires_after(std::chrono::milliseconds(100) * open_attempts_);
     co_await retry_timer_.async_wait(use_tuple);
@@ -239,12 +239,12 @@ asio::awaitable<void> Channel::reopen() {
     if (!transport) {
         if (failure_reason == CloseReason::io_error && open_attempts_ < kOpenAttempts) {
             ++open_attempts_;
-            logging::activity().info("canal={} tunnel vers {} impossible ({}) : nouvel essai {}/{}", id_,
+            logging::activity().info("channel={} tunnel to {} failed ({}): new attempt {}/{}", id_,
                                      settings_.dial.target.to_string(), failure, open_attempts_, kOpenAttempts);
             spawn(reopen());
             co_return;
         }
-        logging::activity().info("canal={} tunnel vers {} impossible : {}", id_, settings_.dial.target.to_string(),
+        logging::activity().info("channel={} tunnel to {} failed: {}", id_, settings_.dial.target.to_string(),
                                  failure);
         stop(failure_reason);
         co_return;
@@ -253,7 +253,7 @@ asio::awaitable<void> Channel::reopen() {
         stop(CloseReason::internal_error);
         co_return;
     }
-    transport_index_ = 0;  // nouvelle session : jeton de la connexion n=1
+    transport_index_ = 0;  // new session: token of connection n=1
     control_.clear();
     if (!install_transport(std::move(transport))) co_return;
     send_control(tunnel::encode_open({tunnel::kVersion, session_, settings_.port}));
@@ -261,18 +261,18 @@ asio::awaitable<void> Channel::reopen() {
 
 asio::awaitable<void> Channel::run_server() {
     opened_at_ = last_activity_ = Clock::now();
-    logging::activity().debug("canal={} ouvert port={} pair=« {} » ({}) session={} destination={}", id_,
+    logging::activity().debug("channel={} opened port={} peer=\"{}\" ({}) session={} destination={}", id_,
                               to_string(settings_.port), peer_.name, peer_.endpoint,
                               tunnel::to_hex(session_.data(), session_.size()), settings_.dial.target.to_string());
     spawn(watchdog());
 
-    // Le pair est authentifié et autorisé : connexion à la destination.
+    // The peer is authenticated and authorized: connect to the destination.
     auto socket = co_await asio::co_spawn(executor_, dial(settings_.dial, id_, stats_),
                                           asio::bind_cancellation_slot(dial_cancel_.slot(), asio::use_awaitable));
     if (closing_) co_return;
     if (!socket) {
         stop(CloseReason::dial_failed, tunnel::encode_open_fail(static_cast<std::uint16_t>(CloseCode::dest_unreachable),
-                                                                "destination injoignable"));
+                                                                "destination unreachable"));
         co_return;
     }
     std::error_code ignored;
@@ -295,7 +295,7 @@ asio::awaitable<std::shared_ptr<Transport>> Channel::connect_transport(std::stri
     if (settings_.port != PortKind::plain) {
         context = settings_.tls_context ? settings_.tls_context() : nullptr;
         if (!context) {
-            failure = "contexte TLS indisponible";
+            failure = "TLS context unavailable";
             reason = CloseReason::internal_error;
             co_return nullptr;
         }
@@ -305,8 +305,8 @@ asio::awaitable<std::shared_ptr<Transport>> Channel::connect_transport(std::stri
                                           asio::bind_cancellation_slot(dial_cancel_.slot(), asio::use_awaitable));
     if (closing_) co_return nullptr;
     if (!socket) {
-        failure = "connexion TCP impossible";
-        // Connexion acceptée puis coupée aussitôt : une coupure, pas un refus.
+        failure = "TCP connection failed";
+        // Connection accepted then cut at once: a cut, not a refusal.
         reason = dial_error == asio::error::connection_reset ? CloseReason::io_error : CloseReason::dial_failed;
         co_return nullptr;
     }
@@ -325,11 +325,11 @@ asio::awaitable<std::shared_ptr<Transport>> Channel::connect_transport(std::stri
         if (!failure.empty()) {
             ++stats_.tls_handshake_failures;
             reason = stream->handshake_interrupted() ? CloseReason::io_error : CloseReason::tls_failed;
-            failure = "handshake TLS refusé : " + failure;
+            failure = "TLS handshake refused: " + failure;
             stream->close();
             co_return nullptr;
         }
-        logging::activity().debug("canal={} TLS établi avec {} : {}, génération {}, certificat du serveur : {}", id_,
+        logging::activity().debug("channel={} TLS established with {}: {}, generation {}, server certificate: {}", id_,
                                   settings_.dial.target.to_string(), stream->session_description(),
                                   stream->context()->generation().name, stream->peer_subject());
     }
@@ -337,7 +337,7 @@ asio::awaitable<std::shared_ptr<Transport>> Channel::connect_transport(std::stri
 }
 
 // ---------------------------------------------------------------------------
-// Connexion de transport courante
+// Current transport connection
 
 bool Channel::install_transport(std::shared_ptr<Transport> transport) {
     transport_ = std::move(transport);
@@ -349,7 +349,7 @@ bool Channel::install_transport(std::shared_ptr<Transport> transport) {
     if (resumable()) {
         token_ = derive_token(*transport_->stream, session_, transport_index_);
         if (!token_) {
-            logging::activity().error("canal={} dérivation du jeton de reprise impossible", id_);
+            logging::activity().error("channel={} cannot derive the resumption token", id_);
             stop(CloseReason::internal_error);
             return false;
         }
@@ -361,10 +361,10 @@ bool Channel::install_transport(std::shared_ptr<Transport> transport) {
 }
 
 bool Channel::switch_transport(std::shared_ptr<Transport> transport, std::uint64_t peer_last_rx) {
-    // L'autre côté ne peut pas avoir reçu des données jamais envoyées. Il peut
-    // en revanche annoncer moins que ce qu'il a déjà acquitté : un ACK envoyé
-    // sur l'ancienne connexion après RESUME a pu arriver avant lui. Ces
-    // données-là sont reçues ; le renvoi commence après.
+    // The other side cannot have received data never sent. It may
+    // however announce less than what it already acknowledged: an ACK sent
+    // on the old connection after RESUME may have arrived before it. That
+    // data is received; the resend starts after it.
     if (peer_last_rx >= next_seq_) return false;
     const std::uint64_t first_unacked = unacked_.empty() ? next_seq_ : unacked_.front().seq;
     peer_last_rx = std::max(peer_last_rx, first_unacked - 1);
@@ -377,7 +377,7 @@ bool Channel::switch_transport(std::shared_ptr<Transport> transport, std::uint64
     auto old = std::move(transport_);
     if (!install_transport(std::move(transport))) return false;
     sent_upto_ = peer_last_rx;
-    control_.clear();  // trames propres à l'ancienne connexion
+    control_.clear();  // frames specific to the old connection
     shutdown_sent_ = false;
     if (old) {
         if (!old->broken) {
@@ -388,10 +388,10 @@ bool Channel::switch_transport(std::shared_ptr<Transport> transport, std::uint64
         }
     }
     space_event_.notify();
-    logging::activity().debug("canal={} session reprise sur la connexion n={} ({}) ; {} trame(s) à renvoyer", id_,
+    logging::activity().debug("channel={} session resumed on connection n={} ({}); {} frame(s) to resend", id_,
                               transport_index_,
                               transport_->stream->context() ? transport_->stream->context()->generation().name
-                                                            : std::string("clair"),
+                                                            : std::string("plain"),
                               resent);
     return true;
 }
@@ -400,27 +400,27 @@ void Channel::transport_failed(const std::shared_ptr<Transport>& transport, std:
     if (closing_ || transport != transport_ || transport->broken) return;
     transport->broken = true;
     transport->stream->close();
-    // Client, avant OPEN_OK : aucune donnée de l'application n'a encore été
-    // envoyée ; le tunnel est rouvert (nouvelle session) au lieu d'échouer.
+    // Client, before OPEN_OK: no application data has been sent
+    // yet; the tunnel is reopened (new session) instead of failing.
     if (side_ == Side::client && !opened_ && open_attempts_ < kOpenAttempts) {
         ++open_attempts_;
-        logging::activity().info("canal={} connexion de transport perdue avant l'ouverture du tunnel ({}) : "
-                                 "nouvel essai {}/{}",
+        logging::activity().info("channel={} transport connection lost before the tunnel was opened ({}): "
+                                 "new attempt {}/{}",
                                  id_, what, open_attempts_, kOpenAttempts);
         spawn(reopen());
         return;
     }
     if (!resumable() || !opened_) {
-        logging::activity().debug("canal={} connexion de transport perdue : {}", id_, what);
+        logging::activity().debug("channel={} transport connection lost: {}", id_, what);
         stop(CloseReason::io_error);
         return;
     }
-    // Pendant une renégociation, le serveur ferme l'ancienne connexion dès la reprise : c'est attendu.
+    // During a renegotiation, the server closes the old connection as soon as it resumes: this is expected.
     if (migrating_) {
-        logging::activity().debug("canal={} connexion de transport n={} fermée pendant la renégociation ({})", id_,
+        logging::activity().debug("channel={} transport connection n={} closed during the renegotiation ({})", id_,
                                   transport_index_, what);
     } else {
-        logging::activity().info("canal={} connexion de transport n={} perdue ({}) : reprise de session attendue", id_,
+        logging::activity().info("channel={} transport connection n={} lost ({}): session resumption expected", id_,
                                  transport_index_, what);
     }
     broken_since_ = Clock::now();
@@ -428,7 +428,7 @@ void Channel::transport_failed(const std::shared_ptr<Transport>& transport, std:
         migrating_ = true;
         spawn(migrate());
     }
-    lifetime_timer_.cancel();  // serveur : l'échéance devient la fin du délai de grâce
+    lifetime_timer_.cancel();  // server: the deadline becomes the end of the grace period
 }
 
 void Channel::send_control(std::string frame) {
@@ -446,7 +446,7 @@ void Channel::send_ack() {
 }
 
 // ---------------------------------------------------------------------------
-// Boucles
+// Loops
 
 asio::awaitable<void> Channel::sender() {
     while (!closing_) {
@@ -486,14 +486,14 @@ asio::awaitable<void> Channel::sender() {
             ec = co_await t->stream->flush();
             sending_ = false;
         }
-        if (ec) transport_failed(t, "émission : " + ec.message());
+        if (ec) transport_failed(t, "send: " + ec.message());
     }
 }
 
 asio::awaitable<void> Channel::uplink() {
     std::vector<std::uint8_t> buffer(tunnel::kMaxData);
     while (!closing_) {
-        // Contre-pression : la source n'est plus lue tant que le tampon de reprise est plein.
+        // Back-pressure: the source is not read while the resumption buffer is full.
         if (unacked_bytes_ >= settings_.resume_buffer) {
             window_full_ = true;
             co_await space_event_.wait();
@@ -506,11 +506,11 @@ asio::awaitable<void> Channel::uplink() {
         if (closing_) co_return;
         if (ec) {
             if (ec != asio::error::eof) {
-                logging::activity().debug("canal={} erreur de lecture sur {} : {}", id_, raw_peer_, ec.message());
+                logging::activity().debug("channel={} read error on {}: {}", id_, raw_peer_, ec.message());
                 stop(CloseReason::io_error);
                 co_return;
             }
-            // Fin de ce sens : SHUTDOWN_WR après la dernière trame DATA.
+            // End of this direction: SHUTDOWN_WR after the last DATA frame.
             local_shutdown_ = true;
             final_seq_ = next_seq_ - 1;
             send_event_.notify();
@@ -537,7 +537,7 @@ asio::awaitable<void> Channel::downlink() {
         auto r = co_await read_frame(*t);
         reading_transport_ = false;
         if (closing_) co_return;
-        if (t != transport_) continue;  // remplacée pendant la lecture
+        if (t != transport_) continue;  // replaced during the read
         if (!r.frame) {
             if (r.protocol != tunnel::Decoder::Error::none) {
                 protocol_error(r.protocol == tunnel::Decoder::Error::frame_too_large ? CloseCode::frame_too_large
@@ -545,7 +545,7 @@ asio::awaitable<void> Channel::downlink() {
                                t->decoder.error_detail());
                 co_return;
             }
-            transport_failed(t, r.error == asio::error::eof ? "fermée par le pair" : r.error.message());
+            transport_failed(t, r.error == asio::error::eof ? "closed by the peer" : r.error.message());
             continue;
         }
         last_frame_ = Clock::now();
@@ -583,14 +583,14 @@ asio::awaitable<void> Channel::lifetime() {
         if (side_ == Side::client) {
             if (!migrating_) deadline = transport_since_ + transport_lifetime_;
         } else {
-            // Le client renégocie au plus tard à lifetime × (1 + jitter).
+            // The client renegotiates at the latest at lifetime × (1 + jitter).
             deadline = transport_since_ + scale(settings_.session_lifetime, 1.0 + settings_.session_jitter) +
                        settings_.renegotiation_grace;
             if (broken_since_) deadline = std::min(*deadline, *broken_since_ + settings_.renegotiation_grace);
         }
         if (deadline && Clock::now() >= *deadline) {
             if (side_ == Side::client) {
-                logging::activity().debug("canal={} échéance de la connexion n={} : renégociation", id_,
+                logging::activity().debug("channel={} connection n={} expired: renegotiation", id_,
                                           transport_index_);
                 migrating_ = true;
                 spawn(migrate());
@@ -598,11 +598,11 @@ asio::awaitable<void> Channel::lifetime() {
             }
             ++stats_.resume_failures;
             if (broken_since_) {
-                logging::activity().info("canal={} pas de reprise de session dans le délai de grâce ({}) : fermeture",
+                logging::activity().info("channel={} no session resumption within the grace period ({}): closing",
                                          id_, format_duration(settings_.renegotiation_grace));
                 stop(CloseReason::io_error);
             } else {
-                logging::activity().info("canal={} pas de renégociation dans le délai de grâce : fermeture", id_);
+                logging::activity().info("channel={} no renegotiation within the grace period: closing", id_);
                 stop(CloseReason::lifetime_exceeded);
             }
             co_return;
@@ -612,9 +612,9 @@ asio::awaitable<void> Channel::lifetime() {
     }
 }
 
-// Détection d'un transport mort sans erreur TCP (SPEC §4.2) : PING quand rien
-// n'a été reçu depuis un intervalle ; au bout de 3 intervalles de silence, la
-// connexion est abandonnée (reprise de session sur les ports TLS).
+// Detection of a dead transport without a TCP error (SPEC §4.2): PING when nothing
+// has been received for one interval; after 3 intervals of silence, the
+// connection is abandoned (session resumption on the TLS ports).
 asio::awaitable<void> Channel::keepalive() {
     const auto interval = settings_.keepalive_interval;
     if (interval <= Duration::zero()) co_return;
@@ -625,11 +625,11 @@ asio::awaitable<void> Channel::keepalive() {
         auto t = transport_;
         if (!t || t->broken || !opened_) continue;
         const auto silence = Clock::now() - last_frame_;
-        // File de livraison pleine (application lente), le transport n'est pas
-        // lu : pas de verdict, mais les PING continuent pour que l'autre côté,
-        // qui ne reçoit plus rien d'autre, ne conclue pas à un lien mort.
+        // Delivery queue full (slow application), the transport is not
+        // read: no verdict, but the PINGs continue so that the other side,
+        // which receives nothing else, does not conclude the link is dead.
         if (silence >= 3 * interval && !reading_held_) {
-            transport_failed(t, "aucune trame reçue depuis " +
+            transport_failed(t, "no frame received for " +
                                     format_duration(std::chrono::duration_cast<Duration>(silence)));
         } else if (silence >= interval) {
             send_control(tunnel::encode_ping(++ping_nonce_));
@@ -637,8 +637,8 @@ asio::awaitable<void> Channel::keepalive() {
     }
 }
 
-// Client : ouvre la connexion n+1 et y reprend la session. Les données
-// continuent de circuler sur la connexion n pendant ce temps.
+// Client: opens connection n+1 and resumes the session on it. Data
+// keeps flowing on connection n meanwhile.
 asio::awaitable<void> Channel::migrate() {
     const auto deadline = Clock::now() + settings_.renegotiation_grace;
     Duration backoff = kRetryFirst;
@@ -661,7 +661,7 @@ asio::awaitable<void> Channel::migrate() {
             if (!ec && r.frame && r.frame->type == FrameType::resumed) {
                 if (!switch_transport(t, tunnel::read_u64(*r.frame))) {
                     t->stream->close();
-                    protocol_error(CloseCode::protocol_error, "RESUMED : last_rx_seq incohérent");
+                    protocol_error(CloseCode::protocol_error, "RESUMED: inconsistent last_rx_seq");
                     break;
                 }
                 ++stats_.renegotiations;
@@ -671,14 +671,14 @@ asio::awaitable<void> Channel::migrate() {
             if (!ec && r.frame && r.frame->type == FrameType::resume_fail) {
                 const auto code = static_cast<CloseCode>(tunnel::read_code(*r.frame));
                 if (code == CloseCode::normal && local_shutdown_) {
-                    // Le serveur a tout reçu et livré, et ce côté a acquitté tout ce
-                    // qu'il a envoyé : seule la fin de l'échange (ACK final,
-                    // SHUTDOWN_WR) s'est perdue avec la connexion.
-                    logging::activity().debug("canal={} session déjà terminée par le serveur", id_);
+                    // The server received and delivered everything, and this side acknowledged everything
+                    // it sent: only the end of the exchange (final ACK,
+                    // SHUTDOWN_WR) was lost with the connection.
+                    logging::activity().debug("channel={} session already finished by the server", id_);
                     unacked_.clear();
                     unacked_bytes_ = 0;
-                    // Tout ce que le serveur a envoyé a été reçu : fin du sens descendant
-                    // après la livraison en cours, s'il y en a une.
+                    // Everything the server sent has been received: end of the downstream direction
+                    // after the delivery in progress, if any.
                     while (!delivery_.empty() && !closing_) co_await drained_event_.wait();
                     if (closing_) break;
                     if (!peer_final_) peer_final_ = last_rx_;
@@ -687,26 +687,26 @@ asio::awaitable<void> Channel::migrate() {
                     break;
                 }
                 ++stats_.resume_failures;
-                logging::activity().info("canal={} reprise de session refusée par le serveur : {}", id_,
+                logging::activity().info("channel={} session resumption refused by the server: {}", id_,
                                          tunnel::to_string(code));
                 stop(CloseReason::resume_refused);
                 break;
             }
             failure = ec                                              ? ec.message()
-                      : r.frame                                       ? "trame " + std::string(tunnel::to_string(r.frame->type)) + " inattendue"
+                      : r.frame                                       ? "unexpected " + std::string(tunnel::to_string(r.frame->type)) + " frame"
                       : r.protocol != tunnel::Decoder::Error::none    ? t->decoder.error_detail()
-                      : r.error == asio::error::timed_out             ? std::string("pas de réponse à RESUME")
+                      : r.error == asio::error::timed_out             ? std::string("no reply to RESUME")
                                                                       : r.error.message();
         }
         const auto now = Clock::now();
         if (now >= deadline) {
             ++stats_.resume_failures;
-            logging::activity().info("canal={} renégociation impossible dans le délai de grâce ({}) : {}", id_,
+            logging::activity().info("channel={} renegotiation failed within the grace period ({}): {}", id_,
                                      format_duration(settings_.renegotiation_grace), failure);
             stop(CloseReason::lifetime_exceeded);
             break;
         }
-        logging::activity().debug("canal={} renégociation : essai échoué ({}), nouvel essai dans {}", id_, failure,
+        logging::activity().debug("channel={} renegotiation: attempt failed ({}), new attempt in {}", id_, failure,
                                   format_duration(backoff));
         retry_timer_.expires_at(std::min(now + backoff, deadline));
         co_await retry_timer_.async_wait(use_tuple);
@@ -720,23 +720,23 @@ asio::awaitable<bool> Channel::accept_resume(std::shared_ptr<Transport> transpor
                                              PeerIdentity peer, PortKind port) {
     std::string refusal;
     if (closing_ || finished_) {
-        refusal = "canal en cours de fermeture";
+        refusal = "channel closing";
     } else if (!resumable() || port != settings_.port) {
-        refusal = "port différent de celui du canal";
+        refusal = "port different from the channel's";
     } else if (!token_ || CRYPTO_memcmp(token_->data(), request.token.data(), token_->size()) != 0) {
-        refusal = "jeton de reprise invalide";
+        refusal = "invalid resumption token";
     } else if (peer.name != peer_.name) {
-        refusal = "pair « " + peer.name + " » différent de « " + peer_.name + " »";
+        refusal = "peer \"" + peer.name + "\" different from \"" + peer_.name + "\"";
     } else if (!switch_transport(transport, request.last_rx_seq)) {
-        refusal = "last_rx_seq incohérent";
+        refusal = "inconsistent last_rx_seq";
     }
     if (!refusal.empty()) {
         ++stats_.resume_failures;
-        logging::activity().info("canal={} reprise de session refusée ({}) : {}", id_, peer.endpoint, refusal);
+        logging::activity().info("channel={} session resumption refused ({}): {}", id_, peer.endpoint, refusal);
         co_return false;
     }
     peer_ = std::move(peer);
-    // RESUMED précède les DATA renvoyées : les trames de contrôle passent en premier.
+    // RESUMED precedes the resent DATA: control frames go first.
     control_.push_front(tunnel::encode_resumed(last_rx_));
     acked_rx_ = last_rx_;
     rx_since_ack_ = 0;
@@ -746,7 +746,7 @@ asio::awaitable<bool> Channel::accept_resume(std::shared_ptr<Transport> transpor
 }
 
 // ---------------------------------------------------------------------------
-// Réception
+// Reception
 
 asio::awaitable<bool> Channel::handle(const tunnel::Frame& f) {
     switch (f.type) {
@@ -755,7 +755,7 @@ asio::awaitable<bool> Channel::handle(const tunnel::Frame& f) {
         case FrameType::shutdown_wr: {
             const auto final_seq = tunnel::read_u64(f);
             if (final_seq < received_ || (peer_final_ && *peer_final_ != final_seq)) {
-                protocol_error(CloseCode::protocol_error, "SHUTDOWN_WR incohérent");
+                protocol_error(CloseCode::protocol_error, "inconsistent SHUTDOWN_WR");
                 co_return false;
             }
             peer_final_ = final_seq;
@@ -766,7 +766,7 @@ asio::awaitable<bool> Channel::handle(const tunnel::Frame& f) {
             if (status.code == static_cast<std::uint16_t>(CloseCode::normal)) {
                 stop(CloseReason::normal, std::string());
             } else {
-                logging::activity().info("canal={} fermé par l'autre tlsrelay : {} {}", id_,
+                logging::activity().info("channel={} closed by the other tlsrelay: {} {}", id_,
                                          tunnel::to_string(static_cast<CloseCode>(status.code)), status.message);
                 stop(CloseReason::closed_by_peer, std::string());
             }
@@ -777,7 +777,7 @@ asio::awaitable<bool> Channel::handle(const tunnel::Frame& f) {
         case FrameType::open_ok:
             if (side_ == Side::client && !opened_) {
                 opened_ = true;
-                logging::activity().debug("canal={} tunnel ouvert", id_);
+                logging::activity().debug("channel={} tunnel open", id_);
                 send_event_.notify();
                 co_return true;
             }
@@ -786,7 +786,7 @@ asio::awaitable<bool> Channel::handle(const tunnel::Frame& f) {
             if (side_ == Side::client && !opened_) {
                 const auto status = tunnel::read_status(f);
                 const auto code = static_cast<CloseCode>(status.code);
-                logging::activity().info("canal={} ouverture refusée par le serveur : {} {}", id_,
+                logging::activity().info("channel={} opening refused by the server: {} {}", id_,
                                          tunnel::to_string(code), status.message);
                 stop(code == CloseCode::dest_unreachable ? CloseReason::dial_failed : CloseReason::closed_by_peer,
                      std::string());
@@ -795,31 +795,31 @@ asio::awaitable<bool> Channel::handle(const tunnel::Frame& f) {
             break;
         default: break;
     }
-    protocol_error(CloseCode::protocol_error, "trame " + std::string(tunnel::to_string(f.type)) + " inattendue");
+    protocol_error(CloseCode::protocol_error, "unexpected " + std::string(tunnel::to_string(f.type)) + " frame");
     co_return false;
 }
 
 asio::awaitable<bool> Channel::handle_data(const tunnel::Frame& f) {
     if (!opened_) {
-        protocol_error(CloseCode::protocol_error, "DATA avant OPEN_OK");
+        protocol_error(CloseCode::protocol_error, "DATA before OPEN_OK");
         co_return false;
     }
     const auto d = tunnel::read_data(f);
-    if (d.seq <= received_) co_return true;  // déjà reçue : renvoi après une reprise
+    if (d.seq <= received_) co_return true;  // already received: resend after a resumption
     if (d.seq != received_ + 1 || (peer_final_ && d.seq > *peer_final_)) {
         protocol_error(CloseCode::protocol_error,
-                       "DATA seq=" + std::to_string(d.seq) + " au lieu de " + std::to_string(received_ + 1));
+                       "DATA seq=" + std::to_string(d.seq) + " instead of " + std::to_string(received_ + 1));
         co_return false;
     }
-    // L'émetteur n'a jamais plus de resume_buffer + kMaxData octets non acquittés
-    // (il s'arrête une fois resume_buffer atteint) : la file ne se remplit au-delà
-    // que si les deux côtés sont configurés différemment ; la lecture attend alors
-    // la livraison.
+    // The sender never has more than resume_buffer + kMaxData unacknowledged bytes
+    // (it stops once resume_buffer is reached): the queue only fills beyond that
+    // if the two sides are configured differently; reading then waits for
+    // the delivery.
     while (delivery_bytes_ + d.size > settings_.resume_buffer + tunnel::kMaxData && !closing_) {
         reading_held_ = true;
         co_await drained_event_.wait();
     }
-    if (reading_held_) last_frame_ = Clock::now();  // le silence pendant l'attente ne compte pas
+    if (reading_held_) last_frame_ = Clock::now();  // silence during the wait does not count
     reading_held_ = false;
     if (closing_) co_return false;
     received_ = d.seq;
@@ -829,19 +829,19 @@ asio::awaitable<bool> Channel::handle_data(const tunnel::Frame& f) {
     co_return true;
 }
 
-// Livraison des DATA reçues à la connexion brute, dans l'ordre ; l'acquittement
-// suit la livraison (une donnée acquittée a été écrite).
+// Delivery of the received DATA to the raw connection, in order; the acknowledgement
+// follows the delivery (acknowledged data has been written).
 asio::awaitable<void> Channel::deliverer() {
     while (!closing_) {
         if (delivery_.empty()) {
             co_await delivery_event_.wait();
             continue;
         }
-        // Les DATA en attente partent en une seule écriture (kFlushBytes au plus) :
-        // des segments pleins plutôt qu'un petit segment par trame. Une destination
-        // qui ne lit plus épuiserait sinon son tampon de réception (coût mémoire
-        // de chaque segment) avant que sa fenêtre ne se ferme : le noyau jette
-        // alors des segments et la connexion s'enlise en retransmissions.
+        // Pending DATA goes out in a single write (kFlushBytes at most):
+        // full segments rather than one small segment per frame. A destination
+        // that stops reading would otherwise exhaust its receive buffer (memory cost
+        // of each segment) before its window closes: the kernel then drops
+        // segments and the connection bogs down in retransmissions.
         std::size_t count = 0;
         std::size_t size = 0;
         std::error_code ec;
@@ -856,7 +856,7 @@ asio::awaitable<void> Channel::deliverer() {
         delivering_ = false;
         if (closing_) co_return;
         if (ec) {
-            logging::activity().debug("canal={} erreur d'écriture vers {} : {}", id_, raw_peer_, ec.message());
+            logging::activity().debug("channel={} write error to {}: {}", id_, raw_peer_, ec.message());
             stop(CloseReason::io_error);
             co_return;
         }
@@ -876,7 +876,7 @@ asio::awaitable<void> Channel::deliverer() {
 
 bool Channel::handle_ack(std::uint64_t seq) {
     if (seq >= next_seq_) {
-        protocol_error(CloseCode::protocol_error, "ACK de données jamais envoyées");
+        protocol_error(CloseCode::protocol_error, "ACK of data never sent");
         return false;
     }
     bool released = false;
@@ -896,13 +896,13 @@ asio::awaitable<bool> Channel::deliver_peer_shutdown() {
     raw_shutdown_ = true;
     co_await raw_->shutdown_send();
     if (closing_) co_return false;
-    send_ack();  // l'autre côté apprend sans attendre que tout est livré
+    send_ack();  // the other side learns without waiting that everything is delivered
     check_finished();
     co_return !closing_;
 }
 
 void Channel::check_finished() {
-    // Les deux sens sont terminés et tout ce qui a été envoyé est acquitté.
+    // Both directions are finished and everything sent is acknowledged.
     if (!closing_ && local_shutdown_ && unacked_.empty() && raw_shutdown_) stop(CloseReason::normal);
 }
 
@@ -912,13 +912,13 @@ asio::awaitable<ChannelInfo> Channel::describe() const {
     ChannelInfo info;
     info.id = id_;
     info.port = settings_.port;
-    info.state = closing_                ? "fermeture"
-                 : !opened_              ? "ouverture"
-                 : broken_since_         ? "reprise"
-                 : migrating_            ? "renégociation"
-                                         : "ouvert";
+    info.state = closing_                ? "closing"
+                 : !opened_              ? "opening"
+                 : broken_since_         ? "resuming"
+                 : migrating_            ? "renegotiating"
+                                         : "open";
     info.session = tunnel::to_hex(session_.data(), 4);
-    info.peer = side_ == Side::client ? raw_peer_ : "« " + peer_.name + " » " + peer_.endpoint;
+    info.peer = side_ == Side::client ? raw_peer_ : "\"" + peer_.name + "\" " + peer_.endpoint;
     if (transport_ && transport_->stream->context()) info.generation = transport_->stream->context()->generation().name;
     info.transport = transport_index_;
     const auto now = Clock::now();
@@ -927,21 +927,21 @@ asio::awaitable<ChannelInfo> Channel::describe() const {
     info.bytes_up = side_ == Side::client ? raw_in_ : raw_out_;
     info.bytes_down = side_ == Side::client ? raw_out_ : raw_in_;
     std::string blocked;
-    if (window_full_) blocked += ",fenêtre";
-    if (sending_) blocked += ",envoi";
-    if (delivering_) blocked += ",livraison";
-    if (reading_held_) blocked += ",lecture_suspendue";
-    if (reading_source_) blocked += ",lecture_source";
-    if (reading_transport_) blocked += ",lecture_transport";
-    info.flow = "émis=" + std::to_string(next_seq_ - 1) + " envoyé=" + std::to_string(sent_upto_) +
-                " non_acquitté=" + std::to_string(unacked_bytes_) + "o reçu=" + std::to_string(received_) +
-                " livré=" + std::to_string(last_rx_) + " acquitté=" + std::to_string(acked_rx_) +
-                " file=" + std::to_string(delivery_bytes_) + "o en_cours=" + (blocked.empty() ? "-" : blocked.substr(1));
+    if (window_full_) blocked += ",window";
+    if (sending_) blocked += ",sending";
+    if (delivering_) blocked += ",delivering";
+    if (reading_held_) blocked += ",read_held";
+    if (reading_source_) blocked += ",reading_source";
+    if (reading_transport_) blocked += ",reading_transport";
+    info.flow = "produced=" + std::to_string(next_seq_ - 1) + " sent=" + std::to_string(sent_upto_) +
+                " unacked=" + std::to_string(unacked_bytes_) + "B received=" + std::to_string(received_) +
+                " delivered=" + std::to_string(last_rx_) + " acked=" + std::to_string(acked_rx_) +
+                " queue=" + std::to_string(delivery_bytes_) + "B busy=" + (blocked.empty() ? "-" : blocked.substr(1));
     co_return info;
 }
 
 // ---------------------------------------------------------------------------
-// Fermeture
+// Closing
 
 void Channel::abort(CloseReason reason) {
     asio::post(executor_, [self = shared_from_this(), reason] { self->stop(reason); });
@@ -949,7 +949,7 @@ void Channel::abort(CloseReason reason) {
 
 void Channel::revalidate() {
     asio::post(executor_, [self = shared_from_this()] {
-        // Pair pas encore authentifié, ou canal en cours de fermeture.
+        // Peer not yet authenticated, or channel closing.
         if (!self->settings_.authorizer || self->peer_.name.empty() || self->closing_) return;
         const auto name = self->settings_.authorizer->authorize(self->peer_.address, self->settings_.port,
                                                                 self->peer_.subject.get());
@@ -958,7 +958,7 @@ void Channel::revalidate() {
             return;
         }
         ++self->stats_.peers_revoked;
-        logging::activity().info("canal={} pair « {} » retiré de la liste blanche : fermeture du canal", self->id_,
+        logging::activity().info("channel={} peer \"{}\" removed from the whitelist: closing the channel", self->id_,
                                  self->peer_.name);
         self->stop(CloseReason::peer_revoked);
     });
@@ -979,7 +979,7 @@ void Channel::close_if_revoked() {
         const auto* ctx = stream.context();
         if (!ctx || !ctx->is_revoked(stream.peer_certificate())) return;
         ++self->stats_.certificates_revoked;
-        logging::activity().info("canal={} certificat du pair révoqué ({}) : fermeture du canal", self->id_,
+        logging::activity().info("channel={} peer certificate revoked ({}): closing the channel", self->id_,
                                  stream.peer_subject());
         self->stop(CloseReason::certificate_revoked);
     });
@@ -987,7 +987,7 @@ void Channel::close_if_revoked() {
 
 void Channel::protocol_error(CloseCode code, const std::string& detail) {
     ++stats_.protocol_errors;
-    logging::activity().info("canal={} erreur de protocole : {}", id_, detail);
+    logging::activity().info("channel={} protocol error: {}", id_, detail);
     stop(CloseReason::protocol_error, tunnel::encode_close(static_cast<std::uint16_t>(code), detail));
 }
 
@@ -1022,22 +1022,22 @@ void Channel::stop(CloseReason reason, std::optional<std::string> last_frame) {
     if (tasks_ == 0) finish();
 }
 
-// cppcheck-suppress passedByValue ; coroutine : la trame doit vivre dans son cadre
+// cppcheck-suppress passedByValue ; coroutine: the frame must live in the coroutine frame
 asio::awaitable<void> Channel::goodbye(std::shared_ptr<Transport> t, std::string frame) {
-    // Trames de contrôle en attente (ACK...), puis la dernière trame.
+    // Pending control frames (ACK...), then the last frame.
     std::string out;
     for (const auto& c : control_) out += c;
     control_.clear();
     out += frame;
     if (!out.empty()) {
         if (const auto ec = t->stream->queue(asio::buffer(out))) {
-            logging::activity().debug("canal={} dernière trame non envoyée : {}", id_, ec.message());
+            logging::activity().debug("channel={} last frame not sent: {}", id_, ec.message());
         }
     }
     co_await retire(std::move(t));
 }
 
-// Fermeture propre d'une connexion de transport (close_notify), bornée dans le temps.
+// Graceful close of a transport connection (close_notify), bounded in time.
 asio::awaitable<void> Channel::retire(std::shared_ptr<Transport> t) {
     asio::steady_timer guard(executor_);
     guard.expires_after(kGoodbyeTimeout);
@@ -1061,9 +1061,9 @@ void Channel::finish() {
     if (reason == CloseReason::idle_timeout) ++stats_.channels_idle_closed;
     ++stats_.channels_closed;
 
-    logging::activity().debug("canal={} fermé raison={} montant={}o descendant={}o connexions={} durée={}ms", id_,
+    logging::activity().debug("channel={} closed reason={} up={}B down={}B connections={} duration={}ms", id_,
                               to_string(reason), up, down, transport_index_, duration.count());
-    // Libère les connexions, donc les générations PKI qu'elles utilisent.
+    // Releases the connections, hence the PKI generations they use.
     transport_.reset();
     raw_.reset();
     pending_stream_.reset();

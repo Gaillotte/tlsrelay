@@ -1,13 +1,13 @@
-# Dépendances externes. Sous Windows, elles sont fournies par vcpkg (vcpkg.json) ;
-# sous Linux, par les paquets de la distribution ou par vcpkg.
+# External dependencies. On Windows, they are provided by vcpkg (vcpkg.json);
+# on Linux, by the distribution packages or by vcpkg.
 
 find_package(OpenSSL 3.0 REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 
-# Asio autonome : vcpkg fournit asio::asio ; les paquets Linux (libasio-dev)
-# ne fournissent que les en-têtes.
+# Standalone Asio: vcpkg provides asio::asio; the Linux packages (libasio-dev)
+# only provide the headers.
 find_package(asio CONFIG QUIET)
 if(NOT TARGET asio::asio)
     find_path(ASIO_INCLUDE_DIR asio.hpp REQUIRED)

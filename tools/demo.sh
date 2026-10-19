@@ -5,12 +5,12 @@
 # resumption after network cuts, hot PKI rotation, revocation (CRL),
 # administration and metrics, editor check (and screenshots if Xvfb is present).
 #
-# Usage : tools/demo.sh [build directory] [first port]
-#   build directory : contains src/app/tlsrelay, src/testkit/tlsrelay-testkit
-#                     and, optionally, src/admin/tlsrelay-admin (default: build/linux-release)
-#   first port      : 12 consecutive ports from this one are used (default: 31000)
-# Environment : DEMO_PAUSE=1 waits for Enter between steps (live presentation);
-#               DEMO_DIR=<dir> keeps the working files (configurations, PKI, logs, screenshots).
+# Usage: tools/demo.sh [build directory] [first port]
+#   build directory: contains src/app/tlsrelay, src/testkit/tlsrelay-testkit
+#                    and, optionally, src/admin/tlsrelay-admin (default: build/linux-release)
+#   first port: 12 consecutive ports from this one are used (default: 31000)
+# Environment: DEMO_PAUSE=1 waits for Enter between steps (live presentation);
+#              DEMO_DIR=<dir> keeps the working files (configurations, PKI, logs, screenshots).
 # Takes about 3 minutes. Exit code 0 if every check passed.
 set -uo pipefail
 
@@ -75,10 +75,10 @@ background() { "$@" >/dev/null 2>&1 & pids+=($!); }
 wait_admin() { for _ in $(seq 50); do "$bin" status -c "$1.yaml" >/dev/null 2>&1 && return 0; sleep 0.1; done; return 1; }
 
 # ---------------------------------------------------------------- configuration
-echo "phrase de passe de démonstration" > passphrase.txt
+echo "demonstration passphrase" > passphrase.txt
 write_whitelist() {
   if [ "$1" = with ]; then
-    printf 'peers:\n  - { name: poste, ip: 127.0.0.1, ports: [plain, tls, mtls], subject: "CN=poste.demo,O=Demo" }\n'
+    printf 'peers:\n  - { name: workstation, ip: 127.0.0.1, ports: [plain, tls, mtls], subject: "CN=workstation.demo,O=Demo" }\n'
   else
     printf 'peers: []\n'
   fi > whitelist.yaml
@@ -131,7 +131,7 @@ run "$bin" pki gen-csr -c server.yaml --subject "CN=relay.demo,O=Demo" --san rel
 run "$bin" ca sign --dir ca --role server --csr pki-server/v1/request.csr --san relay.demo --out kit-server --passphrase-file passphrase.txt
 run "$bin" pki install -c server.yaml --from kit-server
 run "$bin" pki activate -c server.yaml v1
-run "$bin" pki gen-csr -c client.yaml --subject "CN=poste.demo,O=Demo"
+run "$bin" pki gen-csr -c client.yaml --subject "CN=workstation.demo,O=Demo"
 run "$bin" ca sign --dir ca --role client --csr pki-client/v1/request.csr --out kit-client --passphrase-file passphrase.txt
 run "$bin" pki install -c client.yaml --from kit-client
 run "$bin" pki activate -c client.yaml v1
@@ -186,7 +186,7 @@ write_whitelist with
 run "$bin" reload -c server.yaml
 r=$(json load --target "127.0.0.1:$cli_tls" --channels 5 --bytes 1KiB)
 check "accepted again once the entry is restored" test "$(field ok "$r")" = 5
-grep -E "liste blanche" server.log | tail -2 | sed 's/^/    log: /'
+grep -E "whitelist" server.log | tail -2 | sed 's/^/    log: /'
 
 # ================================================================ 7
 step "Transparent renegotiation (session_lifetime 15 s)"
@@ -223,18 +223,18 @@ run "$bin" ca sign --dir ca --role server --csr pki-server/v2/request.csr --san 
 run "$bin" pki install -c server.yaml --from kit-server-v2
 run "$bin" pki activate -c server.yaml v2
 sleep 3
-shell "tlsrelay status -c server.yaml | grep -i génération"
+shell "tlsrelay status -c server.yaml | grep -i generation"
 r=$(json load --target "127.0.0.1:$cli_mtls" --channels 10 --bytes 64KiB)
 check "new connections served by generation v2" bash -c "'$bin' status -c server.yaml | grep -q 'v2'"
 check "service uninterrupted: 10/10 new channels intact" test "$(field ok "$r")" = 10
-grep -E "bascule|libérée" server.log | tail -2 | sed 's/^/    log: /'
+grep -E "switched|released" server.log | tail -2 | sed 's/^/    log: /'
 
 # ================================================================ 10
 step "Revocation: the client's certificate is revoked and the CRL deployed"
 "$kit" --json load --target "127.0.0.1:$cli_mtls" --channels 3 --bytes 64KiB --hold 15s > held.json 2>/dev/null &
 held=$!
 sleep 1.5
-serial=$("$bin" ca list --dir ca | awk '/client/ && /valide/ {print $1; exit}')
+serial=$("$bin" ca list --dir ca | awk '/client/ && / valid / {print $1; exit}')
 run "$bin" ca revoke --dir ca --serial "$serial" --reason keyCompromise --out crl.pem --passphrase-file passphrase.txt
 run "$bin" pki crl -c server.yaml crl.pem
 sleep 3
@@ -242,9 +242,9 @@ wait $held
 check "open channels of the revoked peer closed (held load failed)" bash -c "[ \"\$(jq -r .failed held.json)\" -gt 0 ]"
 r=$(json load --target "127.0.0.1:$cli_mtls" --channels 5 --bytes 1KiB)
 check "new mTLS channels refused at the handshake" test "$(field ok "$r")" = 0
-grep -E "révoqu" server.log | tail -2 | sed 's/^/    log: /'
+grep -E "revoked" server.log | tail -2 | sed 's/^/    log: /'
 say "A new certificate is issued to the client (renewal); it is accepted again."
-run "$bin" pki gen-csr -c client.yaml --subject "CN=poste.demo,O=Demo"
+run "$bin" pki gen-csr -c client.yaml --subject "CN=workstation.demo,O=Demo"
 run "$bin" ca sign --dir ca --role client --csr pki-client/v2/request.csr --out kit-client-v2 --passphrase-file passphrase.txt
 run "$bin" pki install -c client.yaml --from kit-client-v2
 run "$bin" pki activate -c client.yaml v2
@@ -260,7 +260,7 @@ run "$bin" channels -c server.yaml
 shell "tlsrelay metrics -c server.yaml | grep -E '^tlsrelay_(channels_opened|peers_rejected|peers_revoked|pki_rotations|certificates_revoked|renegotiations)_total'"
 check "metrics in Prometheus text format" bash -c "'$bin' metrics -c server.yaml | grep -q '^# TYPE tlsrelay_channels_active gauge'"
 check "no private key nor passphrase in the logs" \
-  bash -c "! grep -qE 'PRIVATE KEY|phrase de passe de démonstration' server.log client.log"
+  bash -c "! grep -qE 'PRIVATE KEY|demonstration passphrase' server.log client.log"
 
 # ================================================================ 12
 step "Editor tlsrelay-admin"

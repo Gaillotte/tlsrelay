@@ -18,20 +18,20 @@
 
 namespace tlsrelay::relay {
 
-// Flux d'un canal : TCP en clair, ou TLS 1.3 sur TCP.
+// Stream of a channel: plain TCP, or TLS 1.3 over TCP.
 //
-// Le TLS est implémenté directement sur OpenSSL avec des BIO mémoire, ce qui
-// permet la demi-fermeture (close_notify dans un seul sens, l'autre sens
-// continuant à recevoir) et l'accès complet à la session.
+// TLS is implemented directly on OpenSSL with memory BIOs, which
+// allows half-close (close_notify in one direction only, the other direction
+// still receiving) and full access to the session.
 //
-// Une lecture et une écriture peuvent être en cours en même temps, sur le
-// même strand ; les écritures sur la socket sont sérialisées en interne.
+// One read and one write may be in progress at the same time, on the
+// same strand; writes to the socket are serialized internally.
 class Stream {
 public:
-    // Flux en clair.
+    // Plain stream.
     explicit Stream(asio::ip::tcp::socket socket);
-    // Flux TLS. Le rôle (client ou serveur) est celui du contexte. server_name
-    // sert côté client au SNI et à la vérification du certificat.
+    // TLS stream. The role (client or server) is that of the context. server_name
+    // is used on the client side for SNI and for certificate verification.
     Stream(asio::ip::tcp::socket socket, std::shared_ptr<const tls::Context> context,
            const std::string& server_name = {});
     ~Stream();
@@ -40,40 +40,40 @@ public:
     Stream& operator=(const Stream&) = delete;
 
     bool is_tls() const { return ssl_ != nullptr; }
-    // Contexte TLS (donc génération PKI) du flux, nullptr en clair.
+    // TLS context (hence PKI generation) of the stream, nullptr when plain.
     const tls::Context* context() const { return context_.get(); }
     asio::ip::tcp::socket& socket() { return socket_; }
 
-    // TLS : établit la session et vérifie le pair. Sans effet en clair.
-    // En cas d'échec, failure_reason() donne le détail.
+    // TLS: establishes the session and verifies the peer. No effect when plain.
+    // On failure, failure_reason() gives the details.
     asio::awaitable<std::error_code> handshake();
 
-    // Retourne asio::error::eof à la fin propre du flux (close_notify en TLS).
+    // Returns asio::error::eof at the clean end of the stream (close_notify with TLS).
     asio::awaitable<std::pair<std::error_code, std::size_t>> read_some(asio::mutable_buffer buffer);
-    // Écrit et envoie. Les écritures ne s'entremêlent jamais, même concurrentes.
+    // Writes and sends. Writes never interleave, even concurrent ones.
     asio::awaitable<std::error_code> write(asio::const_buffer buffer);
 
-    // Ajoute à l'envoi sans attendre ; flush() envoie. Permet d'envoyer une
-    // dernière trame juste avant de fermer.
+    // Adds to the send buffer without waiting; flush() sends. Allows sending a
+    // last frame just before closing.
     std::error_code queue(asio::const_buffer buffer);
     asio::awaitable<std::error_code> flush();
 
-    // Exporteur de clés TLS 1.3 (RFC 8446 §7.5). Faux en clair ou en cas d'échec.
+    // TLS 1.3 key exporter (RFC 8446 §7.5). False when plain or on failure.
     bool export_keying_material(std::string_view label, const std::uint8_t* context, std::size_t context_size,
                                 std::uint8_t* out, std::size_t out_size) const;
 
-    // Fin de ce sens d'émission ; la réception continue.
+    // End of this send direction; reception continues.
     asio::awaitable<std::error_code> shutdown_send();
 
     void close();
 
-    // Après handshake : « TLSv1.3 TLS_AES_256_GCM_SHA384 », et sujet du certificat du pair.
+    // After handshake: "TLSv1.3 TLS_AES_256_GCM_SHA384", and subject of the peer certificate.
     std::string session_description() const;
     std::string peer_subject() const;
-    // Certificat présenté par le pair (nullptr en clair ou s'il n'en a pas présenté).
+    // Certificate presented by the peer (nullptr when plain or if it presented none).
     X509* peer_certificate() const;
     const std::string& failure_reason() const { return failure_reason_; }
-    // Le handshake a échoué parce que la connexion a été perdue (et non refusé).
+    // The handshake failed because the connection was lost (and not refused).
     bool handshake_interrupted() const { return handshake_interrupted_; }
 
 private:
@@ -81,13 +81,13 @@ private:
     std::error_code tls_error();
 
     asio::ip::tcp::socket socket_;
-    std::shared_ptr<const tls::Context> context_;  // maintient la génération en vie
+    std::shared_ptr<const tls::Context> context_;  // keeps the generation alive
     tls::SslPtr ssl_;
-    BIO* network_in_ = nullptr;   // octets reçus du réseau, lus par OpenSSL (appartient à ssl_)
-    BIO* network_out_ = nullptr;  // octets produits par OpenSSL, à envoyer (appartient à ssl_)
+    BIO* network_in_ = nullptr;   // bytes received from the network, read by OpenSSL (owned by ssl_)
+    BIO* network_out_ = nullptr;  // bytes produced by OpenSSL, to be sent (owned by ssl_)
     std::vector<unsigned char> read_buffer_;
     std::vector<unsigned char> write_buffer_;
-    std::string plain_out_;  // en clair : octets en attente d'envoi
+    std::string plain_out_;  // plain: bytes waiting to be sent
     bool flushing_ = false;
     asio::steady_timer flush_done_;
     std::string failure_reason_;

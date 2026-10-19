@@ -1,5 +1,5 @@
-// Canal d'administration (SPEC §10.1) : requêtes reçues par le service et
-// réponses lues par la ligne de commande.
+// Administration channel (SPEC §10.1): requests received by the service and
+// replies read by the command line.
 #include "tlsrelay/admin/admin.hpp"
 
 #include "../src/core/src/admin/session.hpp"

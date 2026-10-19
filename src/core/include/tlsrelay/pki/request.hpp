@@ -1,10 +1,10 @@
 #pragma once
 
-// Côté instance (SPEC §7.6) : la bi-clé est générée sur la machine tlsrelay
-// et ne la quitte jamais ; seule la demande de signature (CSR) en sort.
+// Instance side (SPEC §7.6): the key pair is generated on the tlsrelay machine
+// and never leaves it; only the signing request (CSR) does.
 //
-//   pki gen-csr  : nouvelle génération vN avec key.pem et request.csr
-//   pki install  : complète vN avec le certificat signé et les fichiers de confiance
+//   pki gen-csr:  new generation vN with key.pem and request.csr
+//   pki install:  completes vN with the signed certificate and the trust files
 
 #include "tlsrelay/pki/generation.hpp"
 
@@ -20,18 +20,18 @@ struct SubjectAltNames {
     std::vector<std::string> ip;
 
     bool empty() const { return dns.empty() && ip.empty(); }
-    // Forme OpenSSL : « DNS:a,IP:1.2.3.4 ».
+    // OpenSSL form: "DNS:a,IP:1.2.3.4".
     std::string to_openssl() const;
 };
 
-// Analyse « dns:nom », « ip:adresse », ou une valeur seule (adresse IP ou nom).
-// Retourne std::nullopt et remplit error si une valeur est invalide.
+// Parses "dns:name", "ip:address", or a bare value (IP address or name).
+// Returns std::nullopt and fills error if a value is invalid.
 std::optional<SubjectAltNames> parse_sans(const std::vector<std::string>& items, std::string& error);
 
-// Nom de la prochaine génération : v<plus grand numéro + 1> (v1 si aucune).
+// Name of the next generation: v<highest number + 1> (v1 if none).
 std::string next_generation_name(const std::filesystem::path& pki_root);
 
-// Dernière génération avec une demande en attente (key.pem et request.csr, sans cert.pem).
+// Latest generation with a pending request (key.pem and request.csr, without cert.pem).
 std::optional<std::string> pending_generation(const std::filesystem::path& pki_root);
 
 struct CsrResult {
@@ -40,14 +40,14 @@ struct CsrResult {
     std::string subject;
 };
 
-// Crée la génération suivante : clé ECDSA P-256 (key.pem, lisible par le seul
-// propriétaire) et demande signée request.csr. Les SAN y sont indiqués à titre
-// d'information : c'est l'AC qui fixe ceux du certificat. Lève std::runtime_error.
+// Creates the next generation: ECDSA P-256 key (key.pem, readable by the owner
+// only) and signed request request.csr. The SANs in it are for information
+// only: the CA sets those of the certificate. Throws std::runtime_error.
 CsrResult generate_csr(const std::filesystem::path& pki_root, const std::string& subject,
                        const SubjectAltNames& sans);
 
-// Fichiers à installer. Un fichier de confiance absent est repris de la
-// génération courante ; from désigne un répertoire produit par « ca sign ».
+// Files to install. A missing trust file is taken from the current
+// generation; from designates a directory produced by "ca sign".
 struct InstallFiles {
     std::optional<std::filesystem::path> from;
     std::optional<std::filesystem::path> cert;
@@ -58,12 +58,12 @@ struct InstallFiles {
 
 struct InstallResult {
     std::string generation;
-    LoadResult check;  // contrôles de check_candidate (sans activation)
+    LoadResult check;  // checks of check_candidate (without activation)
 };
 
-// Complète la génération donnée (par défaut : la demande en attente ; pour
-// une instance sans identité, une nouvelle génération). N'active rien.
-// Lève std::runtime_error si les fichiers manquent ou ne peuvent pas être copiés.
+// Completes the given generation (by default: the pending request; for
+// an instance without identity, a new generation). Activates nothing.
+// Throws std::runtime_error if files are missing or cannot be copied.
 InstallResult install(const std::filesystem::path& pki_root, std::optional<std::string> generation,
                       const InstallFiles& files, const Requirements& req);
 

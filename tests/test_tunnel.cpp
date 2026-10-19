@@ -1,7 +1,7 @@
-// Protocole de tunnel et renégociation transparente (phase 5, SPEC §4) :
-// renégociation à l'échéance de session_lifetime sans perte ni duplication,
-// reprise après coupure du transport, jeton de reprise à usage unique,
-// fermeture par le serveur sans renégociation, erreurs de protocole.
+// Tunnel protocol and transparent renegotiation (phase 5, SPEC §4):
+// renegotiation when session_lifetime expires without loss or duplication,
+// resumption after a transport cut, single-use resumption token,
+// close by the server without renegotiation, protocol errors.
 
 #include "support/cut_proxy.hpp"
 #include "support/net_helpers.hpp"
@@ -29,11 +29,11 @@ protected:
     void SetUp() override {
         write_generation(server_pki(), "v1", server_files(*h_));
         write_generation(client_pki(), "v1", client_files(*h_));
-        std::ofstream(whitelist()) << "peers:\n  - { name: poste, ip: 127.0.0.1, ports: [plain, tls, mtls], subject: \""
+        std::ofstream(whitelist()) << "peers:\n  - { name: workstation, ip: 127.0.0.1, ports: [plain, tls, mtls], subject: \""
                                    << kClientSubject << "\" }\n";
     }
 
-    std::filesystem::path server_pki() const { return dir_ / "serveur"; }
+    std::filesystem::path server_pki() const { return dir_ / "server"; }
     std::filesystem::path client_pki() const { return dir_ / "client"; }
     std::filesystem::path whitelist() const { return dir_ / "whitelist.yaml"; }
 
@@ -88,17 +88,17 @@ bool works(TestClient& app, const std::string& data) {
     return app.read_exactly(data.size(), 3s) == data;
 }
 
-// Flux continu dans les deux sens (via l'écho) : chaque bloc est écrit sans
-// attendre l'écho des précédents, des données sont donc toujours en transit
-// pendant chunks × pause.
-// Un seul thread utilise la socket de test.
+// Continuous stream in both directions (through the echo): each block is written without
+// waiting for the echo of the previous ones, so data is always in transit
+// during chunks × pause.
+// A single thread uses the test socket.
 void stream_through(TestClient& app, std::size_t chunks, std::size_t chunk_size, std::chrono::milliseconds pause,
                     std::string& sent, std::string& received) {
     sent = make_random_data(chunks * chunk_size, 99);
     received.clear();
     const auto deadline = Clock::now() + 20s;
     std::size_t written = 0;
-    auto next_write = Clock::now();  // un bloc toutes les pause
+    auto next_write = Clock::now();  // one block every pause
     while (received.size() < sent.size() && Clock::now() < deadline) {
         if (written < chunks && Clock::now() >= next_write) {
             app.write(sent.substr(written++ * chunk_size, chunk_size));
@@ -110,7 +110,7 @@ void stream_through(TestClient& app, std::size_t chunks, std::size_t chunk_size,
     }
 }
 
-// Jeton de reprise calculé indépendamment de tlsrelay, d'après SPEC §4.5.
+// Resumption token computed independently of tlsrelay, according to SPEC §4.5.
 tlsrelay::tunnel::Token token_of(RawTlsClient& raw, const tlsrelay::tunnel::SessionId& session, std::uint32_t n) {
     std::uint8_t context[20];
     std::copy(session.begin(), session.end(), context);
@@ -139,7 +139,7 @@ TEST_F(TunnelTest, RenegotiationIsTransparentUnderLoad) {
 
     TestClient app(client.port(PortKind::tls));
     std::string sent, received;
-    stream_through(app, 80, 32 * 1024, 30ms, sent, received);  // ~2,5 s, soit ~20 renégociations
+    stream_through(app, 80, 32 * 1024, 30ms, sent, received);  // ~2.5 s, i.e. ~20 renegotiations
     ASSERT_EQ(received.size(), sent.size());
     EXPECT_EQ(sha256(received), sha256(sent));
 
@@ -147,8 +147,8 @@ TEST_F(TunnelTest, RenegotiationIsTransparentUnderLoad) {
     EXPECT_TRUE(eventually([&] { return server.stats().renegotiations.load() == client.stats().renegotiations.load(); }));
     EXPECT_EQ(client.stats().resume_failures.load(), 0u);
     EXPECT_EQ(server.stats().resume_failures.load(), 0u);
-    EXPECT_EQ(server.stats().channels_opened.load(), 1u);  // un seul canal de bout en bout
-    EXPECT_EQ(echo.accepted(), 1);                          // une seule connexion à la destination
+    EXPECT_EQ(server.stats().channels_opened.load(), 1u);  // a single end-to-end channel
+    EXPECT_EQ(echo.accepted(), 1);                          // a single connection to the destination
     EXPECT_EQ(server.stats().protocol_errors.load(), 0u);
 }
 
@@ -166,10 +166,10 @@ TEST_F(TunnelTest, RenegotiationMovesOpenChannelToNewGeneration) {
     write_generation(client_pki(), "v2", client_files(*h_));
     ASSERT_TRUE(eventually([&] { return srv.current_generation() == "v2" && cli.current_generation() == "v2"; }));
 
-    // À la renégociation suivante, le canal passe sur v2 : v1 est libérée des deux côtés.
+    // At the next renegotiation, the channel moves to v2: v1 is released on both sides.
     EXPECT_TRUE(eventually([&] { return srv.live_generations() == std::vector<std::string>{"v2"}; }));
     EXPECT_TRUE(eventually([&] { return cli.live_generations() == std::vector<std::string>{"v2"}; }));
-    EXPECT_TRUE(works(app, "toujours ouvert, sur v2"));
+    EXPECT_TRUE(works(app, "still open, on v2"));
     EXPECT_EQ(server.stats().channels_closed.load(), 0u);
 }
 
@@ -180,12 +180,12 @@ TEST_F(TunnelTest, SessionResumesAfterTransportLoss) {
     RunningService client(client_config(proxy.port(), PortKind::tls, 1h, 5s));
 
     TestClient app(client.port(PortKind::tls));
-    ASSERT_TRUE(works(app, "avant"));
+    ASSERT_TRUE(works(app, "before"));
 
     std::string sent, received;
     std::thread cutter([&] {
         std::this_thread::sleep_for(300ms);
-        proxy.cut();  // en plein transfert
+        proxy.cut();  // in the middle of the transfer
     });
     stream_through(app, 40, 64 * 1024, 15ms, sent, received);
     cutter.join();
@@ -206,8 +206,8 @@ TEST_F(TunnelTest, PlainTransportLossClosesChannel) {
     RunningService client(client_config(proxy.port(), PortKind::plain));
 
     TestClient app(client.port(PortKind::plain));
-    ASSERT_TRUE(works(app, "clair"));
-    proxy.cut();  // port 1 : pas de reprise possible sans TLS
+    ASSERT_TRUE(works(app, "plain"));
+    proxy.cut();  // port 1: no resumption possible without TLS
     EXPECT_TRUE(app.wait_closed(3s));
     EXPECT_TRUE(eventually([&] { return server.stats().channels_closed.load() == 1; }));
     EXPECT_EQ(proxy.connections(), 1);
@@ -244,7 +244,7 @@ TEST_F(TunnelTest, ResumeTokenIsBoundToConnectionAndSingleUse) {
     const auto session = first_probe.session();
     const auto token = token_of(first, session, 1);
 
-    {  // Jeton faux : refusé, la session continue sur la première connexion.
+    {  // Wrong token: refused, the session continues on the first connection.
         auto raw = raw_client(port);
         ASSERT_TRUE(raw.handshake());
         TunnelProbe probe(raw);
@@ -263,11 +263,11 @@ TEST_F(TunnelTest, ResumeTokenIsBoundToConnectionAndSingleUse) {
     const auto f = resume(second, second_probe, session, token, 0);
     ASSERT_TRUE(f);
     ASSERT_EQ(f->type, FrameType::resumed);
-    // L'écho de « abc » n'a pas été acquitté : le serveur le renvoie sur la nouvelle connexion.
+    // The echo of "abc" was not acknowledged: the server resends it on the new connection.
     EXPECT_EQ(second_probe.receive(3), "abc");
-    EXPECT_TRUE(first_probe.closed());  // l'ancienne connexion est fermée par le serveur
+    EXPECT_TRUE(first_probe.closed());  // the old connection is closed by the server
 
-    {  // Rejeu du même jeton : refusé.
+    {  // Replay of the same token: refused.
         auto raw = raw_client(port);
         ASSERT_TRUE(raw.handshake());
         TunnelProbe probe(raw);
@@ -275,7 +275,7 @@ TEST_F(TunnelTest, ResumeTokenIsBoundToConnectionAndSingleUse) {
         ASSERT_TRUE(replay);
         EXPECT_EQ(replay->type, FrameType::resume_fail);
     }
-    {  // Session inconnue : refusée.
+    {  // Unknown session: refused.
         auto raw = raw_client(port);
         ASSERT_TRUE(raw.handshake());
         TunnelProbe probe(raw);
@@ -298,9 +298,9 @@ TEST_F(TunnelTest, ServerWaitsForResumeOnlyDuringGrace) {
         ASSERT_TRUE(raw.handshake());
         TunnelProbe probe(raw);
         ASSERT_TRUE(probe.open(PortKind::tls));
-    }  // connexion perdue sans CLOSE
+    }  // connection lost without CLOSE
     std::this_thread::sleep_for(200ms);
-    EXPECT_EQ(server.stats().channels_closed.load(), 0u);  // reprise encore possible
+    EXPECT_EQ(server.stats().channels_closed.load(), 0u);  // resumption still possible
     EXPECT_TRUE(eventually([&] { return server.stats().channels_closed.load() == 1; }));
     EXPECT_EQ(server.stats().resume_failures.load(), 1u);
 }
@@ -313,7 +313,7 @@ TEST_F(TunnelTest, InvalidFrameClosesChannelWithProtocolError) {
     ASSERT_TRUE(raw.handshake());
     TunnelProbe probe(raw);
     ASSERT_TRUE(probe.open(PortKind::tls));
-    ASSERT_TRUE(raw.write(std::string("\x7f\0\0\0\0\0\0\0", 8)));  // type inconnu
+    ASSERT_TRUE(raw.write(std::string("\x7f\0\0\0\0\0\0\0", 8)));  // unknown type
     std::optional<tlsrelay::tunnel::Frame> frame;
     do {
         frame = probe.next();
@@ -331,7 +331,7 @@ TEST_F(TunnelTest, OpenIsRefusedForAnotherPortOrDuplicateSession) {
     auto raw = raw_client(port);
     ASSERT_TRUE(raw.handshake());
     TunnelProbe probe(raw);
-    auto f = probe.open_frame(PortKind::mtls);  // annonce le port mtls sur le port tls
+    auto f = probe.open_frame(PortKind::mtls);  // announces the mtls port on the tls port
     ASSERT_TRUE(f);
     EXPECT_EQ(f->type, FrameType::open_fail);
 
@@ -375,11 +375,11 @@ TEST_F(TunnelTest, SilentTransportIsDetectedByKeepaliveAndResumed) {
     RunningService client(std::move(client_cfg));
 
     TestClient app(client.port(PortKind::tls));
-    ASSERT_TRUE(works(app, "avant"));
-    proxy.freeze();  // plus rien ne passe, sans aucune erreur TCP
+    ASSERT_TRUE(works(app, "before"));
+    proxy.freeze();  // nothing goes through any more, without any TCP error
     const auto start = Clock::now();
-    EXPECT_TRUE(works(app, "après le gel du lien"));
-    EXPECT_GE(Clock::now() - start, 400ms);  // détection : 3 intervalles de silence
+    EXPECT_TRUE(works(app, "after the link froze"));
+    EXPECT_GE(Clock::now() - start, 400ms);  // detection: 3 intervals of silence
     EXPECT_EQ(client.stats().renegotiations.load(), 1u);
     EXPECT_EQ(proxy.connections(), 2);
     EXPECT_EQ(echo.accepted(), 1);
@@ -397,7 +397,7 @@ TEST_F(TunnelTest, SilentPlainTransportClosesChannel) {
     RunningService client(std::move(client_cfg));
 
     TestClient app(client.port(PortKind::plain));
-    ASSERT_TRUE(works(app, "clair"));
+    ASSERT_TRUE(works(app, "plain"));
     proxy.freeze();
     EXPECT_TRUE(app.wait_closed(3s));
     EXPECT_TRUE(eventually([&] { return server.stats().channels_closed.load() == 1; }));
@@ -413,21 +413,21 @@ TEST_F(TunnelTest, KeepaliveToleratesApplicationNotReading) {
     RunningService client(std::move(client_cfg));
 
     TestClient app(client.port(PortKind::tls));
-    // Assez de données pour saturer les tampons TCP, quelle que soit leur taille
-    // (Windows : petits tampons ; Linux : tampons de loopback plus grands).
+    // Enough data to fill the TCP buffers, whatever their size
+    // (Windows: small buffers; Linux: larger loopback buffers).
     const auto data = make_random_data(3 << 20, 11);
     app.write(data);
-    std::this_thread::sleep_for(1500ms);  // l'application ne lit pas : contre-pression jusqu'à la destination
+    std::this_thread::sleep_for(1500ms);  // the application does not read: back-pressure up to the destination
     const auto received = app.read_exactly(data.size(), 10s);
     EXPECT_EQ(sha256(received), sha256(data));
-    EXPECT_EQ(client.stats().renegotiations.load(), 0u);  // aucune fausse détection
+    EXPECT_EQ(client.stats().renegotiations.load(), 0u);  // no false detection
     EXPECT_EQ(server.stats().resume_failures.load(), 0u);
 }
 
 TEST_F(TunnelTest, SlowDestinationDoesNotStallAcknowledgements) {
-    // La destination ne lit que lorsqu'elle peut écrire, avec de petits tampons :
-    // le serveur, bloqué en livraison vers elle, doit continuer de traiter les
-    // ACK du client, sinon sa fenêtre d'émission reste pleine et tout s'arrête.
+    // The destination only reads when it can write, with small buffers:
+    // the server, blocked delivering to it, must keep handling the client's
+    // ACKs, otherwise its send window stays full and everything stops.
     EchoServer echo(4096);
     auto server_cfg = server_config(echo.port(), PortKind::tls);
     server_cfg.limits.resume_buffer = 64 * 1024;
@@ -469,18 +469,18 @@ TEST_F(TunnelTest, TransportLossDuringHandshakeReopensTunnel) {
     EchoServer echo;
     RunningService server(server_config(echo.port(), PortKind::mtls));
     CutProxy proxy(server.port(PortKind::mtls));
-    proxy.reset_next(2);  // deux connexions coupées pendant le handshake
+    proxy.reset_next(2);  // two connections cut during the handshake
     RunningService client(client_config(proxy.port(), PortKind::mtls));
 
     TestClient app(client.port(PortKind::mtls));
-    app.write("bonjour");
-    EXPECT_EQ(app.read_exactly(7, 5s), "bonjour");
+    app.write("welcome");
+    EXPECT_EQ(app.read_exactly(7, 5s), "welcome");
     EXPECT_EQ(proxy.connections(), 3);
     EXPECT_EQ(echo.accepted(), 1);
 }
 
 TEST_F(TunnelTest, TransportLossBeforeOpenOkReopensTunnel) {
-    // Le serveur cherche encore à joindre la destination quand le lien est coupé.
+    // The server is still trying to reach the destination when the link is cut.
     ReservedPort reserved;
     auto server_cfg = server_config(reserved.port(), PortKind::tls);
     server_cfg.destination->dial_timeout = 100ms;
@@ -491,13 +491,13 @@ TEST_F(TunnelTest, TransportLossBeforeOpenOkReopensTunnel) {
     RunningService client(client_config(proxy.port(), PortKind::tls));
 
     TestClient app(client.port(PortKind::tls));
-    app.write("en attente");  // gardé par le client jusqu'à OPEN_OK
+    app.write("waiting...");  // held by the client until OPEN_OK
     std::this_thread::sleep_for(250ms);
     proxy.cut();
-    EchoServer echo(reserved);  // la destination devient joignable
+    EchoServer echo(reserved);  // the destination becomes reachable
 
-    EXPECT_EQ(app.read_exactly(10, 5s), "en attente");
+    EXPECT_EQ(app.read_exactly(10, 5s), "waiting...");
     EXPECT_EQ(proxy.connections(), 2);
     EXPECT_EQ(client.stats().channels_opened.load(), 1u);
-    EXPECT_EQ(echo.accepted(), 1);  // une seule connexion à la destination aboutie
+    EXPECT_EQ(echo.accepted(), 1);  // a single successful connection to the destination
 }

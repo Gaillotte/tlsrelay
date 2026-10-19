@@ -1,7 +1,7 @@
 #pragma once
 
-// Fabrique de PKI de test (PLAN §5) : hiérarchie racine -> AC Serveurs / AC
-// Clients -> certificats, générée à la volée, avec des variantes « piégées ».
+// Test PKI factory (PLAN §5): hierarchy root -> Servers CA / Clients CA
+// -> certificates, generated on the fly, with "trapped" variants.
 
 #include "tlsrelay/tls/openssl_ptr.hpp"
 
@@ -23,7 +23,7 @@ struct CertOptions {
     Usage usage = Usage::none;
     std::vector<std::string> dns{};
     std::vector<std::string> ips{};
-    long not_before_offset = -3600;           // secondes par rapport à maintenant
+    long not_before_offset = -3600;           // seconds relative to now
     long not_after_offset = 365L * 24 * 3600;
     const char* curve = "P-256";
 };
@@ -33,15 +33,15 @@ struct Issued {
     X509Ptr cert;
 };
 
-// Certificat auto-signé (racine) ou émis par issuer.
+// Self-signed certificate (root) or issued by issuer.
 Issued make_certificate(const CertOptions& options, const Issued* issuer = nullptr);
 
 std::string pem(const X509* cert);
 std::string pem(const EVP_PKEY* key);
 std::string encrypted_pem(const EVP_PKEY* key, const char* password);
 
-// Hiérarchie standard du projet (PLAN §2) : racine, AC Serveurs, AC Clients,
-// un certificat serveur (relay.test, 127.0.0.1) et un certificat client.
+// Standard project hierarchy (PLAN §2): root, Servers CA, Clients CA,
+// a server certificate (relay.test, 127.0.0.1) and a client certificate.
 struct Hierarchy {
     Issued root;
     Issued servers_ca;
@@ -52,7 +52,7 @@ struct Hierarchy {
     static Hierarchy create(const std::string& label = "Test");
 };
 
-// Contenu d'un répertoire de génération (SPEC §7.2) ; un champ vide n'est pas écrit.
+// Contents of a generation directory (SPEC §7.2); an empty field is not written.
 struct GenerationFiles {
     std::optional<std::string> key;
     std::optional<std::string> cert;
@@ -61,15 +61,15 @@ struct GenerationFiles {
     std::optional<std::string> trust_issuer;
 };
 
-// Écrit <pki_root>/<name>/... et, si activate, <pki_root>/current.
+// Writes <pki_root>/<name>/... and, if activate, <pki_root>/current.
 void write_generation(const std::filesystem::path& pki_root, const std::string& name, const GenerationFiles& files,
                       bool activate = true);
 
-// Répertoires prêts à l'emploi pour un tlsrelay serveur ou client.
+// Ready-to-use directories for a server or client tlsrelay.
 GenerationFiles server_files(const Hierarchy& h);
 GenerationFiles client_files(const Hierarchy& h);
 
-// Répertoire temporaire supprimé à la destruction.
+// Temporary directory removed on destruction.
 class TempDir {
 public:
     TempDir();

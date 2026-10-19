@@ -36,7 +36,7 @@ std::string frame(FrameType type, std::string_view payload) {
     out.reserve(kHeaderSize + payload.size());
     out += static_cast<char>(type);
     out += '\0';  // flags
-    put_u16(out, 0);  // réservé
+    put_u16(out, 0);  // reserved
     put_u32(out, static_cast<std::uint32_t>(payload.size()));
     out.append(payload.data(), payload.size());
     return out;
@@ -55,7 +55,7 @@ std::string status_payload(std::uint16_t code, std::string_view message) {
     return p;
 }
 
-// Taille de charge utile acceptée pour chaque type.
+// Accepted payload size for each type.
 bool valid_size(FrameType type, std::size_t size) {
     switch (type) {
         case FrameType::open: return size == 2 + 16 + 1;
@@ -237,7 +237,7 @@ std::uint16_t read_code(const Frame& f) { return get_u16(f.payload.data()); }
 
 void Decoder::feed(const std::uint8_t* data, std::size_t size) {
     if (error_ != Error::none) return;
-    // Compactage : on ne garde que les octets non encore consommés.
+    // Compaction: only the bytes not yet consumed are kept.
     if (offset_ > 0 && offset_ == buffer_.size()) {
         buffer_.clear();
         offset_ = 0;
@@ -256,30 +256,30 @@ std::optional<Frame> Decoder::next() {
 
     if (!known_type(h[0])) {
         error_ = Error::protocol_error;
-        detail_ = "type de trame inconnu 0x" + to_hex(h, 1);
+        detail_ = "unknown frame type 0x" + to_hex(h, 1);
         return std::nullopt;
     }
     if (h[2] != 0 || h[3] != 0) {
         error_ = Error::protocol_error;
-        detail_ = "champ réservé non nul";
+        detail_ = "non-zero reserved field";
         return std::nullopt;
     }
     const auto type = static_cast<FrameType>(h[0]);
     const std::uint32_t length = get_u32(h + 4);
     if (length > kMaxPayload) {
         error_ = Error::frame_too_large;
-        detail_ = "trame de " + std::to_string(length) + " octets";
+        detail_ = "frame of " + std::to_string(length) + " bytes";
         return std::nullopt;
     }
     if (!valid_size(type, length)) {
         error_ = Error::protocol_error;
-        detail_ = "taille " + std::to_string(length) + " invalide pour " + std::string(to_string(type));
+        detail_ = "invalid size " + std::to_string(length) + " for " + std::string(to_string(type));
         return std::nullopt;
     }
     if (available < kHeaderSize + length) return std::nullopt;
     if (type == FrameType::open && (h[kHeaderSize + 18] < 1 || h[kHeaderSize + 18] > 3)) {
         error_ = Error::protocol_error;
-        detail_ = "type de port inconnu dans OPEN";
+        detail_ = "unknown port type in OPEN";
         return std::nullopt;
     }
 

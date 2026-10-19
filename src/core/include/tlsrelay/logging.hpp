@@ -9,20 +9,20 @@
 #include <string>
 #include <string_view>
 
-// Journalisation (SPEC §9). Deux catégories : « activity » (connexions, canaux)
-// et « config » (chargements, rechargements, opérations d'administration).
-// Ne jamais y écrire de clé, de jeton ni de contenu relayé.
+// Logging (SPEC §9). Two categories: "activity" (connections, channels)
+// and "config" (loads, reloads, administration operations).
+// Never write keys, tokens or relayed content to them.
 namespace tlsrelay::logging {
 
 enum class Category { activity, config };
 
-// Journalisation minimale (stderr, niveau info) utilisable avant le chargement
-// de la configuration. Appelée implicitement au premier accès.
+// Minimal logging (stderr, info level) usable before the configuration
+// is loaded. Called implicitly on first access.
 void init_default();
 
-// Applique la configuration. cli_level, s'il est présent (-q, -v, -vv),
-// remplace le niveau global et ceux des catégories.
-// Lève std::runtime_error si la sortie ne peut pas être ouverte.
+// Applies the configuration. cli_level, if present (-q, -v, -vv),
+// replaces the global level and the category levels.
+// Throws std::runtime_error if the output cannot be opened.
 void init(const LogConfig& cfg, std::optional<LogLevel> cli_level = std::nullopt);
 
 spdlog::logger& activity();
@@ -31,20 +31,20 @@ spdlog::logger& config();
 void set_level(Category cat, LogLevel level);
 LogLevel level(Category cat);
 
-// « niveau » (les deux catégories) ou « catégorie=niveau ». Retourne un
-// message d'erreur, vide en cas de succès.
+// "level" (both categories) or "category=level". Returns an
+// error message, empty on success.
 std::string apply_level_spec(std::string_view spec);
 
-// Rouvre le fichier de log (après une rotation externe). Faux si la sortie est stderr.
-// Lève std::runtime_error si le fichier ne peut pas être rouvert (l'ancien reste utilisé).
+// Reopens the log file (after an external rotation). False if the output is stderr.
+// Throws std::runtime_error if the file cannot be reopened (the old one stays in use).
 bool reopen();
 
-// Sortie courante : "stderr" ou chemin du fichier.
+// Current output: "stderr" or the file path.
 std::string output();
 
 spdlog::level::level_enum to_spdlog(LogLevel level);
 
-// Format JSON : une ligne par événement {"ts","level","cat","msg"}.
+// JSON format: one line per event {"ts","level","cat","msg"}.
 std::unique_ptr<spdlog::formatter> make_json_formatter();
 std::string json_escape(std::string_view text);
 

@@ -1,5 +1,5 @@
-# Paquet RPM tlsrelay : compte système, répertoire de configuration ; après une
-# mise à jour ($1 = 2), instances en service relancées avec le nouveau binaire.
+# tlsrelay RPM package: system account, configuration directory; after an
+# upgrade ($1 = 2), running instances are restarted with the new binary.
 getent group tlsrelay >/dev/null || groupadd --system tlsrelay
 getent passwd tlsrelay >/dev/null ||
     useradd --system --gid tlsrelay --no-create-home --home-dir /nonexistent --shell /sbin/nologin tlsrelay

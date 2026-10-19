@@ -12,7 +12,7 @@ struct PkiOptions {
     std::string client_subject = "CN=client.test,O=tlsrelay-test";
 };
 
-// Crée la PKI de test (ou, si elle existe, une nouvelle génération activée).
+// Creates the test PKI (or, if it exists, a new activated generation).
 int run_pki(const PkiOptions& options);
 
 }  // namespace testkit

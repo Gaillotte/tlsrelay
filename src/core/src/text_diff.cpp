@@ -24,7 +24,7 @@ std::vector<std::string_view> split_lines(std::string_view text) {
 std::vector<DiffLine> diff_lines(std::string_view before, std::string_view after) {
     const auto a = split_lines(before);
     const auto b = split_lines(after);
-    // Préfixe et suffixe communs mis à part : la table ne couvre que la zone modifiée.
+    // Common prefix and suffix set aside: the table only covers the modified area.
     std::size_t head = 0;
     while (head < a.size() && head < b.size() && a[head] == b[head]) ++head;
     std::size_t tail = 0;
@@ -32,7 +32,7 @@ std::vector<DiffLine> diff_lines(std::string_view before, std::string_view after
     const std::size_t n = a.size() - head - tail;
     const std::size_t m = b.size() - head - tail;
 
-    // lcs[i][j] : longueur de la plus longue sous-suite commune de a[i..] et b[j..] (zone modifiée).
+    // lcs[i][j]: length of the longest common subsequence of a[i..] and b[j..] (modified area).
     std::vector<std::uint32_t> lcs((n + 1) * (m + 1), 0);
     auto at = [&](std::size_t i, std::size_t j) -> std::uint32_t& { return lcs[i * (m + 1) + j]; };
     for (std::size_t i = n; i-- > 0;) {

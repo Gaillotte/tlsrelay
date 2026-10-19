@@ -1,4 +1,4 @@
-// Format des trames du protocole de tunnel (SPEC §4.1, §4.2).
+// Frame format of the tunnel protocol (SPEC §4.1, §4.2).
 
 #include "tlsrelay/tunnel/frame.hpp"
 
@@ -57,29 +57,29 @@ TEST(Frame, RoundTripOfEveryType) {
     resume.session = open.session;
     resume.token.fill(0xab);
     resume.last_rx_seq = 123456789;
-    const std::string payload = "données utiles";
+    const std::string payload = "payload bytes";
 
-    const std::string all = encode_open(open) + encode_open_ok() + encode_open_fail(4, "injoignable") +
+    const std::string all = encode_open(open) + encode_open_ok() + encode_open_fail(4, "unreachable") +
                             encode_data(7, payload.data(), payload.size()) + encode_ack(7) + encode_shutdown_wr(9) +
-                            encode_close(0, "fin") + encode_resume(resume) + encode_resumed(42) +
+                            encode_close(0, "end") + encode_resume(resume) + encode_resumed(42) +
                             encode_resume_fail(9) + encode_ping(1) + encode_pong(2);
 
     for (std::size_t step : {std::size_t{0}, std::size_t{1}, std::size_t{5}}) {
         const auto frames = decode_all(all, step);
-        ASSERT_EQ(frames.size(), 12u) << "pas=" << step;
+        ASSERT_EQ(frames.size(), 12u) << "step=" << step;
         const auto o = read_open(frames[0]);
         EXPECT_EQ(o.version, kVersion);
         EXPECT_EQ(o.session, open.session);
         EXPECT_EQ(o.port, PortKind::mtls);
         EXPECT_EQ(frames[1].type, FrameType::open_ok);
         EXPECT_EQ(read_status(frames[2]).code, 4);
-        EXPECT_EQ(read_status(frames[2]).message, "injoignable");
+        EXPECT_EQ(read_status(frames[2]).message, "unreachable");
         const auto d = read_data(frames[3]);
         EXPECT_EQ(d.seq, 7u);
         EXPECT_EQ(std::string(reinterpret_cast<const char*>(d.bytes), d.size), payload);
         EXPECT_EQ(read_u64(frames[4]), 7u);
         EXPECT_EQ(read_u64(frames[5]), 9u);
-        EXPECT_EQ(read_status(frames[6]).message, "fin");
+        EXPECT_EQ(read_status(frames[6]).message, "end");
         const auto r = read_resume(frames[7]);
         EXPECT_EQ(r.session, resume.session);
         EXPECT_EQ(r.token, resume.token);
@@ -98,11 +98,11 @@ TEST(Frame, StatusMessageIsTruncated) {
 }
 
 TEST(Frame, StatusMessageControlCharactersAreEscaped) {
-    // Message venu de l'autre tlsrelay, destiné aux journaux : pas de nouvelle ligne
-    // ni de séquence d'échappement de terminal.
-    const auto f = decode_all(encode_close(6, "fin\n2026-01-01 info  [config] faux\x1b[31m\\"));
+    // Message coming from the other tlsrelay, meant for the logs: no newline
+    // and no terminal escape sequence.
+    const auto f = decode_all(encode_close(6, "end\n2026-01-01 info  [config] fake\x1b[31m\\"));
     ASSERT_EQ(f.size(), 1u);
-    EXPECT_EQ(read_status(f[0]).message, "fin\\x0a2026-01-01 info  [config] faux\\x1b[31m\\x5c");
+    EXPECT_EQ(read_status(f[0]).message, "end\\x0a2026-01-01 info  [config] fake\\x1b[31m\\x5c");
 }
 
 TEST(Frame, WaitsForCompleteFrame) {
@@ -118,7 +118,7 @@ TEST(Frame, WaitsForCompleteFrame) {
 TEST(Frame, RejectsUnknownType) {
     std::string detail;
     EXPECT_EQ(decode_error(header(0x7f, 0), &detail), Decoder::Error::protocol_error);
-    EXPECT_NE(detail.find("inconnu"), std::string::npos) << detail;
+    EXPECT_NE(detail.find("unknown"), std::string::npos) << detail;
 }
 
 TEST(Frame, RejectsNonZeroReservedField) {
@@ -126,14 +126,14 @@ TEST(Frame, RejectsNonZeroReservedField) {
 }
 
 TEST(Frame, RejectsOversizedFrameFromHeaderAlone) {
-    // L'erreur est détectée dès l'en-tête, sans attendre (ni stocker) la charge utile.
+    // The error is detected from the header alone, without waiting for (or storing) the payload.
     EXPECT_EQ(decode_error(header(0x10, kMaxPayload + 1)), Decoder::Error::frame_too_large);
 }
 
 TEST(Frame, RejectsSizeInconsistentWithType) {
-    EXPECT_EQ(decode_error(header(0x02, 1) + "x"), Decoder::Error::protocol_error);              // OPEN_OK non vide
-    EXPECT_EQ(decode_error(header(0x11, 4) + "abcd"), Decoder::Error::protocol_error);           // ACK court
-    EXPECT_EQ(decode_error(header(0x10, 8) + std::string(8, '\0')), Decoder::Error::protocol_error);  // DATA vide
+    EXPECT_EQ(decode_error(header(0x02, 1) + "x"), Decoder::Error::protocol_error);              // non-empty OPEN_OK
+    EXPECT_EQ(decode_error(header(0x11, 4) + "abcd"), Decoder::Error::protocol_error);           // short ACK
+    EXPECT_EQ(decode_error(header(0x10, 8) + std::string(8, '\0')), Decoder::Error::protocol_error);  // empty DATA
     EXPECT_EQ(decode_error(header(0x10, 8 + kMaxData + 1) + std::string(8 + kMaxData + 1, 'x')),
               Decoder::Error::protocol_error);
 }
@@ -141,7 +141,7 @@ TEST(Frame, RejectsSizeInconsistentWithType) {
 TEST(Frame, RejectsUnknownPortKindInOpen) {
     std::string payload(19, '\0');
     payload[1] = 1;   // version
-    payload[18] = 4;  // type de port inconnu
+    payload[18] = 4;  // unknown port type
     EXPECT_EQ(decode_error(header(0x01, 19) + payload), Decoder::Error::protocol_error);
 }
 
@@ -156,7 +156,7 @@ TEST(Frame, ErrorIsFinal) {
     EXPECT_EQ(d.error(), Decoder::Error::protocol_error);
 }
 
-// Noms journalisés des trames et des codes de fermeture (SPEC §4.2, §4.6).
+// Logged names of the frames and of the close codes (SPEC §4.2, §4.6).
 TEST(Frame, NamesOfEveryTypeAndCode) {
     const std::vector<std::pair<FrameType, std::string_view>> types = {
         {FrameType::open, "OPEN"},         {FrameType::open_ok, "OPEN_OK"},
@@ -184,22 +184,22 @@ TEST(Frame, NamesOfEveryTypeAndCode) {
     EXPECT_EQ(to_string(static_cast<CloseCode>(999)), "?");
 }
 
-// Chaque type refuse toute taille autre que la sienne (SPEC §4.2).
+// Each type refuses any size other than its own (SPEC §4.2).
 TEST(Frame, RejectsWrongSizeForEachType) {
     const std::vector<std::pair<std::uint8_t, std::uint32_t>> wrong = {
-        {0x01, 18}, {0x01, 20},          // OPEN : 19
-        {0x02, 1},                       // OPEN_OK : vide
-        {0x03, 1},  {0x03, 2 + 257},     // OPEN_FAIL : 2 à 258
-        {0x10, 8},                       // DATA : au moins un octet de données
+        {0x01, 18}, {0x01, 20},          // OPEN: 19
+        {0x02, 1},                       // OPEN_OK: empty
+        {0x03, 1},  {0x03, 2 + 257},     // OPEN_FAIL: 2 to 258
+        {0x10, 8},                       // DATA: at least one data byte
         {0x11, 7},  {0x12, 9},  {0x13, 1}, {0x20, 55},
         {0x21, 0},  {0x22, 3},  {0x30, 4}, {0x31, 16}};
     for (const auto& [type, size] : wrong) {
         std::string detail;
         EXPECT_EQ(decode_error(header(type, size) + std::string(size, '\0'), &detail), Decoder::Error::protocol_error)
-            << "type 0x" << std::hex << int(type) << " taille " << std::dec << size;
-        EXPECT_NE(detail.find("invalide pour"), std::string::npos) << detail;
+            << "type 0x" << std::hex << int(type) << " size " << std::dec << size;
+        EXPECT_NE(detail.find("invalid size"), std::string::npos) << detail;
     }
-    // Type de port hors de 1..3 dans OPEN.
+    // Port type outside 1..3 in OPEN.
     for (const std::uint8_t kind : {std::uint8_t{0}, std::uint8_t{4}}) {
         std::string open = header(0x01, 19) + std::string("\x00\x01", 2) + std::string(16, 'x');
         open += static_cast<char>(kind);
@@ -207,7 +207,7 @@ TEST(Frame, RejectsWrongSizeForEachType) {
     }
 }
 
-// Plus de 64 Kio consommés : le tampon interne est compacté sans perdre de trame.
+// More than 64 KiB consumed: the internal buffer is compacted without losing a frame.
 TEST(Frame, DecoderCompactsLargeBuffers) {
     std::string stream;
     std::vector<std::string> payloads;
@@ -215,7 +215,7 @@ TEST(Frame, DecoderCompactsLargeBuffers) {
         payloads.emplace_back(4000 + static_cast<std::size_t>(i), static_cast<char>('a' + i % 26));
         stream += encode_data(static_cast<std::uint64_t>(i + 1), payloads.back().data(), payloads.back().size());
     }
-    // Morceaux de taille impaire : la plupart des appels laissent une trame incomplète.
+    // Odd-sized chunks: most calls leave an incomplete frame.
     const auto frames = decode_all(stream, 1531);
     ASSERT_EQ(frames.size(), payloads.size());
     for (std::size_t i = 0; i < frames.size(); ++i) {

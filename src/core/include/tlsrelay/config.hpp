@@ -27,10 +27,10 @@ std::optional<LogLevel> parse_log_level(std::string_view text);
 
 struct LogConfig {
     LogLevel level = LogLevel::info;
-    std::optional<LogLevel> activity;  // surcharge du niveau pour la catégorie activity
-    std::optional<LogLevel> config;    // surcharge du niveau pour la catégorie config
+    std::optional<LogLevel> activity;  // level override for the activity category
+    std::optional<LogLevel> config;    // level override for the config category
     LogFormat format = LogFormat::text;
-    std::string output = "stderr";     // "stderr" ou chemin de fichier
+    std::string output = "stderr";     // "stderr" or a file path
 
     bool operator==(const LogConfig&) const = default;
 };
@@ -50,8 +50,8 @@ struct Limits {
     Duration renegotiation_grace = std::chrono::seconds(30);
     std::uint64_t resume_buffer = 4ULL << 20;
     Duration handshake_timeout = std::chrono::seconds(10);
-    // PING si rien n'est reçu pendant cet intervalle ; transport déclaré mort
-    // après 3 intervalles sans aucune trame. 0 : désactivé.
+    // PING if nothing is received during this interval; transport declared dead
+    // after 3 intervals without any frame. 0: disabled.
     Duration keepalive_interval = std::chrono::seconds(15);
     std::uint32_t max_channels = 5000;
     Duration shutdown_timeout = std::chrono::seconds(30);
@@ -61,8 +61,8 @@ struct Limits {
 
 struct PortConfig {
     Endpoint listen;
-    std::optional<Endpoint> upstream;        // mode client uniquement
-    std::optional<std::string> server_name;  // mode client, ports tls et mtls
+    std::optional<Endpoint> upstream;        // client mode only
+    std::optional<std::string> server_name;  // client mode, tls and mtls ports
 
     bool operator==(const PortConfig&) const = default;
 };
@@ -83,10 +83,10 @@ struct WhitelistRef {
     bool operator==(const WhitelistRef&) const = default;
 };
 
-// Canal d'administration (SPEC §10) : socket Unix ou named pipe.
+// Administration channel (SPEC §10): Unix socket or named pipe.
 struct AdminConfig {
     bool enabled = true;
-    std::optional<std::string> endpoint;  // défaut : default_admin_endpoint(instance)
+    std::optional<std::string> endpoint;  // default: default_admin_endpoint(instance)
 
     bool operator==(const AdminConfig&) const = default;
 };
@@ -98,9 +98,9 @@ struct Config {
     std::optional<Credentials> credentials;
     Limits limits;
     std::map<PortKind, PortConfig> ports;
-    std::optional<std::string> source_address;  // mode client
-    std::optional<Destination> destination;     // mode serveur
-    std::optional<WhitelistRef> whitelist;      // mode serveur
+    std::optional<std::string> source_address;  // client mode
+    std::optional<Destination> destination;     // server mode
+    std::optional<WhitelistRef> whitelist;      // server mode
     AdminConfig admin;
 
     bool operator==(const Config&) const = default;
@@ -108,15 +108,15 @@ struct Config {
 
 bool valid_instance_name(std::string_view name);
 
-// Problème détecté dans une configuration. path suit la structure du YAML,
-// par exemple "ports.plain.listen".
+// Problem found in a configuration. path follows the YAML structure,
+// for example "ports.plain.listen".
 struct Issue {
     std::string path;
     std::string message;
 };
 
 struct LoadResult {
-    std::optional<Config> config;  // présent seulement si errors est vide
+    std::optional<Config> config;  // present only if errors is empty
     std::vector<Issue> errors;
     std::vector<Issue> warnings;
 };
@@ -124,13 +124,13 @@ struct LoadResult {
 LoadResult load_config_string(std::string_view yaml);
 LoadResult load_config_file(const std::filesystem::path& path);
 
-// Écriture normalisée d'une configuration (éditeur tlsrelay-admin) : sections
-// dans l'ordre de la SPEC, valeurs égales aux valeurs par défaut omises. Relu
-// par load_config_string, le texte redonne une configuration égale. header :
-// commentaire placé en tête, une ligne par ligne de texte.
+// Normalized writing of a configuration (tlsrelay-admin editor): sections
+// in SPEC order, values equal to the defaults omitted. Read back by
+// load_config_string, the text yields an equal configuration. header:
+// comment placed at the top, one comment line per line of text.
 std::string to_yaml(const Config& cfg, std::string_view header = {});
 
-// Règles de cohérence (SPEC §8.3). Partagées avec l'éditeur tlsrelay-admin.
+// Consistency rules (SPEC §8.3). Shared with the tlsrelay-admin editor.
 void validate(const Config& cfg, std::vector<Issue>& errors, std::vector<Issue>& warnings);
 
 }  // namespace tlsrelay

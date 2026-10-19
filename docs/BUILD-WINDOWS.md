@@ -1,7 +1,7 @@
 # tlsrelay — Building and testing on Windows
 
 > Complete guide for developers: install the tools, get the sources, compile the relay, the test tool and the editor, run every test that exists on Windows, build and test the MSI package.
-> Audience: a developer starting from a clean Windows 10/11 machine. For installing the delivered MSI on a target machine, see [INSTALLATION.md](INSTALLATION.md); for operating instances, [EXPLOITATION.md](EXPLOITATION.md).
+> Audience: a developer starting from a clean Windows 10/11 machine. For installing the delivered MSI on a target machine, see [INSTALLATION.md](INSTALLATION.md); for operating instances, [OPERATIONS.md](OPERATIONS.md).
 > Everything below is what the Windows CI jobs do (`.github/workflows/ci.yml`, jobs "Windows MSVC Release" and "Windows MSVC /analyze"); the same versions are used.
 
 ## Contents
@@ -182,10 +182,8 @@ Check the result:
 ```powershell
 .\build\windows-msvc\src\app\Release\tlsrelay.exe version
 # tlsrelay 0.1.0
-# bibliothèque : OpenSSL 3.5.x …
+# library: OpenSSL 3.5.x …
 ```
-
-The project's messages and logs are in French; the commands and options are the same as in the documentation.
 
 ### 4.2 With the editor
 
@@ -293,13 +291,13 @@ The service is uninstalled at the end, also on failure.
 
 ### 5.5 Automated acceptance scenarios (console mode)
 
-The acceptance kit runs the business scenarios R01–R12 ([RECETTE.md](RECETTE.md)): PKI built by the mini-CA, concurrent channels on the three ports, throughput and latency, whitelist reload, network cuts, renegotiation, PKI rotation, three-step root change, logging, administration, lifecycle. In console mode the relays run as processes of your session:
+The acceptance kit runs the business scenarios R01–R12 ([ACCEPTANCE.md](ACCEPTANCE.md)): PKI built by the mini-CA, concurrent channels on the three ports, throughput and latency, whitelist reload, network cuts, renegotiation, PKI rotation, three-step root change, logging, administration, lifecycle. In console mode the relays run as processes of your session:
 
 ```powershell
-.\tools\recette.ps1 -BuildDir build\windows-msvc\src\app\Release -TestkitDir build\windows-msvc\src\testkit\Release -Quick
+.\tools\acceptance.ps1 -BuildDir build\windows-msvc\src\app\Release -TestkitDir build\windows-msvc\src\testkit\Release -Quick
 ```
 
-`-Quick` shortens the durations (about 3 minutes); without it, the full scenarios take about 10 minutes. The report is `recette-<date>\rapport.md` in the current directory. To run the scenarios against Windows services instead, install the MSI first (section 6).
+`-Quick` shortens the durations (about 3 minutes); without it, the full scenarios take about 10 minutes. The report is `acceptance-<date>\report.md` in the current directory. To run the scenarios against Windows services instead, install the MSI first (section 6).
 
 ### 5.6 The editor by hand
 
@@ -309,7 +307,7 @@ $env:PATH = "$env:QT_ROOT_DIR\bin;$env:PATH"
 .\build\windows-msvc\src\admin\Release\tlsrelay-admin.exe --check examples\server.yaml; $LASTEXITCODE   # 0 valid, 1 invalid, 2 unreadable
 ```
 
-The editor's manual acceptance steps are E01–E10 in [RECETTE.md](RECETTE.md); its user guide is [EDITEUR.md](EDITEUR.md).
+The editor's manual acceptance steps are E01–E10 in [ACCEPTANCE.md](ACCEPTANCE.md); its user guide is [EDITOR.md](EDITOR.md).
 
 ### 5.7 Before pushing
 
@@ -353,12 +351,12 @@ Start-Process msiexec -ArgumentList "/i `"$msi`" /qn ADDLOCAL=ALL /l*v `"$env:TE
 & "$env:ProgramFiles\tlsrelay\bin\tlsrelay-admin.exe" --check C:\src\tlsrelay\examples\client.yaml; $LASTEXITCODE
 
 # Acceptance scenarios with the installed binaries running as Windows services
-.\tools\recette.ps1 -BuildDir "$env:ProgramFiles\tlsrelay\bin" -Services -Quick -WorkDir "$env:ProgramData\tlsrelay\recette-dev"
+.\tools\acceptance.ps1 -BuildDir "$env:ProgramFiles\tlsrelay\bin" -Services -Quick -WorkDir "$env:ProgramData\tlsrelay\acceptance-dev"
 
 Start-Process msiexec -ArgumentList "/x `"$msi`" /qn" -Wait   # uninstall
 ```
 
-`-Services` installs the instances `rc-server` and `rc-client` as services under their virtual accounts with restricted file permissions, runs the scenarios and uninstalls them (add `-Keep` to leave them running for the manual steps of [RECETTE.md](RECETTE.md)). Installation options for target machines are in [INSTALLATION.md](INSTALLATION.md).
+`-Services` installs the instances `rc-server` and `rc-client` as services under their virtual accounts with restricted file permissions, runs the scenarios and uninstalls them (add `-Keep` to leave them running for the manual steps of [ACCEPTANCE.md](ACCEPTANCE.md)). Installation options for target machines are in [INSTALLATION.md](INSTALLATION.md).
 
 ## 7. Static analysis (MSVC /analyze)
 
@@ -423,7 +421,7 @@ ctest --preset windows-release -j 2
 .\tools\check-hardening.ps1 build\windows-msvc\src\app\Release\tlsrelay.exe build\windows-msvc\src\testkit\Release\tlsrelay-testkit.exe
 .\tests\lifecycle\windows-pki.ps1 -BuildDir build\windows-msvc\src\app\Release
 .\tests\lifecycle\windows-service.ps1 -BuildDir build\windows-msvc\src\app\Release        # administrator
-.\tools\recette.ps1 -BuildDir build\windows-msvc\src\app\Release -TestkitDir build\windows-msvc\src\testkit\Release -Quick
+.\tools\acceptance.ps1 -BuildDir build\windows-msvc\src\app\Release -TestkitDir build\windows-msvc\src\testkit\Release -Quick
 
 # Package
 cd build\windows-msvc; cpack -C Release -G WIX; cd ..\..

@@ -1,4 +1,4 @@
-// Chargeur de configuration (SPEC §8) : YAML arbitraire.
+// Configuration loader (SPEC §8): arbitrary YAML.
 #include "tlsrelay/config.hpp"
 
 #include <cstddef>

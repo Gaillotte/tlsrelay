@@ -39,7 +39,7 @@ bool has_error(const LoadResult& r, const std::string& path, const std::string& 
 
 std::string dump(const LoadResult& r) {
     std::string s;
-    for (const auto& e : r.errors) s += e.path + " : " + e.message + "\n";
+    for (const auto& e : r.errors) s += e.path + ": " + e.message + "\n";
     return s;
 }
 
@@ -60,7 +60,7 @@ TEST(Config, LoadsValidClient) {
     EXPECT_DOUBLE_EQ(c.limits.session_jitter, 0.05);
     EXPECT_EQ(c.limits.resume_buffer, 1u << 20);
     EXPECT_EQ(c.limits.max_channels, 100u);
-    EXPECT_EQ(c.limits.shutdown_timeout, Duration(30s));  // valeur par défaut
+    EXPECT_EQ(c.limits.shutdown_timeout, Duration(30s));  // default value
     ASSERT_EQ(c.ports.size(), 2u);
     EXPECT_EQ(c.ports.at(PortKind::plain).listen, (Endpoint{"127.0.0.1", 7001}));
     EXPECT_EQ(c.ports.at(PortKind::tls).upstream, (Endpoint{"relay.example", 9002}));
@@ -94,7 +94,7 @@ TEST(Config, ReportsYamlSyntaxErrorWithPosition) {
     const auto r = load_config_string("mode: client\nports: [unclosed\n");
     ASSERT_FALSE(r.config);
     ASSERT_EQ(r.errors.size(), 1u);
-    EXPECT_NE(r.errors[0].path.find("ligne"), std::string::npos);
+    EXPECT_NE(r.errors[0].path.find("line"), std::string::npos);
 }
 
 TEST(Config, RejectsUnknownKeysAtEveryLevel) {
@@ -105,9 +105,9 @@ limits: { idle_timout: 5m }
 ports:
   plain: { listen: "127.0.0.1:7001", upstream: "h:1", extra: 1 }
 )");
-    EXPECT_TRUE(has_error(r, "colour", "clé inconnue")) << dump(r);
-    EXPECT_TRUE(has_error(r, "limits.idle_timout", "clé inconnue")) << dump(r);
-    EXPECT_TRUE(has_error(r, "ports.plain.extra", "clé inconnue")) << dump(r);
+    EXPECT_TRUE(has_error(r, "colour", "unknown key")) << dump(r);
+    EXPECT_TRUE(has_error(r, "limits.idle_timout", "unknown key")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports.plain.extra", "unknown key")) << dump(r);
 }
 
 TEST(Config, CollectsAllFormatErrors) {
@@ -119,20 +119,20 @@ ports:
   plain: { listen: "127.0.0.1", upstream: "h:1" }
 )");
     EXPECT_TRUE(has_error(r, "mode")) << dump(r);
-    EXPECT_TRUE(has_error(r, "limits.idle_timeout", "durée invalide")) << dump(r);
-    EXPECT_TRUE(has_error(r, "limits.session_jitter", "pourcentage")) << dump(r);
-    EXPECT_TRUE(has_error(r, "limits.resume_buffer", "taille")) << dump(r);
+    EXPECT_TRUE(has_error(r, "limits.idle_timeout", "invalid duration")) << dump(r);
+    EXPECT_TRUE(has_error(r, "limits.session_jitter", "percentage")) << dump(r);
+    EXPECT_TRUE(has_error(r, "limits.resume_buffer", "size")) << dump(r);
     EXPECT_TRUE(has_error(r, "limits.max_channels")) << dump(r);
     EXPECT_TRUE(has_error(r, "logging.level")) << dump(r);
     EXPECT_TRUE(has_error(r, "logging.format")) << dump(r);
-    EXPECT_TRUE(has_error(r, "ports.plain.listen", "adresse invalide")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports.plain.listen", "invalid address")) << dump(r);
     EXPECT_GE(r.errors.size(), 8u);
 }
 
 TEST(Config, RequiresModeAndListen) {
     const auto r = load_config_string("ports: { plain: { upstream: \"h:1\" } }");
-    EXPECT_TRUE(has_error(r, "mode", "obligatoire")) << dump(r);
-    EXPECT_TRUE(has_error(r, "ports.plain.listen", "obligatoire")) << dump(r);
+    EXPECT_TRUE(has_error(r, "mode", "required")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports.plain.listen", "required")) << dump(r);
 }
 
 TEST(Config, RejectsSectionWithWrongType) {
@@ -149,10 +149,10 @@ ports:
   plain: { listen: "127.0.0.1:7001", server_name: x }
   tls:   { listen: "127.0.0.1:7002", upstream: "h:0" }
 )");
-    EXPECT_TRUE(has_error(r, "ports.plain.upstream", "obligatoire")) << dump(r);
-    EXPECT_TRUE(has_error(r, "ports.plain.server_name", "sans objet")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports.plain.upstream", "required")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports.plain.server_name", "not applicable")) << dump(r);
     EXPECT_TRUE(has_error(r, "ports.tls.upstream", "1–65535")) << dump(r);
-    EXPECT_TRUE(has_error(r, "destination", "sans objet")) << dump(r);
+    EXPECT_TRUE(has_error(r, "destination", "not applicable")) << dump(r);
     EXPECT_TRUE(has_error(r, "source_address")) << dump(r);
     EXPECT_TRUE(has_error(r, "credentials.pki_root", "tls")) << dump(r);
 }
@@ -164,11 +164,11 @@ source_address: 127.0.0.1
 ports:
   plain: { listen: "0.0.0.0:9001", upstream: "h:1", server_name: x }
 )");
-    EXPECT_TRUE(has_error(r, "destination", "obligatoire")) << dump(r);
-    EXPECT_TRUE(has_error(r, "whitelist", "obligatoire")) << dump(r);
-    EXPECT_TRUE(has_error(r, "ports.plain.upstream", "sans objet")) << dump(r);
-    EXPECT_TRUE(has_error(r, "ports.plain.server_name", "sans objet")) << dump(r);
-    EXPECT_TRUE(has_error(r, "source_address", "sans objet")) << dump(r);
+    EXPECT_TRUE(has_error(r, "destination", "required")) << dump(r);
+    EXPECT_TRUE(has_error(r, "whitelist", "required")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports.plain.upstream", "not applicable")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports.plain.server_name", "not applicable")) << dump(r);
+    EXPECT_TRUE(has_error(r, "source_address", "not applicable")) << dump(r);
 }
 
 TEST(Validate, DestinationRules) {
@@ -192,13 +192,13 @@ ports:
   tls:   { listen: "127.0.0.1:9001" }
   mtls:  { listen: "relay.example:9003" }
 )");
-    EXPECT_TRUE(has_error(r, "ports.tls.listen", "même adresse")) << dump(r);
-    EXPECT_TRUE(has_error(r, "ports.mtls.listen", "adresse IP")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports.tls.listen", "same listen address")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports.mtls.listen", "IP address")) << dump(r);
 }
 
 TEST(Validate, RequiresAtLeastOnePort) {
     const auto r = load_config_string("mode: client\n");
-    EXPECT_TRUE(has_error(r, "ports", "aucun port")) << dump(r);
+    EXPECT_TRUE(has_error(r, "ports", "no port")) << dump(r);
 }
 
 TEST(Validate, LimitsCoherence) {
@@ -218,16 +218,16 @@ ports: { plain: { listen: "127.0.0.1:7001", upstream: "h:1" } }
 TEST(Validate, InstanceNameAndLogOutput) {
     const auto r = load_config_string(R"(
 mode: client
-instance: "nom avec espaces"
+instance: "name with spaces"
 logging: { output: syslog }
 ports: { plain: { listen: "127.0.0.1:7001", upstream: "h:1" } }
 )");
     EXPECT_TRUE(has_error(r, "instance")) << dump(r);
-    EXPECT_TRUE(has_error(r, "logging.output", "pas encore")) << dump(r);
+    EXPECT_TRUE(has_error(r, "logging.output", "not yet")) << dump(r);
 }
 
 TEST(Validate, ProgrammaticConfigUsesSameRules) {
-    // L'éditeur construit la configuration sans YAML : même validation.
+    // The editor builds the configuration without YAML: same validation.
     Config c;
     c.mode = Mode::server;
     c.ports[PortKind::plain].listen = Endpoint{"0.0.0.0", 9001};
@@ -238,7 +238,7 @@ TEST(Validate, ProgrammaticConfigUsesSameRules) {
     EXPECT_EQ(errors[1].path, "whitelist");
 }
 
-// Valeurs par défaut de SPEC §5.2 et §10.1 (CT-13).
+// Default values of SPEC §5.2 and §10.1 (CT-13).
 TEST(Config, DefaultsMatchSpecification) {
     const Limits l;
     EXPECT_EQ(l.idle_timeout, Duration(5min));
@@ -259,28 +259,28 @@ TEST(Config, DefaultsMatchSpecification) {
     EXPECT_EQ(d.dial_backoff, Duration(1s));
 }
 
-// Erreurs des sections destination, liste blanche et administration (CT-13).
+// Errors of the destination, whitelist and administration sections (CT-13).
 TEST(Config, DestinationAndWhitelistSectionErrors) {
     const auto r = load_config_string(R"(
 mode: server
 destination: { port: 70000 }
-whitelist: { file: wl.yaml, revoke_mode: plus_tard }
+whitelist: { file: wl.yaml, revoke_mode: later }
 admin: { endpoint: "" }
 ports: { plain: { listen: "0.0.0.0:9001" } }
 )");
-    EXPECT_TRUE(has_error(r, "destination.address", "obligatoire")) << dump(r);
+    EXPECT_TRUE(has_error(r, "destination.address", "required")) << dump(r);
     EXPECT_TRUE(has_error(r, "destination.port", "1–65535")) << dump(r);
-    EXPECT_TRUE(has_error(r, "whitelist.revoke_mode", "immediate ou next_renegotiation")) << dump(r);
+    EXPECT_TRUE(has_error(r, "whitelist.revoke_mode", "immediate or next_renegotiation")) << dump(r);
 
     const auto missing = load_config_string(R"(
 mode: server
 destination: { address: 10.0.0.1 }
 ports: { plain: { listen: "0.0.0.0:9001" } }
 )");
-    EXPECT_TRUE(has_error(missing, "destination.port", "obligatoire")) << dump(missing);
+    EXPECT_TRUE(has_error(missing, "destination.port", "required")) << dump(missing);
 }
 
-// Chaque borne de SPEC §5.2 et §8.3 non couverte ailleurs donne exactement son erreur (CT-13).
+// Each bound of SPEC §5.2 and §8.3 not covered elsewhere gives exactly its own error (CT-13).
 TEST(Validate, EveryLimitBound) {
     auto base = [] {
         Config c;
@@ -332,7 +332,7 @@ TEST(Validate, EveryLimitBound) {
             }
         }
     }
-    // keepalive_interval à 0 : désactivé, accepté.
+    // keepalive_interval at 0: disabled, accepted.
     auto off = base();
     off.limits.keepalive_interval = Duration(0);
     EXPECT_TRUE(errors_of(off).empty());

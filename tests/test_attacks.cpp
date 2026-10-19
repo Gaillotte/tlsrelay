@@ -1,8 +1,8 @@
-// Campagne de sécurité (phase 10, PLAN §5.4) : cas d'attaque automatisés qui
-// complètent ceux des phases précédentes (TLS 1.2, ALPN, autre PKI, mauvais
-// usage, jeton rejoué ou falsifié, trame inconnue : test_tls, test_mtls,
-// test_tunnel). Chaque test vérifie le refus et l'absence d'effet : rien
-// n'atteint la destination ni le faux serveur.
+// Security campaign (phase 10, PLAN §5.4): automated attack cases that
+// complement those of the previous phases (TLS 1.2, ALPN, other PKI, wrong
+// usage, replayed or forged token, unknown frame: test_tls, test_mtls,
+// test_tunnel). Each test checks the refusal and the absence of effect: nothing
+// reaches the destination or the fake server.
 
 #include "support/net_helpers.hpp"
 #include "support/raw_tls_client.hpp"
@@ -33,11 +33,11 @@ protected:
     void SetUp() override {
         write_generation(server_pki(), "v1", server_files(*h_));
         write_generation(client_pki(), "v1", client_files(*h_));
-        std::ofstream(whitelist()) << "peers:\n  - { name: poste, ip: 127.0.0.1, ports: [tls, mtls], subject: \""
+        std::ofstream(whitelist()) << "peers:\n  - { name: workstation, ip: 127.0.0.1, ports: [tls, mtls], subject: \""
                                    << kClientSubject << "\" }\n";
     }
 
-    std::filesystem::path server_pki() const { return dir_ / "serveur"; }
+    std::filesystem::path server_pki() const { return dir_ / "server"; }
     std::filesystem::path client_pki() const { return dir_ / "client"; }
     std::filesystem::path whitelist() const { return dir_ / "whitelist.yaml"; }
 
@@ -64,7 +64,7 @@ protected:
         return c;
     }
 
-    // Certificat client émis par l'AC Clients, valable entre not_before et not_after (secondes depuis maintenant).
+    // Client certificate issued by the Clients CA, valid between not_before and not_after (seconds from now).
     static Issued client_cert(long not_before, long not_after) {
         return make_certificate({.common_name = "client.test",
                                  .usage = Usage::client,
@@ -73,7 +73,7 @@ protected:
                                 &h_->clients_ca);
     }
 
-    // Certificat serveur (relay.test, 127.0.0.1) émis par l'AC Serveurs.
+    // Server certificate (relay.test, 127.0.0.1) issued by the Servers CA.
     static Issued server_cert(Usage usage, long not_before, long not_after) {
         return make_certificate({.common_name = "relay.test",
                                  .usage = usage,
@@ -84,26 +84,26 @@ protected:
                                 &h_->servers_ca);
     }
 
-    // Le serveur refuse le certificat client présenté : la connexion est fermée,
-    // la destination n'est jamais contactée.
+    // The server refuses the presented client certificate: the connection is closed,
+    // the destination is never contacted.
     void expect_client_certificate_refused(const Issued& cert) {
         EchoServer echo;
         RunningService server(server_config(echo.port()));
         RawTlsClient raw(server.port(PortKind::mtls), TLS1_3_VERSION, "tlsrelay/1", h_->root.cert.get(), &cert,
                          h_->clients_ca.cert.get());
-        raw.handshake();  // en TLS 1.3, le refus du serveur arrive après le handshake côté client
+        raw.handshake();  // with TLS 1.3, the server's refusal arrives after the handshake on the client side
         EXPECT_EQ(raw.read(1), "");
         EXPECT_TRUE(eventually([&] { return server.stats().tls_handshake_failures.load() == 1; }));
         EXPECT_EQ(echo.accepted(), 0);
     }
 
-    // Le client tlsrelay refuse le faux serveur : aucune donnée de l'application
-    // ne lui parvient et l'application voit sa connexion fermée.
+    // The tlsrelay client refuses the fake server: no application data
+    // reaches it and the application sees its connection closed.
     void expect_server_certificate_refused(const Issued& cert) {
         RawTlsServer fake(cert, h_->servers_ca.cert.get());
         RunningService client(client_config(fake.port()));
         TestClient app(client.port(PortKind::mtls));
-        app.write("secret de l'application");
+        app.write("application secret");
         EXPECT_TRUE(app.wait_closed(5s));
         EXPECT_GE(client.stats().tls_handshake_failures.load(), 1u);
         EXPECT_EQ(fake.handshakes(), 0);
@@ -134,7 +134,7 @@ std::string to_hex(const std::string& data) {
 
 }  // namespace
 
-// --- Certificats hors de leur période de validité ----------------------------
+// --- Certificates outside their validity period ------------------------------
 
 TEST_F(AttackTest, ServerRejectsExpiredClientCertificate) {
     expect_client_certificate_refused(client_cert(-7200, -3600));
@@ -153,19 +153,19 @@ TEST_F(AttackTest, ClientRejectsNotYetValidServerCertificate) {
 }
 
 TEST_F(AttackTest, ClientRejectsServerPresentingClientCertificate) {
-    // Certificat de l'AC Serveurs, mais à usage client (extendedKeyUsage clientAuth).
+    // Certificate from the Servers CA, but for client use (extendedKeyUsage clientAuth).
     expect_server_certificate_refused(server_cert(Usage::client, -3600, 3600));
 }
 
 TEST_F(AttackTest, ClientSendsNothingToValidFakeServerWithoutTunnelProtocol) {
-    // Avec un certificat valide, le faux serveur obtient le handshake et la trame
-    // OPEN, jamais les données de l'application : elles attendent OPEN_OK.
+    // With a valid certificate, the fake server gets the handshake and the OPEN
+    // frame, never the application data: it waits for OPEN_OK.
     const auto cert = server_cert(Usage::server, -3600, 3600);
     RawTlsServer fake(cert, h_->servers_ca.cert.get());
     {
         RunningService client(client_config(fake.port()));
         TestClient app(client.port(PortKind::mtls));
-        app.write("secret de l'application");
+        app.write("application secret");
         EXPECT_TRUE(eventually([&] { return fake.handshakes() >= 1; }));
         EXPECT_TRUE(eventually([&] { return fake.received() > 0; }));
         std::this_thread::sleep_for(200ms);
@@ -173,10 +173,10 @@ TEST_F(AttackTest, ClientSendsNothingToValidFakeServerWithoutTunnelProtocol) {
     const auto data = fake.data();
     ASSERT_GE(data.size(), tlsrelay::tunnel::kHeaderSize);
     EXPECT_EQ(static_cast<FrameType>(data[0]), FrameType::open);
-    EXPECT_EQ(data.find("secret de l'application"), std::string::npos);
+    EXPECT_EQ(data.find("application secret"), std::string::npos);
 }
 
-// --- Trames du tunnel --------------------------------------------------------
+// --- Tunnel frames -----------------------------------------------------------
 
 TEST_F(AttackTest, DataWithUnexpectedSequenceClosesChannel) {
     EchoServer echo;
@@ -185,7 +185,7 @@ TEST_F(AttackTest, DataWithUnexpectedSequenceClosesChannel) {
     ASSERT_TRUE(raw.handshake());
     TunnelProbe probe(raw);
     ASSERT_TRUE(probe.open(PortKind::tls));
-    ASSERT_TRUE(raw.write(tlsrelay::tunnel::encode_data(5, "abc", 3)));  // seq attendu : 1
+    ASSERT_TRUE(raw.write(tlsrelay::tunnel::encode_data(5, "abc", 3)));  // expected seq: 1
     std::optional<tlsrelay::tunnel::Frame> frame;
     do {
         frame = probe.next();
@@ -202,7 +202,7 @@ TEST_F(AttackTest, OversizedFrameHeaderClosesChannelBeforePayload) {
     ASSERT_TRUE(raw.handshake());
     TunnelProbe probe(raw);
     ASSERT_TRUE(probe.open(PortKind::tls));
-    // En-tête DATA annonçant 1 Gio : refusé dès l'en-tête, sans attendre ni allouer la charge utile.
+    // DATA header announcing 1 GiB: refused from the header alone, without waiting for or allocating the payload.
     ASSERT_TRUE(raw.write(std::string("\x10\0\0\0\x40\0\0\0", 8)));
     std::optional<tlsrelay::tunnel::Frame> frame;
     do {
@@ -218,7 +218,7 @@ TEST_F(AttackTest, DataBeforeOpenIsRefused) {
     RunningService server(server_config(echo.port(), PortKind::tls));
     RawTlsClient raw(server.port(PortKind::tls), TLS1_3_VERSION, "tlsrelay/1", h_->root.cert.get());
     ASSERT_TRUE(raw.handshake());
-    ASSERT_TRUE(raw.write(tlsrelay::tunnel::encode_data(1, "abc", 3)));  // pas d'OPEN
+    ASSERT_TRUE(raw.write(tlsrelay::tunnel::encode_data(1, "abc", 3)));  // no OPEN
     TunnelProbe probe(raw);
     const auto frame = probe.next();
     ASSERT_TRUE(frame);
@@ -227,7 +227,7 @@ TEST_F(AttackTest, DataBeforeOpenIsRefused) {
     EXPECT_EQ(echo.accepted(), 0);
 }
 
-// --- Inondation de connexions sans handshake ---------------------------------
+// --- Connection flood without handshake --------------------------------------
 
 TEST_F(AttackTest, ConnectionFloodWithoutHandshakeIsBoundedAndRecovers) {
     EchoServer echo;
@@ -237,7 +237,7 @@ TEST_F(AttackTest, ConnectionFloodWithoutHandshakeIsBoundedAndRecovers) {
     RunningService server(std::move(cfg));
     const auto port = server.port(PortKind::tls);
 
-    // 30 connexions muettes : 10 occupent les places de handshake, les autres sont refusées aussitôt.
+    // 30 silent connections: 10 take the handshake slots, the others are refused at once.
     asio::io_context io;
     std::vector<tcp::socket> flood;
     for (int i = 0; i < 30; ++i) {
@@ -246,24 +246,24 @@ TEST_F(AttackTest, ConnectionFloodWithoutHandshakeIsBoundedAndRecovers) {
     }
     EXPECT_TRUE(eventually([&] { return server.stats().channels_rejected.load() == 20; }));
 
-    // Toutes sont fermées par le serveur : refus immédiat ou délai de handshake dépassé.
+    // All are closed by the server: immediate refusal or handshake timeout.
     for (auto& s : flood) {
         s.non_blocking(false);
         std::array<char, 16> buffer{};
         std::error_code ec;
         s.read_some(asio::buffer(buffer), ec);
-        EXPECT_TRUE(ec) << "connexion muette restée ouverte";
+        EXPECT_TRUE(ec) << "silent connection left open";
     }
     EXPECT_TRUE(eventually([&] { return server.stats().tls_handshake_failures.load() == 10; }));
 
-    // Le service reste disponible pour un pair légitime.
+    // The service remains available for a legitimate peer.
     RawTlsClient raw(port, TLS1_3_VERSION, "tlsrelay/1", h_->root.cert.get());
     ASSERT_TRUE(raw.handshake());
     TunnelProbe probe(raw);
     EXPECT_TRUE(probe.open(PortKind::tls));
 }
 
-// --- Journaux : ni secrets ni données relayées --------------------------------
+// --- Logs: neither secrets nor relayed data -----------------------------------
 
 TEST_F(AttackTest, TraceLogsContainNoSecretsNorRelayedData) {
     const auto log_path = dir_ / "trace.log";
@@ -272,7 +272,7 @@ TEST_F(AttackTest, TraceLogsContainNoSecretsNorRelayedData) {
     log.output = log_path.string();
     tlsrelay::logging::init(log);
 
-    const std::string marker = "DONNEE-RELAYEE-7f3a9c";
+    const std::string marker = "RELAYED-DATA-7f3a9c";
     {
         EchoServer echo;
         RunningService server(server_config(echo.port()));
@@ -281,20 +281,20 @@ TEST_F(AttackTest, TraceLogsContainNoSecretsNorRelayedData) {
         app.write(marker);
         EXPECT_EQ(app.read_exactly(marker.size(), 3s), marker);
     }
-    tlsrelay::logging::init_default();  // libère le fichier
+    tlsrelay::logging::init_default();  // releases the file
 
     const auto logs = read_file(log_path);
-    ASSERT_NE(logs.find("TLS établi"), std::string::npos) << "journal de niveau trace attendu";
-    EXPECT_EQ(logs.find(marker), std::string::npos) << "données relayées dans les journaux";
-    EXPECT_EQ(logs.find(to_hex(marker)), std::string::npos) << "données relayées (hexadécimal) dans les journaux";
+    ASSERT_NE(logs.find("TLS established"), std::string::npos) << "trace level log expected";
+    EXPECT_EQ(logs.find(marker), std::string::npos) << "relayed data in the logs";
+    EXPECT_EQ(logs.find(to_hex(marker)), std::string::npos) << "relayed data (hexadecimal) in the logs";
     EXPECT_EQ(logs.find("PRIVATE KEY"), std::string::npos);
-    // Aucune ligne des clés privées (PEM) des deux relais.
+    // No line of the private keys (PEM) of the two relays.
     for (const auto* key : {h_->server.key.get(), h_->client.key.get()}) {
         std::istringstream lines(pem(key));
         std::string line;
         while (std::getline(lines, line)) {
             if (line.size() < 32 || line.starts_with("-----")) continue;
-            EXPECT_EQ(logs.find(line), std::string::npos) << "clé privée dans les journaux";
+            EXPECT_EQ(logs.find(line), std::string::npos) << "private key in the logs";
         }
     }
 }
@@ -311,21 +311,21 @@ TEST_F(AttackTest, PeerMessageCannotInjectLogLines) {
         ASSERT_TRUE(raw.handshake());
         TunnelProbe probe(raw);
         ASSERT_TRUE(probe.open(PortKind::tls));
-        // CLOSE d'un code autre que NORMAL : le serveur journalise le message du pair.
+        // CLOSE with a code other than NORMAL: the server logs the peer's message.
         ASSERT_TRUE(raw.write(tlsrelay::tunnel::encode_close(
-            static_cast<std::uint16_t>(CloseCode::internal_error), "fin\nINJECTE [config] faux\r\x1b[2J")));
+            static_cast<std::uint16_t>(CloseCode::internal_error), "end\nINJECTED [config] fake\r\x1b[2J")));
         EXPECT_TRUE(eventually([&] { return server.stats().channels_closed.load() == 1; }));
     }
     tlsrelay::logging::init_default();
 
     const auto logs = read_file(log_path);
-    ASSERT_NE(logs.find("fermé par l'autre tlsrelay"), std::string::npos) << logs;
+    ASSERT_NE(logs.find("closed by the other tlsrelay"), std::string::npos) << logs;
     std::istringstream lines(logs);
     std::string line;
     while (std::getline(lines, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();  // fin de ligne CRLF sous Windows
-        EXPECT_FALSE(line.starts_with("INJECTE")) << "ligne injectée : " << line;
-        EXPECT_EQ(line.find('\x1b'), std::string::npos) << "séquence d'échappement dans les journaux";
+        if (!line.empty() && line.back() == '\r') line.pop_back();  // CRLF line ending on Windows
+        EXPECT_FALSE(line.starts_with("INJECTED")) << "injected line: " << line;
+        EXPECT_EQ(line.find('\x1b'), std::string::npos) << "escape sequence in the logs";
         EXPECT_EQ(line.find('\r'), std::string::npos);
     }
 }

@@ -7,14 +7,14 @@
 namespace testkit {
 
 struct ProxyOptions {
-    Clock::duration delay{};      // latence ajoutée par paquet relayé, dans chaque sens
-    double rate_mbps = 0;         // débit maximal par sens et par connexion (0 : illimité)
-    Clock::duration cut_every{};  // coupure périodique de toutes les connexions (0 : jamais)
-    bool freeze = false;          // à chaque échéance, lien muet au lieu d'une coupure
-    std::optional<asio::ip::address> source;  // adresse source des connexions vers la destination
+    Clock::duration delay{};      // latency added per relayed packet, in each direction
+    double rate_mbps = 0;         // maximum throughput per direction and per connection (0: unlimited)
+    Clock::duration cut_every{};  // periodic cut of all connections (0: never)
+    bool freeze = false;          // at each deadline, silent link instead of a cut
+    std::optional<asio::ip::address> source;  // source address of the connections to the destination
 };
 
-// Relais TCP avec perturbations (jusqu'à Ctrl+C).
+// TCP relay with disturbances (until Ctrl+C).
 int run_proxy(const tcp::endpoint& listen, const tcp::endpoint& target, const ProxyOptions& options, unsigned threads);
 
 }  // namespace testkit

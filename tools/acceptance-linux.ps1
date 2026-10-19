@@ -1,20 +1,20 @@
 <#
 .SYNOPSIS
-    Tests croisés de la recette (PLAN §5.7) : Windows → Linux et Linux → Windows, en mTLS.
+    Acceptance cross tests (PLAN §5.7): Windows → Linux and Linux → Windows, over mTLS.
 
 .DESCRIPTION
-    Appelé par recette.ps1 (-LinuxHost), après la création de la PKI de recette.
-    Prépare sur cette station les PKI d'un serveur et d'un client Linux (même
-    mini-AC), copie binaires, PKI et configurations sur la machine Linux (scp),
-    y démarre un écho, un tlsrelay serveur et un tlsrelay client (ssh), puis :
+    Called by acceptance.ps1 (-LinuxHost), after the acceptance PKI has been created.
+    Prepares on this workstation the PKIs of a Linux server and client (same
+    mini-CA), copies binaries, PKIs and configurations to the Linux machine (scp),
+    starts an echo, a tlsrelay server and a tlsrelay client there (ssh), then:
 
-      1. testkit (station) → tlsrelay client (station) ══ mTLS ══► tlsrelay serveur (Linux) → écho (Linux)
-      2. testkit (Linux)   → tlsrelay client (Linux)   ══ mTLS ══► tlsrelay serveur (station) → écho (station)
+      1. testkit (workstation) → tlsrelay client (workstation) ══ mTLS ══► tlsrelay server (Linux) → echo (Linux)
+      2. testkit (Linux)       → tlsrelay client (Linux)       ══ mTLS ══► tlsrelay server (workstation) → echo (workstation)
 
-    Prérequis : accès ssh par clé à la machine Linux ; binaires Linux compilés
-    pour sa distribution (ou paquet installé) ; port 19303 de la station ouvert
-    depuis la machine Linux (règle de pare-feu ajoutée si le script est
-    administrateur sous Windows) ; port 29303 de la machine Linux ouvert.
+    Prerequisites: key-based ssh access to the Linux machine; Linux binaries built
+    for its distribution (or package installed); port 19303 of the workstation open
+    from the Linux machine (firewall rule added if the script runs as
+    administrator on Windows); port 29303 of the Linux machine open.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$LinuxHost,
@@ -46,40 +46,40 @@ function Run([string]$exePath, [string[]]$arguments) {
 }
 function Remote([string]$command) {
     $out = Run 'ssh' ($sshOptions + @($LinuxHost, $command))
-    if ($exitCode -ne 0) { throw "ssh : $command : $out" }
+    if ($exitCode -ne 0) { throw "ssh: ${command}: $out" }
     return $out
 }
 function Yaml-Path([string]$path) { $path -replace '\\', '/' }
 
 $remoteHome = (Remote 'echo $HOME').Trim()
-$remoteDir = "$remoteHome/tlsrelay-recette"
-$ac = Join-Path $WorkDir 'ac'
+$remoteDir = "$remoteHome/tlsrelay-acceptance"
+$ac = Join-Path $WorkDir 'ca'
 
-# --- PKI des instances Linux, émise par la mini-AC de la recette -------------
-foreach ($spec in @(@{ Name = 'lx-server'; Mode = 'server'; Role = 'server'; Subject = 'CN=relay.linux,O=Recette'; San = @('--san', 'relay.linux') },
-                    @{ Name = 'lx-client'; Mode = 'client'; Role = 'client'; Subject = 'CN=lx-client,O=Recette'; San = @() })) {
+# --- PKI of the Linux instances, issued by the acceptance mini-CA -------------
+foreach ($spec in @(@{ Name = 'lx-server'; Mode = 'server'; Role = 'server'; Subject = 'CN=relay.linux,O=Acceptance'; San = @('--san', 'relay.linux') },
+                    @{ Name = 'lx-client'; Mode = 'client'; Role = 'client'; Subject = 'CN=lx-client,O=Acceptance'; San = @() })) {
     $cfg = Join-Path $local "$($spec.Name)-pki.yaml"
     $pki = Yaml-Path (Join-Path $local "pki/$($spec.Name)")
     if ($spec.Mode -eq 'server') {
         "mode: server`ninstance: $($spec.Name)`ncredentials: { pki_root: '$pki' }`nwhitelist: { file: 'x.yaml' }`ndestination: { address: 127.0.0.1, port: 9 }`nadmin: { enabled: false }`nports:`n  mtls: { listen: `"127.0.0.1:1`" }" |
             Set-Content -Encoding utf8 $cfg
     } else {
-        "mode: client`ninstance: $($spec.Name)`ncredentials: { pki_root: '$pki' }`nadmin: { enabled: false }`nports:`n  mtls: { listen: `"127.0.0.1:1`", upstream: `"127.0.0.1:2`", server_name: relay.recette }" |
+        "mode: client`ninstance: $($spec.Name)`ncredentials: { pki_root: '$pki' }`nadmin: { enabled: false }`nports:`n  mtls: { listen: `"127.0.0.1:1`", upstream: `"127.0.0.1:2`", server_name: relay.acceptance }" |
             Set-Content -Encoding utf8 $cfg
     }
     $out = Run $Bin (@('pki', 'gen-csr', '-c', $cfg, '--subject', $spec.Subject) + $spec.San)
-    if ($exitCode -ne 0) { throw "$($spec.Name) : gen-csr : $out" }
+    if ($exitCode -ne 0) { throw "$($spec.Name): gen-csr: $out" }
     $kitDir = Join-Path $local "kit-$($spec.Name)"
     $out = Run $Bin (@('ca', 'sign', '--dir', $ac, '--role', $spec.Role, '--csr', (Join-Path $local "pki/$($spec.Name)/v1/request.csr"), '--out', $kitDir) + $spec.San)
-    if ($exitCode -ne 0) { throw "$($spec.Name) : ca sign : $out" }
+    if ($exitCode -ne 0) { throw "$($spec.Name): ca sign: $out" }
     foreach ($step in @(@('pki', 'install', '-c', $cfg, '--from', $kitDir), @('pki', 'activate', '-c', $cfg, 'v1'))) {
         $out = Run $Bin $step
-        if ($exitCode -ne 0) { throw "$($spec.Name) : $($step[1]) : $out" }
+        if ($exitCode -ne 0) { throw "$($spec.Name): $($step[1]): $out" }
     }
 }
-Say "PKI des instances Linux émise par la mini-AC de la recette"
+Say "PKI of the Linux instances issued by the acceptance mini-CA"
 
-# --- Configurations Linux -----------------------------------------------------
+# --- Linux configurations -----------------------------------------------------
 @"
 mode: server
 instance: lx-server
@@ -93,7 +93,7 @@ ports:
 "@ | Set-Content -Encoding utf8 (Join-Path $local 'lx-server.yaml')
 @"
 peers:
-  - { name: station, ip: $LocalAddress, ports: [mtls], subject: "CN=rc-client,O=Recette" }
+  - { name: workstation, ip: $LocalAddress, ports: [mtls], subject: "CN=rc-client,O=Acceptance" }
 "@ | Set-Content -Encoding utf8 (Join-Path $local 'lx-whitelist.yaml')
 @"
 mode: client
@@ -102,10 +102,10 @@ logging: { output: $remoteDir/lx-client.log }
 admin: { endpoint: $remoteDir/lx-client.sock }
 credentials: { pki_root: $remoteDir/pki/lx-client }
 ports:
-  mtls: { listen: "127.0.0.1:27303", upstream: "${LocalAddress}:19303", server_name: relay.recette }
+  mtls: { listen: "127.0.0.1:27303", upstream: "${LocalAddress}:19303", server_name: relay.acceptance }
 "@ | Set-Content -Encoding utf8 (Join-Path $local 'lx-client.yaml')
 
-# --- Instances de la station face à Linux -------------------------------------
+# --- Workstation instances facing Linux ---------------------------------------
 $w = Yaml-Path $WorkDir
 $xServerAdmin = if ($onWindows) { '' } else { "admin: { endpoint: /tmp/tlsrelay-x-server-$PID.sock }" }
 $xClientAdmin = if ($onWindows) { '' } else { "admin: { endpoint: /tmp/tlsrelay-x-client-$PID.sock }" }
@@ -122,7 +122,7 @@ ports:
 "@ | Set-Content -Encoding utf8 (Join-Path $local 'x-server.yaml')
 @"
 peers:
-  - { name: linux, ip: $remoteIp, ports: [mtls], subject: "CN=lx-client,O=Recette" }
+  - { name: linux, ip: $remoteIp, ports: [mtls], subject: "CN=lx-client,O=Acceptance" }
 "@ | Set-Content -Encoding utf8 (Join-Path $local 'x-whitelist.yaml')
 @"
 mode: client
@@ -137,25 +137,25 @@ ports:
 $started = @()
 $firewall = $false
 try {
-    # --- Déploiement et démarrage côté Linux ----------------------------------
+    # --- Deployment and startup on the Linux side ----------------------------
     Remote "rm -rf '$remoteDir' && mkdir -p '$remoteDir/pki'" | Out-Null
     $files = @((Join-Path $LinuxBuildDir 'tlsrelay'), (Join-Path $LinuxBuildDir 'tlsrelay-testkit'),
                (Join-Path $local 'lx-server.yaml'), (Join-Path $local 'lx-client.yaml'), (Join-Path $local 'lx-whitelist.yaml'))
     $out = Run 'scp' ($scpOptions + $files + @("${LinuxHost}:$remoteDir/"))
-    if ($exitCode -ne 0) { throw "scp : $out" }
+    if ($exitCode -ne 0) { throw "scp: $out" }
     $out = Run 'scp' ($scpOptions + @('-r', (Join-Path $local 'pki/lx-server'), (Join-Path $local 'pki/lx-client'), "${LinuxHost}:$remoteDir/pki/"))
-    if ($exitCode -ne 0) { throw "scp PKI : $out" }
-    Remote "cd '$remoteDir' && chmod 700 pki && chmod +x tlsrelay tlsrelay-testkit && ./tlsrelay version" | ForEach-Object { Say "Linux : $_" }
+    if ($exitCode -ne 0) { throw "scp PKI: $out" }
+    Remote "cd '$remoteDir' && chmod 700 pki && chmod +x tlsrelay tlsrelay-testkit && ./tlsrelay version" | ForEach-Object { Say "Linux: $_" }
     Remote ("cd '$remoteDir' && " +
             "(nohup ./tlsrelay-testkit echo --listen 127.0.0.1:28080 >echo.out 2>&1 & echo `$! >> pids) && " +
             "(nohup ./tlsrelay run -c lx-server.yaml >lx-server.out 2>&1 & echo `$! >> pids) && " +
             "(nohup ./tlsrelay run -c lx-client.yaml >lx-client.out 2>&1 & echo `$! >> pids) && sleep 1 && " +
             "./tlsrelay status -c lx-server.yaml >/dev/null && ./tlsrelay status -c lx-client.yaml >/dev/null") | Out-Null
-    Say "Linux : écho, tlsrelay serveur et client démarrés"
+    Say "Linux: echo, tlsrelay server and client started"
 
-    # --- Station : serveur et client face à Linux -------------------------------
+    # --- Workstation: server and client facing Linux -------------------------
     if ($onWindows -and ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        New-NetFirewallRule -DisplayName 'tlsrelay-recette' -Direction Inbound -Protocol TCP -LocalPort 19303 -Action Allow | Out-Null
+        New-NetFirewallRule -DisplayName 'tlsrelay-acceptance' -Direction Inbound -Protocol TCP -LocalPort 19303 -Action Allow | Out-Null
         $firewall = $true
     }
     foreach ($name in 'x-server', 'x-client') {
@@ -165,23 +165,23 @@ try {
     }
     Start-Sleep -Seconds 1
 
-    # --- 1. Station → Linux ---------------------------------------------------
+    # --- 1. Workstation → Linux -----------------------------------------------
     $out = Run $Kit @('load', '--target', '127.0.0.2:17303', '--channels', "$Channels", '--bytes', '256KiB', '--json')
     $r = ($out -split "`n" | Where-Object { $_.TrimStart().StartsWith('{') } | Select-Object -Last 1) | ConvertFrom-Json
-    Say ("station → Linux : {0} canaux, {1} intègres" -f $r.channels, $r.ok)
-    if ($r.ok -ne $Channels) { $failures++; Say "KO  station → Linux : $($r.errors -join ' ; ')" } else { Say "OK  station → Linux (mTLS)" }
+    Say ("workstation → Linux: {0} channels, {1} intact" -f $r.channels, $r.ok)
+    if ($r.ok -ne $Channels) { $failures++; Say "KO  workstation → Linux: $($r.errors -join '; ')" } else { Say "OK  workstation → Linux (mTLS)" }
 
-    # --- 2. Linux → station ---------------------------------------------------
+    # --- 2. Linux → workstation -----------------------------------------------
     $out = Remote "cd '$remoteDir' && ./tlsrelay-testkit load --target 127.0.0.1:27303 --channels $Channels --bytes 256KiB --json || true"
     $r = ($out -split "`n" | Where-Object { $_.TrimStart().StartsWith('{') } | Select-Object -Last 1) | ConvertFrom-Json
-    Say ("Linux → station : {0} canaux, {1} intègres" -f $r.channels, $r.ok)
-    if ($r.ok -ne $Channels) { $failures++; Say "KO  Linux → station : $($r.errors -join ' ; ')" } else { Say "OK  Linux → station (mTLS)" }
+    Say ("Linux → workstation: {0} channels, {1} intact" -f $r.channels, $r.ok)
+    if ($r.ok -ne $Channels) { $failures++; Say "KO  Linux → workstation: $($r.errors -join '; ')" } else { Say "OK  Linux → workstation (mTLS)" }
 } catch {
     $failures++
     Say "KO  $($_.Exception.Message)"
 } finally {
     foreach ($p in $started) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
-    if ($firewall) { Remove-NetFirewallRule -DisplayName 'tlsrelay-recette' -ErrorAction SilentlyContinue }
+    if ($firewall) { Remove-NetFirewallRule -DisplayName 'tlsrelay-acceptance' -ErrorAction SilentlyContinue }
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     & ssh @sshOptions $LinuxHost "cd '$remoteDir' 2>/dev/null && { [ -f pids ] && kill `$(cat pids) 2>/dev/null; tail -n 20 lx-server.log lx-client.log 2>/dev/null; }" 2>&1 |

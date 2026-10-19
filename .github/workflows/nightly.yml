@@ -1,16 +1,16 @@
-name: Mesures de nuit
+name: Nightly measurements
 
-# PLAN §5.5 : chaque nuit, objectifs de performance complets (5 000 canaux) et
-# endurance de 30 min ; rapports publiés en artefacts. Un job hébergé par
-# GitHub est limité à 6 h : l'endurance de 72 h avant livraison se lance sur
-# une machine dédiée (tests/perf/soak.sh <build> 4320).
+# PLAN §5.5: every night, full performance targets (5,000 channels) and a
+# 30 min soak; reports published as artifacts. A GitHub-hosted job is
+# limited to 6 h: the 72 h soak before release runs on a
+# dedicated machine (tests/perf/soak.sh <build> 4320).
 on:
   schedule:
     - cron: "43 2 * * *"
   workflow_dispatch:
     inputs:
       soak_minutes:
-        description: Durée de l'endurance en minutes (330 au plus sur un exécuteur GitHub)
+        description: Soak duration in minutes (330 at most on a GitHub runner)
         default: "30"
 
 permissions:
@@ -18,36 +18,36 @@ permissions:
 
 jobs:
   perf:
-    name: Performances (5 000 canaux) et endurance
+    name: Performance (5,000 channels) and soak
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dépendances
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
             libyaml-cpp-dev libspdlog-dev libcli11-dev
 
-      - name: Compilation
+      - name: Build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_BUILD_TESTS=OFF
           cmake --build build
 
-      - name: Objectifs de performance (5 000 canaux)
+      - name: Performance targets (5,000 channels)
         run: |
           ulimit -n 65536
           bash tests/perf/perf.sh build 5000 perf.json
 
-      - name: Endurance
+      - name: Soak
         run: bash tests/perf/soak.sh build "${{ github.event.inputs.soak_minutes || '30' }}" soak.csv
 
-      - name: Rapports
+      - name: Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mesures-de-nuit
+          name: nightly-measurements
           path: |
             perf.json
             soak.csv

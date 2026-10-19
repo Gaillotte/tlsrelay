@@ -1,6 +1,6 @@
-"""Échange 1 Mio via un tlsrelay client et vérifie l'écho (SHA-256).
+"""Exchanges 1 MiB through a tlsrelay client and checks the echo (SHA-256).
 
-Usage : exchange.py <port du client tlsrelay>
+Usage: exchange.py <tlsrelay client port>
 """
 import hashlib
 import os
@@ -28,5 +28,5 @@ s.sendall(data)
 s.shutdown(socket.SHUT_WR)
 t.join(15)
 ok = hashlib.sha256(received).digest() == hashlib.sha256(data).digest()
-print(f"échange : {len(received)} octets reçus, identiques : {ok}")
+print(f"exchange: {len(received)} bytes received, identical: {ok}")
 sys.exit(0 if ok else 1)

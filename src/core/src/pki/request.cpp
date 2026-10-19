@@ -16,7 +16,7 @@ namespace {
 namespace fs = std::filesystem;
 using detail::fail;
 
-// Numéro d'un nom de génération « vN », ou -1.
+// Number of a generation name "vN", or -1.
 long generation_number(const std::string& name) {
     if (name.size() < 2 || name[0] != 'v' || name.size() > 10) return -1;
     if (!std::all_of(name.begin() + 1, name.end(), [](char c) { return c >= '0' && c <= '9'; })) return -1;
@@ -77,7 +77,7 @@ std::string SubjectAltNames::to_openssl() const {
 std::optional<SubjectAltNames> parse_sans(const std::vector<std::string>& items, std::string& error) {
     SubjectAltNames sans;
     for (const auto& raw : items) {
-        // Plusieurs valeurs peuvent être séparées par des virgules.
+        // Several values can be separated by commas.
         std::size_t start = 0;
         while (start <= raw.size()) {
             const auto end = raw.find(',', start);
@@ -94,13 +94,13 @@ std::optional<SubjectAltNames> parse_sans(const std::vector<std::string>& items,
             if (kind.empty()) kind = is_ip_literal(item) ? "ip" : "dns";
             if (kind == "ip") {
                 if (!is_ip_literal(item)) {
-                    error = "adresse IP invalide « " + item + " »";
+                    error = "invalid IP address \"" + item + "\"";
                     return std::nullopt;
                 }
                 sans.ip.push_back(item);
             } else {
                 if (!valid_dns_name(item)) {
-                    error = "nom DNS invalide « " + item + " »";
+                    error = "invalid DNS name \"" + item + "\"";
                     return std::nullopt;
                 }
                 sans.dns.push_back(item);
@@ -130,26 +130,26 @@ std::optional<std::string> pending_generation(const fs::path& pki_root) {
 CsrResult generate_csr(const fs::path& pki_root, const std::string& subject, const SubjectAltNames& sans) {
     std::string error;
     auto name = tls::parse_dn(subject, error);
-    if (!name) throw std::runtime_error("sujet invalide : " + error);
+    if (!name) throw std::runtime_error("invalid subject: " + error);
     if (X509_NAME_get_index_by_NID(name.get(), NID_commonName, -1) < 0) {
-        throw std::runtime_error("sujet invalide : CN obligatoire");
+        throw std::runtime_error("invalid subject: CN required");
     }
 
     auto key = detail::generate_ec_key("P-256");
     std::unique_ptr<X509_REQ, decltype(&X509_REQ_free)> req(X509_REQ_new(), X509_REQ_free);
     if (!req || !X509_REQ_set_version(req.get(), 0) || !X509_REQ_set_subject_name(req.get(), name.get()) ||
         !X509_REQ_set_pubkey(req.get(), key.get())) {
-        fail("création de la demande impossible");
+        fail("cannot create request");
     }
     if (!sans.empty()) {
         std::unique_ptr<STACK_OF(X509_EXTENSION), void (*)(STACK_OF(X509_EXTENSION)*)> exts(
             sk_X509_EXTENSION_new_null(), [](STACK_OF(X509_EXTENSION)* s) { sk_X509_EXTENSION_pop_free(s, X509_EXTENSION_free); });
         X509_EXTENSION* ext = X509V3_EXT_conf_nid(nullptr, nullptr, NID_subject_alt_name, sans.to_openssl().c_str());
-        if (!ext) fail("SAN invalides");
+        if (!ext) fail("invalid SANs");
         sk_X509_EXTENSION_push(exts.get(), ext);
-        if (!X509_REQ_add_extensions(req.get(), exts.get())) fail("SAN invalides");
+        if (!X509_REQ_add_extensions(req.get(), exts.get())) fail("invalid SANs");
     }
-    if (X509_REQ_sign(req.get(), key.get(), EVP_sha256()) <= 0) fail("signature de la demande impossible");
+    if (X509_REQ_sign(req.get(), key.get(), EVP_sha256()) <= 0) fail("cannot sign request");
 
     detail::make_private_dir(pki_root);
     const auto generation = next_generation_name(pki_root);
@@ -158,18 +158,18 @@ CsrResult generate_csr(const fs::path& pki_root, const std::string& subject, con
 
     tls::BioPtr key_bio(BIO_new(BIO_s_mem()));
     if (!PEM_write_bio_PrivateKey(key_bio.get(), key.get(), nullptr, nullptr, 0, nullptr, nullptr)) {
-        fail("encodage de la clé impossible");
+        fail("cannot encode key");
     }
     detail::write_file(dir / "key.pem", detail::bio_text(key_bio.get()), true);
     tls::BioPtr req_bio(BIO_new(BIO_s_mem()));
-    if (!PEM_write_bio_X509_REQ(req_bio.get(), req.get())) fail("encodage de la demande impossible");
+    if (!PEM_write_bio_X509_REQ(req_bio.get(), req.get())) fail("cannot encode request");
     detail::write_file(dir / "request.csr", detail::bio_text(req_bio.get()));
     return {generation, dir / "request.csr", tls::name_to_string(name.get())};
 }
 
 InstallResult install(const fs::path& pki_root, std::optional<std::string> generation, const InstallFiles& files,
                       const Requirements& req) {
-    // Fichier fourni explicitement, sinon pris dans le répertoire « from ».
+    // File given explicitly, otherwise taken from the "from" directory.
     auto pick = [&](const std::optional<fs::path>& explicit_path, const char* name) -> std::optional<fs::path> {
         if (explicit_path) return explicit_path;
         if (files.from) {
@@ -186,37 +186,37 @@ InstallResult install(const fs::path& pki_root, std::optional<std::string> gener
     if (!generation) {
         if (req.identity) {
             generation = pending_generation(pki_root);
-            if (!generation) throw std::runtime_error("aucune demande en attente dans " + pki_root.string() +
-                                                      " (créer d'abord la clé : pki gen-csr)");
+            if (!generation) throw std::runtime_error("no pending request in " + pki_root.string() +
+                                                      " (create the key first: pki gen-csr)");
         } else {
             generation = next_generation_name(pki_root);
         }
     }
-    if (generation_number(*generation) < 0) throw std::runtime_error("nom de génération invalide « " + *generation + " »");
+    if (generation_number(*generation) < 0) throw std::runtime_error("invalid generation name \"" + *generation + "\"");
     const auto dir = pki_root / *generation;
     std::error_code ec;
     if (fs::exists(dir / "cert.pem", ec)) {
-        throw std::runtime_error("la génération " + *generation + " est déjà complète (cert.pem présent)");
+        throw std::runtime_error("generation " + *generation + " is already complete (cert.pem present)");
     }
 
     if (req.identity) {
         if (!fs::exists(dir / "key.pem", ec)) {
-            throw std::runtime_error("pas de clé dans " + dir.string() + " (pki gen-csr)");
+            throw std::runtime_error("no key in " + dir.string() + " (pki gen-csr)");
         }
-        if (!cert || !chain) throw std::runtime_error("certificat et chaîne obligatoires (--cert et --chain, ou --from)");
+        if (!cert || !chain) throw std::runtime_error("certificate and chain required (--cert and --chain, or --from)");
     }
-    // Fichiers de confiance absents : ceux de la génération courante.
+    // Missing trust files: those of the current generation.
     if (!roots || !issuer) {
         const auto current = current_name(pki_root);
         if (!current) {
-            throw std::runtime_error("racines et AC attendue obligatoires (--roots et --issuer) : pas de génération courante");
+            throw std::runtime_error("roots and expected CA required (--roots and --issuer): no current generation");
         }
         if (!roots && fs::exists(pki_root / *current / "trust-roots.pem", ec)) roots = pki_root / *current / "trust-roots.pem";
         if (!issuer && fs::exists(pki_root / *current / "trust-issuer.pem", ec)) {
             issuer = pki_root / *current / "trust-issuer.pem";
         }
     }
-    if (req.trust && (!roots || !issuer)) throw std::runtime_error("racines et AC attendue introuvables (--roots, --issuer)");
+    if (req.trust && (!roots || !issuer)) throw std::runtime_error("roots and expected CA not found (--roots, --issuer)");
 
     detail::make_private_dir(dir);
     if (cert) copy_in(*cert, dir / "cert.pem");
@@ -226,7 +226,7 @@ InstallResult install(const fs::path& pki_root, std::optional<std::string> gener
 
     InstallResult result;
     result.generation = *generation;
-    // Garde-fou compris, s'il existe une génération courante.
+    // Safeguard included, if there is a current generation.
     result.check = current_name(pki_root) ? check_candidate(pki_root, *generation, req) : load_generation(dir, req);
     return result;
 }

@@ -1,4 +1,4 @@
-// Noms distinctifs de la liste blanche (RFC 4514) et noms alternatifs (--san).
+// Distinguished names of the whitelist (RFC 4514) and alternative names (--san).
 #include "tlsrelay/pki/request.hpp"
 #include "tlsrelay/tls/openssl_ptr.hpp"
 

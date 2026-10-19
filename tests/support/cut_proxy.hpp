@@ -1,8 +1,8 @@
 #pragma once
 
-// Relais TCP de test placé entre deux tlsrelay : cut() coupe brutalement
-// (RST) toutes les connexions en cours, freeze() les rend muettes sans les
-// fermer (lien mort sans erreur TCP), pour simuler une panne réseau.
+// Test TCP relay placed between two tlsrelay instances: cut() abruptly cuts
+// (RST) all current connections, freeze() makes them silent without
+// closing them (dead link without a TCP error), to simulate a network failure.
 
 #include "support/net_helpers.hpp"
 
@@ -42,11 +42,11 @@ public:
 
     std::uint16_t port() const { return acceptor_.local_endpoint().port(); }
 
-    // Connexions acceptées depuis le démarrage.
+    // Connections accepted since startup.
     int connections() const { return accepted_.load(); }
 
-    // Les connexions en cours ne transmettent plus rien (données jetées), sans
-    // être fermées ; les suivantes sont relayées normalement.
+    // Current connections no longer transmit anything (data dropped), without
+    // being closed; the following ones are relayed normally.
     void freeze() {
         std::promise<void> done;
         asio::post(io_, [&] {
@@ -57,7 +57,7 @@ public:
         done.get_future().wait();
     }
 
-    // Coupe toutes les connexions en cours ; les suivantes sont relayées normalement.
+    // Cuts all current connections; the following ones are relayed normally.
     void cut() {
         std::promise<void> done;
         asio::post(io_, [&] {
@@ -67,8 +67,8 @@ public:
         done.get_future().wait();
     }
 
-    // Les n prochaines connexions sont coupées (RST) à réception de leurs
-    // premiers octets (ClientHello) : panne pendant le handshake.
+    // The next n connections are cut (RST) on receipt of their
+    // first bytes (ClientHello): failure during the handshake.
     void reset_next(int n) { reset_next_ = n; }
 
 private:
@@ -112,7 +112,7 @@ private:
                 else to->close(ignored);
                 co_return;
             }
-            if (*frozen) continue;  // lien muet : les données sont perdues
+            if (*frozen) continue;  // silent link: the data is lost
             auto [wec, written] = co_await asio::async_write(*to, asio::buffer(buffer.data(), n), use_tuple);
             (void)written;
             if (wec) {
@@ -134,8 +134,8 @@ private:
     asio::io_context io_;
     tcp::acceptor acceptor_;
     std::uint16_t target_;
-    std::vector<Socket> sockets_;  // accédé uniquement sur le thread de io_
-    std::shared_ptr<bool> frozen_ = std::make_shared<bool>(false);  // connexions courantes (thread de io_)
+    std::vector<Socket> sockets_;  // accessed only on the io_ thread
+    std::shared_ptr<bool> frozen_ = std::make_shared<bool>(false);  // current connections (io_ thread)
     std::atomic<int> accepted_{0};
     std::atomic<int> reset_next_{0};
     std::thread thread_;

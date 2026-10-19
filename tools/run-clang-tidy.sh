@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Analyse statique clang-tidy du code de tlsrelay (règles : .clang-tidy).
-# Échoue si une alerte porte sur le code du projet. Les alertes situées dans
-# les en-têtes d'Asio (faux positifs connus de l'analyseur de chemins sur les
-# cadres de coroutines) sont affichées à part, sans faire échouer l'analyse.
-# Usage : tools/run-clang-tidy.sh <répertoire de build avec compile_commands.json>
+# clang-tidy static analysis of the tlsrelay code (rules: .clang-tidy).
+# Fails if a warning concerns the project's code. Warnings located in
+# the Asio headers (known false positives of the path analyzer on
+# coroutine frames) are reported separately, without failing the analysis.
+# Usage: tools/run-clang-tidy.sh <build directory with compile_commands.json>
 set -euo pipefail
-build=${1:?usage : $0 <répertoire de build>}
+build=${1:?usage: $0 <build directory>}
 root=$(cd "$(dirname "$0")/.." && pwd)
 tidy=$(command -v clang-tidy-18 || command -v clang-tidy)
 out=$(mktemp)
@@ -18,7 +18,7 @@ project=$(grep -E "^$root/(src|fuzz)/.*: (warning|error):" "$out" | sort -u || t
 external=$(grep -cE "^/usr/include/.*: (warning|error):" "$out" || true)
 if [ -n "$project" ]; then
   echo "$project"
-  echo "clang-tidy : $(echo "$project" | wc -l) alerte(s) dans le code du projet" >&2
+  echo "clang-tidy: $(echo "$project" | wc -l) warning(s) in the project code" >&2
   exit 1
 fi
-echo "clang-tidy : aucune alerte dans le code du projet ($external diagnostic(s) dans des en-têtes externes ignoré(s))"
+echo "clang-tidy: no warning in the project code ($external diagnostic(s) in external headers ignored)"

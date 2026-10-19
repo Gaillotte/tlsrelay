@@ -1,11 +1,11 @@
-// tlsrelay-admin : éditeur de configuration et de PKI de tlsrelay (livraison 1.1).
-// Usage :
+// tlsrelay-admin: configuration and PKI editor for tlsrelay (release 1.1).
+// Usage:
 //   tlsrelay-admin [configuration.yaml]
 //   tlsrelay-admin --check configuration.yaml
-//     Contrôle une configuration (et sa liste blanche, en mode serveur) avec
-//     les règles du service, sans fenêtre. Code de sortie : 0 valide,
-//     1 invalide, 2 fichier illisible. Les messages vont sur la sortie
-//     d'erreur et, s'il est donné, dans le fichier --report.
+//     Checks a configuration (and its whitelist, in server mode) with
+//     the service rules, without a window. Exit code: 0 valid,
+//     1 invalid, 2 unreadable file. Messages go to standard error
+//     and, when given, to the --report file.
 
 #include "document.hpp"
 #include "main_window.hpp"
@@ -27,21 +27,21 @@ int check(const std::filesystem::path& path, const std::filesystem::path& report
     int code = 0;
     const auto text = tlsrelay::admin::read_text(path);
     if (!text) {
-        report << path.string() << " : fichier illisible\n";
+        report << path.string() << ": unreadable file\n";
         code = 2;
     } else {
         const auto config = tlsrelay::load_config_string(*text);
-        for (const auto& e : config.errors) report << "erreur : " << e.path << " : " << e.message << '\n';
-        for (const auto& w : config.warnings) report << "avertissement : " << w.path << " : " << w.message << '\n';
+        for (const auto& e : config.errors) report << "error: " << e.path << ": " << e.message << '\n';
+        for (const auto& w : config.warnings) report << "warning: " << w.path << ": " << w.message << '\n';
         if (!config.config) code = 1;
         if (config.config && config.config->whitelist) {
             const auto wl_path = tlsrelay::admin::resolve_from(path, config.config->whitelist->file);
             const auto wl = tlsrelay::whitelist::Whitelist::load_file(wl_path);
-            for (const auto& e : wl.errors) report << "erreur : " << e.path << " : " << e.message << '\n';
-            for (const auto& w : wl.warnings) report << "avertissement : " << w.path << " : " << w.message << '\n';
+            for (const auto& e : wl.errors) report << "error: " << e.path << ": " << e.message << '\n';
+            for (const auto& w : wl.warnings) report << "warning: " << w.path << ": " << w.message << '\n';
             if (!wl.whitelist) code = 1;
         }
-        report << path.string() << (code == 0 ? " : valide\n" : " : invalide\n");
+        report << path.string() << (code == 0 ? ": valid\n" : ": invalid\n");
     }
     std::cerr << report.str();
     if (!report_path.empty()) std::ofstream(report_path, std::ios::binary) << report.str();
@@ -51,10 +51,10 @@ int check(const std::filesystem::path& path, const std::filesystem::path& report
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    // L'application Qt est créée même pour --check : une installation à qui
-    // manquent des DLL ou le module de plateforme de Qt échoue ici aussi.
-    // Sans affichage (serveur Linux, session SSH), --check utilise la plateforme
-    // « offscreen » : le contrôle n'ouvre aucune fenêtre.
+    // The Qt application is created even for --check: an installation that
+    // lacks DLLs or the Qt platform plugin fails here too.
+    // Without a display (Linux server, SSH session), --check uses the "offscreen"
+    // platform: the check opens no window.
     const bool check_mode = argc >= 3 && std::string_view(argv[1]) == "--check";
     if (check_mode && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && qEnvironmentVariableIsEmpty("DISPLAY") &&
         qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {

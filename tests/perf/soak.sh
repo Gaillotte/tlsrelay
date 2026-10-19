@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Endurance (PLAN §5.6) : rotations PKI et renégociations continues, coupures
-# réseau périodiques ; mémoire, descripteurs et générations doivent rester stables.
+# Soak test (PLAN §5.6): continuous PKI rotations and renegotiations, periodic
+# network cuts; memory, descriptors and generations must stay stable.
 #
-#   testkit ──► tlsrelay client ══ mTLS ══► proxy (coupures) ══► tlsrelay serveur ──► écho
+#   testkit ──► tlsrelay client ══ mTLS ══► proxy (cuts) ══► tlsrelay server ──► echo
 #
-# Pendant toute la durée : un flux continu (empreinte vérifiée à la fin) et des
-# vagues de canaux intègres ; rotation PKI des deux côtés à intervalle régulier.
-# Usage : soak.sh <répertoire de build> <durée en minutes> [fichier CSV des relevés]
+# For the whole duration: a continuous stream (hash checked at the end) and
+# waves of intact channels; PKI rotation on both sides at regular intervals.
+# Usage: soak.sh <build directory> <duration in minutes> [CSV file of samples]
 set -euo pipefail
 
 build=$(realpath "$1")
-minutes=${2:?durée en minutes}
+minutes=${2:?duration in minutes}
 csv_out=${3:+$(realpath -m "$3")}
 bin="$build/src/app/tlsrelay"
 kit="$build/src/testkit/tlsrelay-testkit"
@@ -20,11 +20,11 @@ cd "$work"
 port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 log() { echo "[$(date -u +%H:%M:%S)] $*"; }
 
-# Rythmes : réduits pour un essai court, réalistes pour 72 h.
-# Variables d'environnement LIFETIME, ROTATE_EVERY et CUT_EVERY pour les forcer.
+# Paces: reduced for a short run, realistic for 72 h.
+# Environment variables LIFETIME, ROTATE_EVERY and CUT_EVERY to force them.
 lifetime=${LIFETIME:-$(( minutes >= 120 ? 600 : 60 ))}            # session_lifetime (s)
-rotate_every=${ROTATE_EVERY:-$(( minutes >= 120 ? 1800 : 180 ))}  # rotation PKI (s)
-cut_every=${CUT_EVERY:-$(( minutes >= 120 ? 900 : 30 ))}         # coupure réseau (s)
+rotate_every=${ROTATE_EVERY:-$(( minutes >= 120 ? 1800 : 180 ))}  # PKI rotation (s)
+cut_every=${CUT_EVERY:-$(( minutes >= 120 ? 900 : 30 ))}         # network cut (s)
 
 "$kit" pki --out pki >/dev/null
 dest=$(port); srv=$(port); prx=$(port); cli=$(port)
@@ -38,7 +38,7 @@ mode: server
 instance: soak-server
 logging: { output: $work/server.log, level: ${LOG_LEVEL:-debug} }
 admin: { endpoint: $work/server.sock }
-credentials: { pki_root: $work/pki/serveur }
+credentials: { pki_root: $work/pki/server }
 whitelist: { file: $work/wl.yaml }
 destination: { address: 127.0.0.1, port: $dest }
 $limits
@@ -63,22 +63,22 @@ for _ in $(seq 50); do "$bin" status -c client.yaml >/dev/null 2>&1 && "$bin" st
 
 metric() { "$bin" metrics -c "$1.yaml" | awk -v m="$2" '$1 ~ "^"m"[{ ]" {print $2; exit}'; }
 
-# Flux continu pendant toute la durée : renégociations, coupures et rotations le traversent.
-# Flux cadencé (STREAM_RATE Mbit/s, défaut 200) : un flux saturé sur la boucle
-# locale peut se figer (limite connue, README « Performances »).
+# Continuous stream for the whole duration: renegotiations, cuts and rotations go through it.
+# Paced stream (STREAM_RATE Mbit/s, default 200): a saturated stream on the
+# loopback can stall (known limitation, README "Performance").
 "$kit" throughput --target "127.0.0.1:$cli" --duration "$((minutes * 60 - 30))s" --rate "${STREAM_RATE:-200}" --json > stream.json &
 stream=$!
 
-echo "temps_s,vague_ok,rss_serveur_kio,rss_client_kio,fd_serveur,fd_client,generations_serveur,generations_client,renegociations_client,coupures" > samples.csv
+echo "time_s,wave_ok,rss_server_kib,rss_client_kib,fd_server,fd_client,generations_server,generations_client,renegotiations_client,cuts" > samples.csv
 start=$(date +%s); end=$((start + minutes * 60 - 60)); next_rotation=$((start + rotate_every)); rounds=0; failed_rounds=0
-log "endurance : ${minutes} min, session_lifetime ${lifetime}s, rotation toutes les ${rotate_every}s, coupure toutes les ${cut_every}s"
+log "soak: ${minutes} min, session_lifetime ${lifetime}s, rotation every ${rotate_every}s, cut every ${cut_every}s"
 while [ "$(date +%s)" -lt "$end" ]; do
   if "$kit" load --target "127.0.0.1:$cli" --channels 200 --bytes 256KiB --threads 2 --json > round.json; then ok=1; else ok=0; failed_rounds=$((failed_rounds + 1)); cat round.json; fi
   rounds=$((rounds + 1))
   if [ "$(date +%s)" -ge "$next_rotation" ]; then
     "$kit" pki --out pki >/dev/null
     "$bin" reload -c server.yaml >/dev/null; "$bin" reload -c client.yaml >/dev/null
-    log "rotation PKI : serveur $(cat pki/serveur/current), client $(cat pki/client/current)"
+    log "PKI rotation: server $(cat pki/server/current), client $(cat pki/client/current)"
     next_rotation=$((next_rotation + rotate_every))
   fi
   printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$(( $(date +%s) - start ))" "$ok" \
@@ -86,22 +86,22 @@ while [ "$(date +%s)" -lt "$end" ]; do
     "$(( $(metric client tlsrelay_process_resident_memory_bytes) / 1024 ))" \
     "$(metric server tlsrelay_process_open_descriptors)" "$(metric client tlsrelay_process_open_descriptors)" \
     "$(metric server tlsrelay_pki_generations_live)" "$(metric client tlsrelay_pki_generations_live)" \
-    "$(metric client tlsrelay_renegotiations_total)" "$(grep -c coupure proxy.log || true)" >> samples.csv
+    "$(metric client tlsrelay_renegotiations_total)" "$(grep -c "cut of" proxy.log || true)" >> samples.csv
   sleep 5
 done
 if ! wait "$stream"; then
   cat stream.json
-  # Historique du canal de flux (le premier ouvert) des deux côtés.
-  session=$(grep -m1 -o 'canal=[0-9]* ouvert .*session=[0-9a-f]*' client.log | grep -o 'session=[0-9a-f]*' | cut -d= -f2)
-  ccanal=$(grep -m1 "session=$session" client.log | grep -o 'canal=[0-9]*')
-  scanal=$(grep -m1 "session=$session" server.log | grep -o 'canal=[0-9]*' || true)
-  echo "-- flux, client ($ccanal)"; grep -E "$ccanal[^0-9]" client.log | tail -n 60
-  echo "-- flux, serveur (${scanal:-?})"; [ -n "$scanal" ] && grep -E "$scanal[^0-9]|$session" server.log | tail -n 60
+  # History of the stream channel (the first one opened) on both sides.
+  session=$(grep -m1 -o 'channel=[0-9]* opened .*session=[0-9a-f]*' client.log | grep -o 'session=[0-9a-f]*' | cut -d= -f2)
+  cchannel=$(grep -m1 "session=$session" client.log | grep -o 'channel=[0-9]*')
+  schannel=$(grep -m1 "session=$session" server.log | grep -o 'channel=[0-9]*' || true)
+  echo "-- stream, client ($cchannel)"; grep -E "$cchannel[^0-9]" client.log | tail -n 60
+  echo "-- stream, server (${schannel:-?})"; [ -n "$schannel" ] && grep -E "$schannel[^0-9]|$session" server.log | tail -n 60
 fi
 [ -n "$csv_out" ] && cp samples.csv "$csv_out"
 
-# Descripteurs en fin d'essai, après renegotiation_grace : les canaux coupés en
-# dernier attendent jusque-là une reprise avant d'être fermés.
+# Descriptors at the end of the run, after renegotiation_grace: the channels cut
+# last wait until then for a resumption before being closed.
 sleep 25
 fd_final_server=$(metric server tlsrelay_process_open_descriptors)
 fd_final_client=$(metric client tlsrelay_process_open_descriptors)
@@ -109,37 +109,37 @@ fd_final_client=$(metric client tlsrelay_process_open_descriptors)
 python3 - "$rounds" "$failed_rounds" "$minutes" "$fd_final_server" "$fd_final_client" <<'PY'
 import csv, json, statistics, sys
 rounds, failed, minutes = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
-fd_final = {"serveur": int(sys.argv[4]), "client": int(sys.argv[5])}
+fd_final = {"server": int(sys.argv[4]), "client": int(sys.argv[5])}
 rows = list(csv.DictReader(open("samples.csv")))
 stream = json.load(open("stream.json"))
 n = len(rows)
 def med(key, part):
     vals = [int(r[key]) for r in part]
     return statistics.median(vals) if vals else 0
-# Mémoire : régime établi (2e quintile) comparé à la fin (dernier quintile).
+# Memory: steady state (2nd quintile) compared with the end (last quintile).
 q = max(1, n // 5)
 early, late = rows[q:2 * q] or rows[:q], rows[-q:]
 checks = {
-    f"vagues de canaux intègres ({rounds - failed}/{rounds})": failed == 0 and rounds > 0,
-    f"flux continu intègre ({stream['bytes'] / 2**30:.1f} Gio)": stream["intact"] == 1,
-    "renégociations effectuées": int(rows[-1]["renegociations_client"]) > 0,
-    "coupures réseau traversées": int(rows[-1]["coupures"]) > 0,
+    f"waves of intact channels ({rounds - failed}/{rounds})": failed == 0 and rounds > 0,
+    f"continuous stream intact ({stream['bytes'] / 2**30:.1f} GiB)": stream["intact"] == 1,
+    "renegotiations performed": int(rows[-1]["renegotiations_client"]) > 0,
+    "network cuts survived": int(rows[-1]["cuts"]) > 0,
 }
-for side in ("serveur", "client"):
-    e, l = med(f"rss_{side}_kio", early), med(f"rss_{side}_kio", late)
-    # Sur une course courte, la mémoire n'a pas atteint son régime établi
-    # (allocateur, génération ajoutée par la rotation) : relevé indicatif.
-    label = f"mémoire {side} stable ({e / 1024:.0f} → {l / 1024:.0f} Mio)"
+for side in ("server", "client"):
+    e, l = med(f"rss_{side}_kib", early), med(f"rss_{side}_kib", late)
+    # On a short run, memory has not reached its steady state
+    # (allocator, generation added by the rotation): sample for information only.
+    label = f"{side} memory stable ({e / 1024:.0f} → {l / 1024:.0f} MiB)"
     if minutes >= 30:
         checks[label] = l <= e * 1.25 + 8192
     else:
-        print(f"INFO  {label} (indicatif sous 30 min)")
+        print(f"INFO  {label} (informational under 30 min)")
     fe, fl = med(f"fd_{side}", early), fd_final[side]
-    checks[f"descripteurs {side} stables ({fe:.0f} → {fl:.0f} en fin d'essai)"] = fl <= fe + 20
+    checks[f"{side} descriptors stable ({fe:.0f} → {fl:.0f} at the end of the run)"] = fl <= fe + 20
     gens = max(int(r[f"generations_{side}"]) for r in late)
-    checks[f"générations {side} libérées (≤ 2 vivantes en fin : {gens})"] = gens <= 2
-print(f"{n} relevés, {rounds} vagues")
+    checks[f"{side} generations released (≤ 2 live at the end: {gens})"] = gens <= 2
+print(f"{n} samples, {rounds} waves")
 for k, ok in checks.items():
-    print(("OK    " if ok else "ÉCHEC ") + k)
+    print(("OK    " if ok else "FAILED ") + k)
 sys.exit(0 if all(checks.values()) else 1)
 PY

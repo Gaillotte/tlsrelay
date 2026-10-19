@@ -94,7 +94,7 @@ const result = raw.toString('utf8').match(/Result: (\d+) check\(s\) passed, (\d+
 timeline.push({ kind: 'card', kicker: 'Result', title: result ? `${result[1]} checks passed, ${result[2]} failed` : 'Demonstration complete',
   text: 'Everything shown runs in CI on every push, on Linux and Windows. ' +
         'Reproduce it with tools/demo.sh; this video is produced by tools/video/make-video.sh.',
-  pre: 'docs/SPEC.md · docs/DESIGN.md · docs/TESTS.md · docs/EDITEUR.md', ms: 6500 });
+  pre: 'docs/SPEC.md · docs/DESIGN.md · docs/TESTS.md · docs/EDITOR.md', ms: 6500 });
 
 // Page: xterm.js and the timeline inlined.
 const template = fs.readFileSync(path.join(__dirname, 'player.html'), 'utf8');

@@ -5,9 +5,9 @@
 
 namespace tlsrelay::app {
 
-// Phrase de passe de l'AC : fichier (première ligne), sinon variable
-// TLSRELAY_CA_PASSPHRASE, sinon saisie au clavier sans écho (confirm : saisie
-// répétée). std::nullopt si la saisie échoue ou ne concorde pas (message affiché).
+// CA passphrase: file (first line), otherwise the TLSRELAY_CA_PASSPHRASE
+// variable, otherwise typed on the keyboard without echo (confirm: entered
+// twice). std::nullopt if the entry fails or does not match (message printed).
 std::optional<std::string> read_passphrase(const std::string& file, bool confirm);
 
 }  // namespace tlsrelay::app

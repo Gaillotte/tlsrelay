@@ -13,10 +13,10 @@
 #include <string_view>
 #include <vector>
 
-// Liste blanche des pairs autorisés à se connecter au tlsrelay serveur (SPEC §6).
+// Whitelist of the peers allowed to connect to the server tlsrelay (SPEC §6).
 namespace tlsrelay::whitelist {
 
-// Adresse IP ou plage CIDR (IPv4 ou IPv6).
+// IP address or CIDR range (IPv4 or IPv6).
 struct IpRange {
     asio::ip::address network;
     unsigned prefix = 0;
@@ -25,28 +25,28 @@ struct IpRange {
     std::string to_string() const;
 };
 
-// "192.0.2.10", "192.0.2.0/28", "2001:db8::/32". Retourne std::nullopt et remplit error sinon.
+// "192.0.2.10", "192.0.2.0/28", "2001:db8::/32". Otherwise returns std::nullopt and fills error.
 std::optional<IpRange> parse_ip_range(std::string_view text, std::string& error);
 
-// Une IPv4 vue à travers une socket IPv6 (::ffff:a.b.c.d) redevient une IPv4.
+// An IPv4 address seen through an IPv6 socket (::ffff:a.b.c.d) becomes IPv4 again.
 asio::ip::address normalize(const asio::ip::address& address);
 
 struct Peer {
     std::string name;
     IpRange range;
     std::set<PortKind> ports;
-    bool ports_explicit = false;             // ports donnés dans le fichier (sinon valeur par défaut)
-    std::string subject_text;                // tel qu'écrit dans le fichier, vide si absent
-    std::shared_ptr<const X509_NAME> subject;  // forme comparable, nullptr si absent
+    bool ports_explicit = false;             // ports given in the file (otherwise the default)
+    std::string subject_text;                // as written in the file, empty if absent
+    std::shared_ptr<const X509_NAME> subject;  // comparable form, nullptr if absent
 
-    // Même définition (pour le calcul des différences au rechargement).
+    // Same definition (for computing differences on reload).
     bool same_as(const Peer& other) const;
 };
 
 class Whitelist;
 
 struct LoadResult {
-    std::shared_ptr<const Whitelist> whitelist;  // présent seulement si errors est vide
+    std::shared_ptr<const Whitelist> whitelist;  // present only if errors is empty
     std::vector<Issue> errors;
     std::vector<Issue> warnings;
 };
@@ -56,13 +56,13 @@ public:
     static LoadResult load_string(std::string_view yaml);
     static LoadResult load_file(const std::filesystem::path& path);
 
-    // Contrôle avant handshake : une entrée contient l'adresse et autorise ce port.
+    // Check before the handshake: an entry contains the address and allows this port.
     bool admits(const asio::ip::address& address, PortKind port) const;
 
-    // Contrôle complet. Port mtls : il faut une entrée qui contient l'adresse,
-    // autorise mtls et dont le sujet est exactement celui du certificat (les
-    // deux critères dans la même entrée). Autres ports : l'adresse suffit.
-    // Retourne l'entrée autorisée, ou nullptr.
+    // Full check. mtls port: an entry must contain the address, allow mtls
+    // and have exactly the certificate's subject (both criteria in the same
+    // entry). Other ports: the address is enough.
+    // Returns the authorized entry, or nullptr.
     const Peer* authorize(const asio::ip::address& address, PortKind port, const X509_NAME* subject) const;
 
     const std::vector<Peer>& peers() const { return peers_; }
@@ -80,20 +80,20 @@ struct Diff {
 
 Diff diff(const Whitelist& before, const Whitelist& after);
 
-// Entrée telle qu'écrite dans le fichier (éditeur tlsrelay-admin).
+// Entry as written in the file (tlsrelay-admin editor).
 struct PeerSpec {
     std::string name;
     std::string ip;
-    std::optional<std::set<PortKind>> ports;  // absent : valeur par défaut (SPEC §6)
-    std::string subject;                      // vide : absent
+    std::optional<std::set<PortKind>> ports;  // absent: default value (SPEC §6)
+    std::string subject;                      // empty: absent
 
     bool operator==(const PeerSpec&) const = default;
 };
 
 PeerSpec to_spec(const Peer& peer);
 
-// Écriture normalisée d'une liste blanche, relue par Whitelist::load_string.
-// header : commentaire placé en tête, une ligne par ligne de texte.
+// Normalized writing of a whitelist, read back by Whitelist::load_string.
+// header: comment placed at the top, one comment line per line of text.
 std::string to_yaml(const std::vector<PeerSpec>& peers, std::string_view header = {});
 
 }  // namespace tlsrelay::whitelist

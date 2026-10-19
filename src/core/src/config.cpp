@@ -48,8 +48,8 @@ std::string join(const std::string& path, std::string_view key) {
     return path.empty() ? std::string(key) : path + "." + std::string(key);
 }
 
-// Lecture du YAML vers Config. Les erreurs de forme (clé inconnue, type,
-// format de valeur) sont toutes collectées au lieu de s'arrêter à la première.
+// Reads YAML into Config. Shape errors (unknown key, type, value format)
+// are all collected instead of stopping at the first one.
 class Parser {
 public:
     explicit Parser(std::vector<Issue>& errors) : errors_(errors) {}
@@ -63,7 +63,7 @@ public:
         if (auto v = required_string(root, "mode", "")) {
             if (*v == "client") cfg.mode = Mode::client;
             else if (*v == "server") cfg.mode = Mode::server;
-            else error("mode", "valeur attendue : client ou server");
+            else error("mode", "expected value: client or server");
         }
         if (auto v = optional_string(root, "instance", "")) cfg.instance = *v;
         if (auto node = section(root, "logging", "")) cfg.logging = parse_logging(*node, "logging");
@@ -84,7 +84,7 @@ private:
 
     bool is_map(const YAML::Node& node, const std::string& path) {
         if (node.IsMap()) return true;
-        error(path.empty() ? "(racine)" : path, "une section (liste de clés) est attendue");
+        error(path.empty() ? "(root)" : path, "a section (map of keys) is expected");
         return false;
     }
 
@@ -92,7 +92,7 @@ private:
         for (const auto& item : map) {
             const auto key = item.first.as<std::string>("");
             if (std::find(allowed.begin(), allowed.end(), key) == allowed.end()) {
-                error(join(path, key), "clé inconnue");
+                error(join(path, key), "unknown key");
             }
         }
     }
@@ -108,7 +108,7 @@ private:
         const YAML::Node node = map[std::string(key)];
         if (!node.IsDefined()) return std::nullopt;
         if (!node.IsScalar()) {
-            error(join(path, key), "une valeur simple est attendue");
+            error(join(path, key), "a scalar value is expected");
             return std::nullopt;
         }
         return node.Scalar();
@@ -116,7 +116,7 @@ private:
 
     std::optional<std::string> required_string(const YAML::Node& map, std::string_view key, const std::string& path) {
         if (!map[std::string(key)].IsDefined()) {
-            error(join(path, key), "valeur obligatoire manquante");
+            error(join(path, key), "missing required value");
             return std::nullopt;
         }
         return optional_string(map, key, path);
@@ -125,21 +125,21 @@ private:
     void read_duration(const YAML::Node& map, std::string_view key, const std::string& path, Duration& out) {
         if (auto v = optional_string(map, key, path)) {
             if (auto d = parse_duration(*v)) out = *d;
-            else error(join(path, key), "durée invalide « " + *v + " » (exemples : 500ms, 30s, 5m, 1h, 30d)");
+            else error(join(path, key), "invalid duration \"" + *v + "\" (examples: 500ms, 30s, 5m, 1h, 30d)");
         }
     }
 
     void read_size(const YAML::Node& map, std::string_view key, const std::string& path, std::uint64_t& out) {
         if (auto v = optional_string(map, key, path)) {
             if (auto s = parse_size(*v)) out = *s;
-            else error(join(path, key), "taille invalide « " + *v + " » (exemples : 65536, 64KiB, 4MiB)");
+            else error(join(path, key), "invalid size \"" + *v + "\" (examples: 65536, 64KiB, 4MiB)");
         }
     }
 
     void read_percent(const YAML::Node& map, std::string_view key, const std::string& path, double& out) {
         if (auto v = optional_string(map, key, path)) {
             if (auto p = parse_percent(*v)) out = *p;
-            else error(join(path, key), "pourcentage invalide « " + *v + " » (exemple : 10%)");
+            else error(join(path, key), "invalid percentage \"" + *v + "\" (example: 10%)");
         }
     }
 
@@ -147,7 +147,7 @@ private:
         if (auto v = optional_string(map, key, path)) {
             std::uint32_t value = 0;
             auto [end, ec] = std::from_chars(v->data(), v->data() + v->size(), value);
-            if (ec != std::errc{} || end != v->data() + v->size()) error(join(path, key), "entier positif attendu");
+            if (ec != std::errc{} || end != v->data() + v->size()) error(join(path, key), "positive integer expected");
             else out = value;
         }
     }
@@ -156,7 +156,7 @@ private:
         if (auto v = optional_string(map, key, path)) {
             if (*v == "true") out = true;
             else if (*v == "false") out = false;
-            else error(join(path, key), "valeur attendue : true ou false");
+            else error(join(path, key), "expected value: true or false");
         }
     }
 
@@ -164,7 +164,7 @@ private:
         auto v = optional_string(map, key, path);
         if (!v) return std::nullopt;
         auto ep = parse_endpoint(*v);
-        if (!ep) error(join(path, key), "adresse invalide « " + *v + " » (format hôte:port, IPv6 entre crochets)");
+        if (!ep) error(join(path, key), "invalid address \"" + *v + "\" (format host:port, IPv6 in brackets)");
         return ep;
     }
 
@@ -172,7 +172,7 @@ private:
         auto v = optional_string(map, key, path);
         if (!v) return std::nullopt;
         auto level = parse_log_level(*v);
-        if (!level) error(join(path, key), "niveau invalide (error, info, debug ou trace)");
+        if (!level) error(join(path, key), "invalid level (error, info, debug or trace)");
         return level;
     }
 
@@ -189,7 +189,7 @@ private:
         if (auto f = optional_string(node, "format", path)) {
             if (*f == "text") log.format = LogFormat::text;
             else if (*f == "json") log.format = LogFormat::json;
-            else error(join(path, "format"), "valeur attendue : text ou json");
+            else error(join(path, "format"), "expected value: text or json");
         }
         if (auto o = optional_string(node, "output", path)) log.output = *o;
         return log;
@@ -229,7 +229,7 @@ private:
             const auto ppath = join(path, to_string(kind));
             check_keys(*port, ppath, {"listen", "upstream", "server_name"});
             PortConfig pc;
-            if (!(*port)["listen"].IsDefined()) error(join(ppath, "listen"), "valeur obligatoire manquante");
+            if (!(*port)["listen"].IsDefined()) error(join(ppath, "listen"), "missing required value");
             if (auto ep = read_endpoint(*port, "listen", ppath)) pc.listen = *ep;
             pc.upstream = read_endpoint(*port, "upstream", ppath);
             pc.server_name = optional_string(*port, "server_name", ppath);
@@ -242,9 +242,9 @@ private:
         check_keys(node, path, {"address", "port", "dial_timeout", "dial_retries", "dial_backoff"});
         if (auto a = required_string(node, "address", path)) d.endpoint.host = *a;
         std::uint32_t port = 0;
-        if (!node["port"].IsDefined()) error(join(path, "port"), "valeur obligatoire manquante");
+        if (!node["port"].IsDefined()) error(join(path, "port"), "missing required value");
         read_uint(node, "port", path, port);
-        if (port > 65535) error(join(path, "port"), "port hors de la plage 1–65535");
+        if (port > 65535) error(join(path, "port"), "port out of range 1–65535");
         else d.endpoint.port = static_cast<std::uint16_t>(port);
         read_duration(node, "dial_timeout", path, d.dial_timeout);
         read_uint(node, "dial_retries", path, d.dial_retries);
@@ -267,7 +267,7 @@ private:
         if (auto m = optional_string(node, "revoke_mode", path)) {
             if (*m == "immediate") w.revoke_mode = RevokeMode::immediate;
             else if (*m == "next_renegotiation") w.revoke_mode = RevokeMode::next_renegotiation;
-            else error(join(path, "revoke_mode"), "valeur attendue : immediate ou next_renegotiation");
+            else error(join(path, "revoke_mode"), "expected value: immediate or next_renegotiation");
         }
         return w;
     }
@@ -285,32 +285,32 @@ bool valid_instance_name(std::string_view name) {
 }
 
 void validate(const Config& cfg, std::vector<Issue>& errors, std::vector<Issue>& warnings) {
-    (void)warnings;  // aucun avertissement défini pour l'instant
+    (void)warnings;  // no warnings defined yet
     auto err = [&](std::string path, std::string message) { errors.push_back({std::move(path), std::move(message)}); };
     const bool client = cfg.mode == Mode::client;
 
     if (!valid_instance_name(cfg.instance)) {
-        err("instance", "nom invalide : 1 à 32 caractères parmi lettres, chiffres, - et _");
+        err("instance", "invalid name: 1 to 32 characters from letters, digits, - and _");
     }
-    if (cfg.admin.endpoint && cfg.admin.endpoint->empty()) err("admin.endpoint", "valeur vide");
+    if (cfg.admin.endpoint && cfg.admin.endpoint->empty()) err("admin.endpoint", "empty value");
 
     // Ports
-    if (cfg.ports.empty()) err("ports", "aucun port configuré");
+    if (cfg.ports.empty()) err("ports", "no port configured");
     for (const auto& [kind, port] : cfg.ports) {
         const auto path = "ports." + std::string(to_string(kind));
-        if (port.listen.port == 0) err(path + ".listen", "port hors de la plage 1–65535");
-        if (!is_ip_literal(port.listen.host)) err(path + ".listen", "l'adresse d'écoute doit être une adresse IP");
+        if (port.listen.port == 0) err(path + ".listen", "port out of range 1–65535");
+        if (!is_ip_literal(port.listen.host)) err(path + ".listen", "the listen address must be an IP address");
         if (client) {
-            if (!port.upstream) err(path + ".upstream", "valeur obligatoire en mode client");
-            else if (port.upstream->port == 0) err(path + ".upstream", "port hors de la plage 1–65535");
-            if (port.server_name && kind == PortKind::plain) err(path + ".server_name", "sans objet pour le port plain");
+            if (!port.upstream) err(path + ".upstream", "required in client mode");
+            else if (port.upstream->port == 0) err(path + ".upstream", "port out of range 1–65535");
+            if (port.server_name && kind == PortKind::plain) err(path + ".server_name", "not applicable to the plain port");
         } else {
-            if (port.upstream) err(path + ".upstream", "sans objet en mode serveur (utiliser destination)");
-            if (port.server_name) err(path + ".server_name", "sans objet en mode serveur");
+            if (port.upstream) err(path + ".upstream", "not applicable in server mode (use destination)");
+            if (port.server_name) err(path + ".server_name", "not applicable in server mode");
         }
     }
-    // Deux ports ne peuvent pas écouter sur la même adresse ; une adresse joker
-    // (0.0.0.0, ::) entre en conflit avec toute adresse sur le même port.
+    // Two ports cannot listen on the same address; a wildcard address
+    // (0.0.0.0, ::) conflicts with any address on the same port.
     for (auto a = cfg.ports.begin(); a != cfg.ports.end(); ++a) {
         for (auto b = std::next(a); b != cfg.ports.end(); ++b) {
             const auto& la = a->second.listen;
@@ -318,60 +318,60 @@ void validate(const Config& cfg, std::vector<Issue>& errors, std::vector<Issue>&
             if (la.port != lb.port || la.port == 0) continue;
             if (la.host == lb.host || is_wildcard_address(la.host) || is_wildcard_address(lb.host)) {
                 err("ports." + std::string(to_string(b->first)) + ".listen",
-                    "même adresse d'écoute que ports." + std::string(to_string(a->first)));
+                    "same listen address as ports." + std::string(to_string(a->first)));
             }
         }
     }
 
     const bool uses_tls = cfg.ports.count(PortKind::tls) != 0 || cfg.ports.count(PortKind::mtls) != 0;
     if (uses_tls && (!cfg.credentials || cfg.credentials->pki_root.empty())) {
-        err("credentials.pki_root", "obligatoire quand un port tls ou mtls est configuré");
+        err("credentials.pki_root", "required when a tls or mtls port is configured");
     }
 
-    // Mode client / serveur
+    // Client / server mode
     if (client) {
-        if (cfg.destination) err("destination", "sans objet en mode client");
-        if (cfg.whitelist) err("whitelist", "sans objet en mode client");
+        if (cfg.destination) err("destination", "not applicable in client mode");
+        if (cfg.whitelist) err("whitelist", "not applicable in client mode");
         if (cfg.source_address && !is_ip_literal(*cfg.source_address)) {
-            err("source_address", "adresse IP attendue");
+            err("source_address", "IP address expected");
         }
     } else {
-        if (cfg.source_address) err("source_address", "sans objet en mode serveur");
+        if (cfg.source_address) err("source_address", "not applicable in server mode");
         if (!cfg.destination) {
-            err("destination", "obligatoire en mode serveur");
+            err("destination", "required in server mode");
         } else {
             const auto& d = *cfg.destination;
-            if (d.endpoint.host.empty()) err("destination.address", "valeur obligatoire");
-            if (d.endpoint.port == 0) err("destination.port", "port hors de la plage 1–65535");
-            if (d.dial_timeout.count() <= 0) err("destination.dial_timeout", "doit être supérieur à 0");
-            if (d.dial_retries < 1 || d.dial_retries > 10) err("destination.dial_retries", "doit être compris entre 1 et 10");
+            if (d.endpoint.host.empty()) err("destination.address", "required value");
+            if (d.endpoint.port == 0) err("destination.port", "port out of range 1–65535");
+            if (d.dial_timeout.count() <= 0) err("destination.dial_timeout", "must be greater than 0");
+            if (d.dial_retries < 1 || d.dial_retries > 10) err("destination.dial_retries", "must be between 1 and 10");
         }
-        if (!cfg.whitelist) err("whitelist", "obligatoire en mode serveur");
-        else if (cfg.whitelist->file.empty()) err("whitelist.file", "valeur obligatoire");
+        if (!cfg.whitelist) err("whitelist", "required in server mode");
+        else if (cfg.whitelist->file.empty()) err("whitelist.file", "required value");
     }
 
-    // Limites (SPEC §5.2)
+    // Limits (SPEC §5.2)
     const auto& l = cfg.limits;
-    if (l.idle_timeout.count() <= 0) err("limits.idle_timeout", "doit être supérieur à 0");
-    if (l.session_lifetime.count() <= 0) err("limits.session_lifetime", "doit être supérieur à 0");
-    if (l.idle_timeout >= l.session_lifetime) err("limits.idle_timeout", "doit être inférieur à limits.session_lifetime");
+    if (l.idle_timeout.count() <= 0) err("limits.idle_timeout", "must be greater than 0");
+    if (l.session_lifetime.count() <= 0) err("limits.session_lifetime", "must be greater than 0");
+    if (l.idle_timeout >= l.session_lifetime) err("limits.idle_timeout", "must be less than limits.session_lifetime");
     if (l.renegotiation_grace * 2 >= l.session_lifetime) {
-        err("limits.renegotiation_grace", "doit être inférieur à la moitié de limits.session_lifetime");
+        err("limits.renegotiation_grace", "must be less than half of limits.session_lifetime");
     }
-    if (l.session_jitter > 0.5) err("limits.session_jitter", "ne doit pas dépasser 50%");
-    if (l.resume_buffer < (64ULL << 10)) err("limits.resume_buffer", "doit être au moins 64KiB");
-    if (l.handshake_timeout.count() <= 0) err("limits.handshake_timeout", "doit être supérieur à 0");
+    if (l.session_jitter > 0.5) err("limits.session_jitter", "must not exceed 50%");
+    if (l.resume_buffer < (64ULL << 10)) err("limits.resume_buffer", "must be at least 64KiB");
+    if (l.handshake_timeout.count() <= 0) err("limits.handshake_timeout", "must be greater than 0");
     if (l.keepalive_interval.count() != 0 && l.keepalive_interval < std::chrono::seconds(1)) {
-        err("limits.keepalive_interval", "doit valoir 0 (désactivé) ou au moins 1s");
+        err("limits.keepalive_interval", "must be 0 (disabled) or at least 1s");
     }
-    if (l.max_channels < 1 || l.max_channels > 100000) err("limits.max_channels", "doit être compris entre 1 et 100000");
-    if (l.shutdown_timeout.count() < 0) err("limits.shutdown_timeout", "ne doit pas être négatif");
+    if (l.max_channels < 1 || l.max_channels > 100000) err("limits.max_channels", "must be between 1 and 100000");
+    if (l.shutdown_timeout.count() < 0) err("limits.shutdown_timeout", "must not be negative");
 
-    // Journalisation
+    // Logging
     if (cfg.logging.output.empty()) {
-        err("logging.output", "valeur obligatoire (stderr ou chemin de fichier)");
+        err("logging.output", "required value (stderr or file path)");
     } else if (cfg.logging.output == "syslog" || cfg.logging.output == "eventlog") {
-        err("logging.output", "« " + cfg.logging.output + " » n'est pas encore pris en charge par cette version");
+        err("logging.output", "\"" + cfg.logging.output + "\" is not yet supported by this version");
     }
 }
 
@@ -382,8 +382,8 @@ LoadResult load_config_string(std::string_view yaml) {
         root = YAML::Load(std::string(yaml));
     } catch (const YAML::Exception& e) {
         std::ostringstream where;
-        where << "ligne " << (e.mark.line + 1) << ", colonne " << (e.mark.column + 1);
-        result.errors.push_back({where.str(), "syntaxe YAML invalide : " + e.msg});
+        where << "line " << (e.mark.line + 1) << ", column " << (e.mark.column + 1);
+        result.errors.push_back({where.str(), "invalid YAML syntax: " + e.msg});
         return result;
     }
 
@@ -400,7 +400,7 @@ LoadResult load_config_file(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         LoadResult result;
-        result.errors.push_back({path.string(), "fichier illisible"});
+        result.errors.push_back({path.string(), "unreadable file"});
         return result;
     }
     std::ostringstream text;

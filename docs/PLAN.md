@@ -1,60 +1,60 @@
-# tlsrelay — Plan de développement
+# tlsrelay — Development plan
 
-> Version 1.0 du plan, consolidée à partir des décisions prises lors du cadrage.
-> La spécification technique détaillée est dans [`SPEC.md`](SPEC.md).
+> Version 1.0 of the plan, consolidated from the decisions made during scoping.
+> The detailed technical specification is in [`SPEC.md`](SPEC.md).
 
-## 1. Objet
+## 1. Purpose
 
-`tlsrelay` est un relais TCP en ligne de commande qui transporte les données d'une application vers une destination, à travers un réseau non maîtrisé, selon trois niveaux de protection :
+`tlsrelay` is a command-line TCP relay that carries an application's data to a destination, across an untrusted network, with three levels of protection:
 
 | Port | Mode | Protection |
 |---|---|---|
-| Port 1 | Clair | Aucune (relais simple) |
-| Port 2 | TLS 1.3 | Chiffrement, authentification du serveur |
-| Port 3 | mTLS (TLS 1.3) | Chiffrement, authentification mutuelle par certificats |
+| Port 1 | Plaintext | None (simple relay) |
+| Port 2 | TLS 1.3 | Encryption, server authentication |
+| Port 3 | mTLS (TLS 1.3) | Encryption, mutual certificate authentication |
 
-Il fonctionne toujours **par paire** : un `tlsrelay` en mode client et un `tlsrelay` en mode serveur.
+It always works **in pairs**: one `tlsrelay` in client mode and one `tlsrelay` in server mode.
 
 ```
-App ──clair──► [tlsrelay CLIENT] ══ clair / TLS 1.3 / mTLS ══► [tlsrelay SERVEUR] ──clair──► Destination
-                                    (protocole de tunnel)                               (adresse:port)
+App ──plain──► [tlsrelay CLIENT] ══ plain / TLS 1.3 / mTLS ══► [tlsrelay SERVER] ──plain──► Destination
+                                    (tunnel protocol)                                (address:port)
 ```
 
-Le projet comprend deux livrables :
+The project has two deliverables:
 
-- **Livraison 1** : le service `tlsrelay` (Windows 64 bits et Linux), avec une mini-AC en ligne de commande.
-- **Livraison 1.1** : l'éditeur graphique Windows `tlsrelay-admin` (configuration et PKI).
+- **Release 1**: the `tlsrelay` service (64-bit Windows and Linux), with a command-line mini-CA.
+- **Release 1.1**: the `tlsrelay-admin` Windows graphical editor (configuration and PKI).
 
-## 2. Décisions de cadrage
+## 2. Scoping decisions
 
-| Sujet | Décision |
+| Topic | Decision |
 |---|---|
-| Langage | C++20 (coroutines) |
-| Réseau | Asio (IOCP sous Windows, epoll sous Linux) |
-| TLS | OpenSSL via `asio::ssl`, liaison dynamique |
-| Version OpenSSL | 3.0 minimum (API 3.0 uniquement). Linux : OpenSSL de la distribution. Windows : OpenSSL 3.5 LTS livré avec l'application |
-| FIPS | Non requis |
-| Plateformes | Windows 10 / Server 2019 et plus (64 bits), Linux (Ubuntu 22.04, RHEL 9 et équivalents) |
-| Build | CMake + vcpkg ; MSVC 2022, GCC ≥ 12, Clang ≥ 16 |
-| Bibliothèques | yaml-cpp, spdlog, CLI11, GoogleTest ; Qt 6 pour l'éditeur (v1.1) |
-| Mode client | Entrée en clair depuis l'application ; sortie clair, TLS 1.3 ou mTLS vers le `tlsrelay` serveur selon le port |
-| Mode serveur | Entrée clair, TLS 1.3 ou mTLS ; sortie **en clair** vers une destination unique (adresse et port) configurable |
-| Pair distant | Toujours un `tlsrelay`. Protocole de tunnel obligatoire, identifiant ALPN `tlsrelay/1` |
-| Canaux | Plusieurs canaux en parallèle par port ; une session tunnel par canal |
-| Rotation à chaud | Bi-clé, certificat, AC intermédiaires et racine. Les nouvelles connexions passent sur la nouvelle génération ; les connexions ouvertes finissent sur l'ancienne, qui est libérée quand elle n'a plus de connexion |
-| Changement de racine | Procédure en 3 étapes : pré-confiance, bascule, retrait |
-| Inactivité | `idle_timeout` sur les 3 ports |
-| Durée de session | `session_lifetime` sur les ports 2 et 3 uniquement |
-| Renégociation | Handshake complet (nouvelles clés, nouveaux certificats, nouvelle vérification de la chaîne), **transparente** pour l'application et la destination |
-| Destination indisponible | 3 essais avec attente croissante, puis fermeture du canal |
-| PROXY protocol | Non |
-| Liste blanche (serveur) | Pairs autorisés à se connecter, définis par IP (ou plage CIDR) et sujet, limitables à certains ports. Ports 1 et 2 : contrôle de l'IP. Port 3 : IP + sujet (DN exact) + émission par l'AC Clients |
-| Hiérarchie PKI | Une racine (ECDSA P-384), deux AC intermédiaires : AC Serveurs (`serverAuth`) et AC Clients (`clientAuth`), en P-384. Certificats des `tlsrelay` en ECDSA P-256 |
-| Remise des bi-clés | Par demande de signature (CSR) : la clé privée est générée sur la machine `tlsrelay` et ne la quitte jamais |
-| AC racine | Sur un poste d'administration dédié, clé chiffrée au repos |
-| Logs | Niveaux `error`, `info`, `debug` (`-v`), `trace` (`-vv`) ; catégories `activity` et `config` ; changement de niveau à chaud ; aucun secret ni contenu relayé dans les logs |
-| Cycle de vie | Service systemd / Windows ; démarrage au boot ; `stop` (drain de 30 s par défaut), `restart`, `kill`, `reload` ; instances nommées |
-| Éditeur Windows | Qt 6, partage la bibliothèque `libtlsrelay-core` (mêmes règles de validation que le service), intègre l'AC racine |
+| Language | C++20 (coroutines) |
+| Networking | Asio (IOCP on Windows, epoll on Linux) |
+| TLS | OpenSSL via `asio::ssl`, dynamically linked |
+| OpenSSL version | 3.0 minimum (3.0 API only). Linux: the distribution's OpenSSL. Windows: OpenSSL 3.5 LTS shipped with the application |
+| FIPS | Not required |
+| Platforms | Windows 10 / Server 2019 and later (64-bit), Linux (Ubuntu 22.04, RHEL 9 and equivalents) |
+| Build | CMake + vcpkg; MSVC 2022, GCC ≥ 12, Clang ≥ 16 |
+| Libraries | yaml-cpp, spdlog, CLI11, GoogleTest; Qt 6 for the editor (v1.1) |
+| Client mode | Plaintext input from the application; plaintext, TLS 1.3 or mTLS output to the server `tlsrelay` depending on the port |
+| Server mode | Plaintext, TLS 1.3 or mTLS input; **plaintext** output to a single configurable destination (address and port) |
+| Remote peer | Always a `tlsrelay`. Tunnel protocol mandatory, ALPN identifier `tlsrelay/1` |
+| Channels | Several parallel channels per port; one tunnel session per channel |
+| Hot rotation | Key pair, certificate, intermediate and root CAs. New connections move to the new generation; open connections finish on the old one, which is released when it has no connections left |
+| Root change | 3-step procedure: pre-trust, switchover, withdrawal |
+| Inactivity | `idle_timeout` on all 3 ports |
+| Session lifetime | `session_lifetime` on ports 2 and 3 only |
+| Renegotiation | Full handshake (new keys, new certificates, new chain verification), **transparent** to the application and the destination |
+| Destination unavailable | 3 attempts with increasing delay, then the channel is closed |
+| PROXY protocol | No |
+| Whitelist (server) | Peers allowed to connect, defined by IP (or CIDR range) and subject, can be restricted to certain ports. Ports 1 and 2: IP check. Port 3: IP + subject (exact DN) + issued by the Clients CA |
+| PKI hierarchy | One root (ECDSA P-384), two intermediate CAs: Servers CA (`serverAuth`) and Clients CA (`clientAuth`), in P-384. `tlsrelay` certificates in ECDSA P-256 |
+| Key pair delivery | Via a certificate signing request (CSR): the private key is generated on the `tlsrelay` machine and never leaves it |
+| Root CA | On a dedicated administration workstation, key encrypted at rest |
+| Logs | Levels `error`, `info`, `debug` (`-v`), `trace` (`-vv`); categories `activity` and `config`; hot log-level change; no secrets or relayed content in the logs |
+| Lifecycle | systemd / Windows service; start at boot; `stop` (30 s drain by default), `restart`, `kill`, `reload`; named instances |
+| Windows editor | Qt 6, shares the `libtlsrelay-core` library (same validation rules as the service), includes the root CA |
 
 ## 3. Architecture
 
@@ -62,183 +62,183 @@ Le projet comprend deux livrables :
              ┌───────────────────────────────┐
              │       libtlsrelay-core        │  C++20 + OpenSSL 3
              │  config · validation · PKI    │
-             │  protocole de tunnel · logs   │
+             │  tunnel protocol · logs       │
              └───────┬───────────────┬───────┘
                      │               │
           ┌──────────▼───┐    ┌──────▼─────────────┐
           │  tlsrelay    │    │  tlsrelay-admin    │
-          │  (service)   │    │  (éditeur Windows) │
-          │ Win + Linux  │    │  Livraison 1.1     │
+          │  (service)   │    │  (Windows editor)  │
+          │ Win + Linux  │    │  Release 1.1       │
           └──────────────┘    └────────────────────┘
 ```
 
-Modules principaux de `libtlsrelay-core` :
+Main modules of `libtlsrelay-core`:
 
-| Module | Rôle |
+| Module | Role |
 |---|---|
-| `config` | Lecture YAML, modèle de configuration, validation (partagée avec l'éditeur) |
-| `whitelist` | Chargement et correspondance de la liste blanche |
-| `pki` | Générations de certificats, chargement et validation des répertoires PKI, CSR, mini-AC |
-| `tls` | Un `SSL_CTX` par génération ; vérification des chaînes et de l'AC émettrice |
-| `tunnel` | Encodage des trames, numérotation, ACK, reprise (`RESUME`) |
-| `channel` | Machine à états d'un canal, timers (inactivité, durée de vie) |
-| `relay` | Listeners, dialers, copie bidirectionnelle |
-| `admin` | Canal d'administration (socket Unix / named pipe) |
-| `log` | Journalisation structurée, niveaux et catégories |
-| `platform` | Abstractions OS : service, signaux, droits sur fichiers |
+| `config` | YAML reading, configuration model, validation (shared with the editor) |
+| `whitelist` | Whitelist loading and matching |
+| `pki` | Certificate generations, loading and validation of PKI directories, CSR, mini-CA |
+| `tls` | One `SSL_CTX` per generation; verification of chains and of the issuing CA |
+| `tunnel` | Frame encoding, sequence numbering, ACK, resumption (`RESUME`) |
+| `channel` | Channel state machine, timers (inactivity, lifetime) |
+| `relay` | Listeners, dialers, bidirectional copy |
+| `admin` | Administration channel (Unix socket / named pipe) |
+| `log` | Structured logging, levels and categories |
+| `platform` | OS abstractions: service, signals, file permissions |
 
-## 4. Planning
+## 4. Schedule
 
-### Livraison 1 : service `tlsrelay` — environ 12 semaines
+### Release 1: `tlsrelay` service — about 12 weeks
 
-| Phase | Contenu | Charge |
+| Phase | Content | Effort |
 |---|---|---|
-| 0 | Spécification : protocole de tunnel, config, liste blanche, états d'un canal, rotation | 2 j |
-| 1 | Socle : CMake et vcpkg, `libtlsrelay-core`, CLI, logs et mode verbose, relais clair, multi-canaux, `idle_timeout` | 5 j |
-| 2 | TLS 1.3 avec OpenSSL et `asio::ssl`, ALPN `tlsrelay/1` | 3 j |
-| 3 | mTLS et liste blanche (IP, sujet, AC émettrice) | 4 j |
-| 4 | Rotation à chaud jusqu'à la racine, un `SSL_CTX` par génération, `check-pki` | 6 j |
-| 5 | Protocole de tunnel, renégociation transparente, 3 essais vers la destination | 8 j |
-| 6 | Cycle de vie : services systemd et Windows, boot, stop, restart, kill, instances nommées, canal d'administration, métriques | 4 j |
-| 7 | PKI en ligne de commande : `pki gen-csr`, `pki install`, mini-AC (`ca init`, `ca sign`) | 3 j |
-| 8 | Durcissement : sanitizers, fuzzing, analyse statique | 6 j |
-| 9 | Outillage de test : `tlsrelay-testkit`, fabrique de PKI de test, environnements croisés, perturbations réseau, endurance | 10 j |
-| 10 | Campagne de sécurité interne, kit et cahier de recette, grille de test d'intrusion | 5 j |
-| 11 | Packaging (`.deb`, `.rpm`, `.msi` avec OpenSSL 3.5) et documentation | 3 j |
-| | Recette | 2 j |
+| 0 | Specification: tunnel protocol, config, whitelist, channel states, rotation | 2 d |
+| 1 | Foundation: CMake and vcpkg, `libtlsrelay-core`, CLI, logs and verbose mode, plaintext relay, multiple channels, `idle_timeout` | 5 d |
+| 2 | TLS 1.3 with OpenSSL and `asio::ssl`, ALPN `tlsrelay/1` | 3 d |
+| 3 | mTLS and whitelist (IP, subject, issuing CA) | 4 d |
+| 4 | Hot rotation up to the root, one `SSL_CTX` per generation, `check-pki` | 6 d |
+| 5 | Tunnel protocol, transparent renegotiation, 3 attempts to the destination | 8 d |
+| 6 | Lifecycle: systemd and Windows services, boot, stop, restart, kill, named instances, administration channel, metrics | 4 d |
+| 7 | Command-line PKI: `pki gen-csr`, `pki install`, mini-CA (`ca init`, `ca sign`) | 3 d |
+| 8 | Hardening: sanitizers, fuzzing, static analysis | 6 d |
+| 9 | Test tooling: `tlsrelay-testkit`, test PKI factory, cross-platform environments, network disturbances, soak testing | 10 d |
+| 10 | Internal security campaign, acceptance kit and test plan, penetration test checklist | 5 d |
+| 11 | Packaging (`.deb`, `.rpm`, `.msi` with OpenSSL 3.5) and documentation | 3 d |
+| | Acceptance | 2 d |
 
-### Livraison 1.1 : éditeur `tlsrelay-admin` — environ 6 semaines
+### Release 1.1: `tlsrelay-admin` editor — about 6 weeks
 
-| Lot | Contenu | Charge |
+| Work package | Content | Effort |
 |---|---|---|
-| A | Adaptation de `libtlsrelay-core` pour l'éditeur | 3 j |
-| B | Éditeur de configuration Qt : formulaires, validation à la saisie, liste blanche, aperçu des différences, export des paquets de déploiement | 8 j |
-| C | Module PKI : AC racine et intermédiaires, signature des CSR, inventaire, révocation (CRL), assistant de rotation et de changement de racine, journal d'audit ; reprise du répertoire de la mini-AC | 10 j |
-| D | Tests (Qt Test, parité de validation éditeur/service), installeur, documentation | 9 j |
+| A | Adapting `libtlsrelay-core` for the editor | 3 d |
+| B | Qt configuration editor: forms, validation on input, whitelist, diff preview, deployment package export | 8 d |
+| C | PKI module: root and intermediate CAs, CSR signing, inventory, revocation (CRL), rotation and root change wizard, audit log; opening the mini-CA directory | 10 d |
+| D | Tests (Qt Test, editor/service validation parity), installer, documentation | 9 d |
 
-Découpage en phases, chacune sur sa branche, validée par la CI puis fusionnée :
+Breakdown into phases, each on its own branch, validated by CI and then merged:
 
-| Phase | Lot | Contenu |
+| Phase | Work package | Content |
 |---|---|---|
-| 12 | A | Socle de l'éditeur dans `libtlsrelay-core` : écriture normalisée de la configuration et de la liste blanche, différences de texte ; mini-AC : révocation, CRL, journal d'audit chaîné ; application des CRL par le service (SPEC §7.7) |
-| 13 | B | Application Qt `tlsrelay-admin` : formulaires de configuration, validation à la saisie (règles du service), liste blanche, aperçu des différences, export des paquets de déploiement ; Qt en CI (Linux et Windows) |
-| 14 | C | Module PKI de l'éditeur : AC, signature des CSR, inventaire, révocation et CRL, assistants de renouvellement et de changement de racine, journal d'audit |
-| 15 | D | Tests Qt Test et parité de validation, fonctionnalité « tlsrelay-admin » du MSI (DLL Qt, avis LGPL), documentation, recette de l'éditeur |
+| 12 | A | Editor foundation in `libtlsrelay-core`: normalized writing of the configuration and whitelist, text diffs; mini-CA: revocation, CRL, hash-chained audit log; CRL enforcement by the service (SPEC §7.7) |
+| 13 | B | `tlsrelay-admin` Qt application: configuration forms, validation on input (the service's rules), whitelist, diff preview, deployment package export; Qt in CI (Linux and Windows) |
+| 14 | C | Editor PKI module: CA, CSR signing, inventory, revocation and CRL, renewal and root change wizards, audit log |
+| 15 | D | Qt Test tests and validation parity, "tlsrelay-admin" MSI feature (Qt DLLs, LGPL notice), documentation, editor acceptance |
 
-Décisions de la livraison 1.1 :
+Release 1.1 decisions:
 
-| Sujet | Décision |
+| Topic | Decision |
 |---|---|
-| Révocation | CRL publiées par l'AC (`ca crl`, éditeur) et **appliquées par le service** : `<pki_root>/crl.pem`, rechargé à chaud, canaux du pair révoqué fermés (SPEC §7.7) |
-| Licence de Qt | Qt 6 sous LGPLv3, liaison dynamique : DLL Qt non modifiées livrées avec l'éditeur, texte de la LGPL et offre des sources de Qt dans les avis des composants tiers |
-| Plateformes de l'éditeur | Livré sous Windows (fonctionnalité du MSI) ; compilé et testé aussi sous Linux en CI, sans paquet Linux |
-| Enregistrement d'une configuration | Réécriture normalisée (`to_yaml`) : les commentaires du fichier d'origine ne sont pas conservés ; l'aperçu des différences le montre et une copie `.bak` de l'original est gardée |
-| Journal d'audit de l'AC | `<ac>/audit.log`, une ligne par opération, chaîné par SHA-256 ; écrit par la ligne de commande et par l'éditeur |
+| Revocation | CRLs published by the CA (`ca crl`, editor) and **enforced by the service**: `<pki_root>/crl.pem`, hot-reloaded, channels of the revoked peer closed (SPEC §7.7) |
+| Qt license | Qt 6 under LGPLv3, dynamic linking: unmodified Qt DLLs shipped with the editor, LGPL text and Qt source offer in the third-party notices |
+| Editor platforms | Shipped on Windows (MSI feature); also built and tested on Linux in CI, without a Linux package |
+| Saving a configuration | Normalized rewrite (`to_yaml`): comments from the original file are not kept; the diff preview shows this and a `.bak` copy of the original is kept |
+| CA audit log | `<ca>/audit.log`, one line per operation, SHA-256 hash-chained; written by the command line and by the editor |
 
-## 5. Stratégie de tests
+## 5. Test strategy
 
-### 5.1 Principes
+### 5.1 Principles
 
-- **Traçabilité** : chaque exigence est reliée aux tests qui la vérifient (matrice de traçabilité ; liste complète des exigences : [SPEC §11](SPEC.md#11-requirements) ; matrice exigences/tests : [TESTS.md §4](TESTS.md#4-requirements-coverage)). Une exigence sans test vert n'est pas livrée.
-- **Tests écrits avec le code** : une phase n'est terminée que si ses tests passent.
-- **Double plateforme** : tous les tests automatisés passent sous Windows et Linux, contre OpenSSL 3.0 et 3.5.
-- **Intégrité de bout en bout** : un générateur envoie un flux pseudo-aléatoire reproductible ; le récepteur compare l'empreinte SHA-256. Cela prouve l'absence de perte, de doublon et de réordonnancement, notamment pendant les renégociations.
-- **Horloge injectable** : les tests unitaires des délais (inactivité, durée de vie, essais vers la destination) sont déterministes et rapides.
+- **Traceability**: each requirement is linked to the tests that verify it (traceability matrix; full list of requirements: [SPEC §11](SPEC.md#11-requirements); requirements/tests matrix: [TESTS.md §4](TESTS.md#4-requirements-coverage)). A requirement without a passing test is not delivered.
+- **Tests written with the code**: a phase is only done when its tests pass.
+- **Dual platform**: all automated tests pass on Windows and Linux, against OpenSSL 3.0 and 3.5.
+- **End-to-end integrity**: a generator sends a reproducible pseudo-random stream; the receiver compares the SHA-256 digest. This proves there is no loss, duplication or reordering, in particular during renegotiations.
+- **Injectable clock**: unit tests of timeouts (inactivity, lifetime, dial attempts to the destination) are deterministic and fast.
 
-### 5.2 Niveaux de tests
+### 5.2 Test levels
 
-| Niveau | Outils | Contenu | Objectif |
+| Level | Tools | Content | Target |
 |---|---|---|---|
-| Unitaires | GoogleTest | Config et validation ; liste blanche ; trames ; numérotation et ACK ; jeton de reprise ; générations ; machines à états ; essais vers la destination ; masquage des secrets dans les logs | Couverture ≥ 85 % de `libtlsrelay-core` ; 100 % des branches du décodeur de trames, de la liste blanche et de la validation. Objectif porté à 90 % des lignes de tout le code livré, contrôlé par la CI ; mesure : [TESTS.md §6](TESTS.md#6-code-coverage) |
-| Intégration | GoogleTest + OpenSSL réel en local | Handshakes TLS 1.3 et mTLS, rotation, renégociation, inactivité | Tous les scénarios du catalogue |
-| Système | Binaires réels + `tlsrelay-testkit` | Chaîne complète, combinaisons croisées Windows ↔ Linux | Toutes les exigences, sur les deux OS |
-| Perturbations réseau | toxiproxy, `tc netem` | Latence, pertes, coupures pendant un transfert et une renégociation | Reprise sans perte, ou fermeture propre |
-| Sécurité | Voir 5.4 | Cas d'attaque, fuzzing, analyse TLS | Aucun défaut critique |
-| Performance et endurance | testkit | Débit, latence ajoutée, nombre de canaux, handshakes ; endurance 72 h | Voir 5.6 |
-| Cycle de vie | VM Windows et Linux | Installation, boot, stop, restart, kill, instances nommées, droits du canal d'administration | 100 % des scénarios |
-| Recette | Kit de recette | Scénarios métier | Procès-verbal signé |
+| Unit | GoogleTest | Config and validation; whitelist; frames; numbering and ACK; resumption token; generations; state machines; dial attempts to the destination; masking of secrets in logs | ≥ 85% coverage of `libtlsrelay-core`; 100% of branches in the frame decoder, the whitelist and validation. Target raised to 90% of lines of all shipped code, enforced by CI; measurement: [TESTS.md §6](TESTS.md#6-code-coverage) |
+| Integration | GoogleTest + real OpenSSL locally | TLS 1.3 and mTLS handshakes, rotation, renegotiation, inactivity | All scenarios in the catalog |
+| System | Real binaries + `tlsrelay-testkit` | Full chain, Windows ↔ Linux cross combinations | All requirements, on both OSes |
+| Network disturbances | toxiproxy, `tc netem` | Latency, losses, cuts during a transfer and during a renegotiation | Resumption without loss, or clean close |
+| Security | See 5.4 | Attack cases, fuzzing, TLS analysis | No critical defect |
+| Performance and soak | testkit | Throughput, added latency, number of channels, handshakes; 72 h soak | See 5.6 |
+| Lifecycle | Windows and Linux VMs | Installation, boot, stop, restart, kill, named instances, administration channel permissions | 100% of scenarios |
+| Acceptance | Acceptance kit | Business scenarios | Signed acceptance report |
 
-### 5.3 Catalogue de scénarios (extrait de la matrice de traçabilité)
+### 5.3 Scenario catalog (extract from the traceability matrix)
 
-| Exigence | Scénarios |
+| Requirement | Scenarios |
 |---|---|
-| 3 ports / 3 modes | Transfert dans chaque mode, empreinte vérifiée ; port 2 refuse TLS 1.2 ; port 3 exige un certificat |
-| Multi-canaux | 1, 100 puis 5 000 canaux en parallèle avec vérification par canal ; pas de fuite de mémoire, de descripteurs ou de handles |
-| Rotation bi-clé / certificat | Canaux longs sur gen1, rotation, nouveaux canaux sur gen2, gen1 libérée quand son compteur tombe à 0 |
-| Rotation des AC jusqu'à la racine | Les 3 étapes ; bascule prématurée (échec attendu, message clair) ; répertoire incomplet ou clé incohérente (rejet, service maintenu) ; rotation d'une seule AC intermédiaire |
-| `idle_timeout` | Fermeture à l'échéance ; les trames de service ne repoussent pas l'échéance ; s'applique aussi à la liaison vers la destination |
-| Renégociation transparente | Transfert continu de plusieurs Go pendant 20 renégociations : empreinte identique, application et destination jamais coupées ; renégociation pendant une rotation ; pair qui ne renégocie pas (fermeture à la fin du délai de grâce) |
-| Liste blanche | IP non listée (rejet avant handshake) ; IP et DN de deux entrées différentes ; certificat de l'AC Serveurs présenté comme client ; pair retiré pendant une session ; ports 1 et 2 avec contrôle IP seul |
-| Destination indisponible | Exactement 3 essais, délais mesurés ; `OPEN_FAIL` ; aucune perte si l'essai 2 ou 3 réussit |
-| Mode verbose | Contenu attendu à chaque niveau ; changement à chaud ; recherche automatique de secrets et de données relayées dans tous les logs (aucune occurrence tolérée) |
-| Cycle de vie | stop avec drain ; restart ; kill pendant un transfert puis redémarrage propre ; démarrage au boot ; deux instances nommées ; commande refusée à un non-administrateur |
-| PKI en ligne de commande | `gen-csr` → `ca sign` → `pki install` ; refus d'une demande RSA ou d'un sujet en double ; extensions demandées ignorées ; certificats vérifiés aussi par `openssl verify` |
+| 3 ports / 3 modes | Transfer in each mode, digest verified; port 2 refuses TLS 1.2; port 3 requires a certificate |
+| Multiple channels | 1, 100, then 5,000 parallel channels with per-channel verification; no memory, descriptor or handle leaks |
+| Key pair / certificate rotation | Long-lived channels on gen1, rotation, new channels on gen2, gen1 released when its counter drops to 0 |
+| CA rotation up to the root | The 3 steps; premature switchover (expected failure, clear message); incomplete directory or mismatched key (rejected, service keeps running); rotation of a single intermediate CA |
+| `idle_timeout` | Close when it expires; service frames do not push back the deadline; also applies to the link to the destination |
+| Transparent renegotiation | Continuous transfer of several GB over 20 renegotiations: identical digest, application and destination never cut; renegotiation during a rotation; peer that does not renegotiate (closed at the end of the grace period) |
+| Whitelist | Unlisted IP (rejected before handshake); IP and DN from two different entries; Servers CA certificate presented as a client; peer removed during a session; ports 1 and 2 with IP check only |
+| Destination unavailable | Exactly 3 attempts, delays measured; `OPEN_FAIL`; no loss if attempt 2 or 3 succeeds |
+| Verbose mode | Expected content at each level; hot change; automatic search for secrets and relayed data in all logs (zero occurrences tolerated) |
+| Lifecycle | stop with drain; restart; kill during a transfer then clean restart; start at boot; two named instances; command refused to a non-administrator |
+| Command-line PKI | `gen-csr` → `ca sign` → `pki install`; refusal of an RSA request or a duplicate subject; requested extensions ignored; certificates also verified by `openssl verify` |
 
-### 5.4 Campagne de sécurité
+### 5.4 Security campaign
 
-- **Cas d'attaque automatisés** : TLS 1.2, absence d'ALPN `tlsrelay/1`, certificat expiré / pas encore valide / d'une autre PKI / avec un mauvais usage, jeton de reprise rejoué ou falsifié, trame trop grande ou mal formée, numéro de séquence incohérent, inondation de connexions sans handshake.
-- **Fuzzing (libFuzzer)** : décodeur de trames, chargeurs de config et de liste blanche, analyse des CSR. 1 h par nuit ; 24 h cumulées sans crash avant chaque livraison.
-- **Erreurs mémoire** : AddressSanitizer, UndefinedBehaviorSanitizer, ThreadSanitizer (Linux) ; Application Verifier (Windows).
-- **Analyse statique** : `clang-tidy`, `cppcheck`, MSVC `/analyze` ; zéro alerte de sévérité haute.
-- **Configuration TLS** : `testssl.sh` et `sslyze` sur les ports 2 et 3.
-- **Vulnérabilités des dépendances** : vérification à chaque build.
-- **Test d'intrusion interne** avant la mise en production, selon une grille fondée sur les recommandations de l'ANSSI pour TLS.
+- **Automated attack cases**: TLS 1.2, missing `tlsrelay/1` ALPN, certificate expired / not yet valid / from another PKI / with the wrong usage, replayed or forged resumption token, oversized or malformed frame, inconsistent sequence number, flooding with connections that never handshake.
+- **Fuzzing (libFuzzer)**: frame decoder, config and whitelist loaders, CSR parsing. 1 h per night; 24 h cumulative without a crash before each release.
+- **Memory errors**: AddressSanitizer, UndefinedBehaviorSanitizer, ThreadSanitizer (Linux); Application Verifier (Windows).
+- **Static analysis**: `clang-tidy`, `cppcheck`, MSVC `/analyze`; zero high-severity warnings.
+- **TLS configuration**: `testssl.sh` and `sslyze` on ports 2 and 3.
+- **Dependency vulnerabilities**: checked at every build.
+- **Internal penetration test** before going into production, following a checklist based on the ANSSI recommendations for TLS.
 
-### 5.5 Intégration continue
+### 5.5 Continuous integration
 
-| Déclenchement | Contenu | Durée cible |
+| Trigger | Content | Target duration |
 |---|---|---|
-| Chaque commit / pull request | Compilation Windows et Linux, tests unitaires et d'intégration, sanitizers (sélection), `clang-tidy` | < 15 min |
-| Chaque nuit | Bout en bout croisés, perturbations réseau, fuzzing 1 h, ThreadSanitizer complet, OpenSSL 3.0 et 3.5, mesures de performance comparées | < 3 h |
-| Avant livraison | Endurance 72 h, fuzzing cumulé 24 h, `sslyze` / `testssl.sh`, test d'intrusion interne, recette | ~1 semaine |
+| Every commit / pull request | Windows and Linux build, unit and integration tests, sanitizers (selection), `clang-tidy` | < 15 min |
+| Every night | Cross-platform end-to-end, network disturbances, 1 h fuzzing, full ThreadSanitizer, OpenSSL 3.0 and 3.5, compared performance measurements | < 3 h |
+| Before a release | 72 h soak, 24 h cumulative fuzzing, `sslyze` / `testssl.sh`, internal penetration test, acceptance | ~1 week |
 
-### 5.6 Objectifs de performance
+### 5.6 Performance targets
 
-| Indicateur | Objectif |
+| Indicator | Target |
 |---|---|
-| Canaux simultanés | 5 000 |
-| Débit par canal | 100 Mbit/s |
-| Latence ajoutée (local) | < 1 ms |
-| Endurance | 72 h avec rotations et renégociations continues ; mémoire, handles et nombre de générations stables |
+| Concurrent channels | 5,000 |
+| Throughput per channel | 100 Mbit/s |
+| Added latency (local) | < 1 ms |
+| Soak | 72 h with continuous rotations and renegotiations; stable memory, handles and number of generations |
 
-### 5.7 Recette
+### 5.7 Acceptance
 
-Réalisée par le responsable du projet, sur **une seule station Windows** :
+Carried out by the project lead, on **a single Windows workstation**:
 
 ```
-                              station Windows
+                              Windows workstation
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 │ testkit app ──► tlsrelay@rc-client ══(toxiproxy)══► tlsrelay@rc-server ──► testkit destination │
 │  127.0.0.1        127.0.0.2                          127.0.0.3              127.0.0.4          │
 │                                                                                          │
-│ VM Hyper-V Ubuntu 22.04 (commutateur interne) : instance Linux pour les tests croisés    │
+│ Hyper-V VM Ubuntu 22.04 (internal switch): Linux instance for cross-platform tests       │
 └──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Adresses de bouclage multiples pour tester la liste blanche par IP (option `source_address` côté client).
-- Script `recette.ps1` : crée la PKI de test (mini-AC), installe les instances Windows, déploie le paquet `.deb` dans la VM, lance les scénarios Windows ↔ Windows, Windows → Linux et Linux → Windows.
-- Cahier de recette : étapes, résultat attendu, case OK/KO ; étapes manuelles guidées (redémarrage pour le boot, `kill`, changement de racine, niveaux de log).
-- Rapport généré : résultats, empreintes, extraits de logs, versions (`tlsrelay`, OpenSSL, OS).
-- Non couvert sur une seule station : vrai réseau entre machines (NAT, pare-feu, MTU) ; compensé par les tests croisés en intégration continue. Un essai complémentaire sur deux machines est recommandé avant la production.
-- Prérequis : Windows 10/11 Pro ou Entreprise (Hyper-V).
+- Multiple loopback addresses to test the IP whitelist (`source_address` option on the client side).
+- `acceptance.ps1` script: creates the test PKI (mini-CA), installs the Windows instances, deploys the `.deb` package in the VM, runs the Windows ↔ Windows, Windows → Linux and Linux → Windows scenarios.
+- Acceptance test plan: steps, expected result, OK/KO box; guided manual steps (reboot for the boot test, `kill`, root change, log levels).
+- Generated report: results, digests, log excerpts, versions (`tlsrelay`, OpenSSL, OS).
+- Not covered on a single workstation: a real network between machines (NAT, firewall, MTU); compensated for by the cross-platform tests in continuous integration. An additional trial on two machines is recommended before production.
+- Prerequisites: Windows 10/11 Pro or Enterprise (Hyper-V).
 
-### 5.8 Critères de sortie d'une livraison
+### 5.8 Release exit criteria
 
-- 100 % des exigences couvertes par des tests verts, sur les deux OS.
-- Aucun défaut critique ou majeur ouvert.
-- Seuils de couverture atteints : 90 % des lignes du code livré (mesuré à chaque push, [TESTS.md §6](TESTS.md#6-code-coverage)).
-- 24 h de fuzzing sans crash ; aucune alerte des sanitizers.
-- Endurance de 72 h réussie.
-- Objectifs de performance atteints.
-- Procès-verbal de recette signé.
+- 100% of requirements covered by passing tests, on both OSes.
+- No open critical or major defect.
+- Coverage thresholds reached: 90% of lines of the shipped code (measured on every push, [TESTS.md §6](TESTS.md#6-code-coverage)).
+- 24 h of fuzzing without a crash; no sanitizer warnings.
+- 72 h soak test passed.
+- Performance targets met.
+- Signed acceptance report.
 
-## 6. Risques
+## 6. Risks
 
-| Risque | Mesure |
+| Risk | Mitigation |
 |---|---|
-| Défauts mémoire en C++ sur un composant réseau exposé | RAII sur tous les objets OpenSSL, sanitizers, fuzzing, analyse statique, protections du compilateur |
-| Complexité de la renégociation transparente | Spécification formelle des états, tests de bout en bout avec vérification d'empreinte, perturbations réseau |
-| Coupure de service lors d'un changement de racine | Procédure en 3 étapes, garde-fou anti-coupure dans la validation, `check-pki` avant bascule |
-| OpenSSL 3.0 en fin de support | API 3.0 seulement ; OpenSSL 3.5 LTS livré sous Windows ; correctifs Linux via la distribution |
-| Compromission de l'AC racine | Poste d'administration dédié, clé chiffrée, racine utilisée uniquement pour signer les intermédiaires |
-| Recette limitée à une station | Tests croisés entre machines en intégration continue ; essai complémentaire sur deux machines recommandé |
+| Memory defects in C++ on an exposed network component | RAII on all OpenSSL objects, sanitizers, fuzzing, static analysis, compiler protections |
+| Complexity of transparent renegotiation | Formal specification of the states, end-to-end tests with digest verification, network disturbances |
+| Service outage during a root change | 3-step procedure, anti-outage safeguard in validation, `check-pki` before switchover |
+| OpenSSL 3.0 reaching end of support | 3.0 API only; OpenSSL 3.5 LTS shipped on Windows; Linux fixes via the distribution |
+| Compromise of the root CA | Dedicated administration workstation, encrypted key, root used only to sign the intermediates |
+| Acceptance limited to one workstation | Cross-machine tests in continuous integration; additional trial on two machines recommended |

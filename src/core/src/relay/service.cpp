@@ -45,20 +45,20 @@ using asio::ip::tcp;
 using namespace std::chrono_literals;
 constexpr auto use_tuple = asio::as_tuple(asio::use_awaitable);
 
-// Gestionnaire de fin des coroutines détachées : une exception non prévue est
-// journalisée au lieu d'être ignorée.
+// Completion handler for detached coroutines: an unexpected exception is
+// logged instead of being ignored.
 auto log_exceptions(const char* what) {
     return [what](const std::exception_ptr& e) {
         if (!e) return;
         try {
             std::rethrow_exception(e);
         } catch (const std::exception& ex) {
-            logging::activity().error("{} : exception inattendue : {}", what, ex.what());
+            logging::activity().error("{}: unexpected exception: {}", what, ex.what());
         }
     };
 }
 
-// Répond une dernière trame (OPEN_FAIL, RESUME_FAIL...) puis ferme la connexion.
+// Sends one last frame (OPEN_FAIL, RESUME_FAIL...) then closes the connection.
 asio::awaitable<void> reject(std::shared_ptr<Stream> stream, std::string frame) {
     asio::steady_timer guard(co_await asio::this_coro::executor);
     guard.expires_after(1s);
@@ -66,7 +66,7 @@ asio::awaitable<void> reject(std::shared_ptr<Stream> stream, std::string frame) 
         if (!ec) stream->close();
     });
     if (const auto ec = stream->queue(asio::buffer(frame))) {
-        logging::activity().debug("réponse de refus non envoyée : {}", ec.message());
+        logging::activity().debug("rejection reply not sent: {}", ec.message());
     }
     co_await stream->shutdown_send();
     guard.cancel();
@@ -89,13 +89,13 @@ Service::Service(Config config, ServiceOptions options)
       watch_timer_(control_) {
     for (const auto& [kind, port] : config_.ports) {
         if (config_.mode == Mode::client && !port.upstream) {
-            throw std::invalid_argument("ports." + std::string(to_string(kind)) + ".upstream manquant");
+            throw std::invalid_argument("ports." + std::string(to_string(kind)) + ".upstream missing");
         }
     }
-    if (config_.mode == Mode::server && !config_.destination) throw std::invalid_argument("destination manquante");
-    if (config_.mode == Mode::server && !config_.whitelist) throw std::invalid_argument("liste blanche manquante");
+    if (config_.mode == Mode::server && !config_.destination) throw std::invalid_argument("destination missing");
+    if (config_.mode == Mode::server && !config_.whitelist) throw std::invalid_argument("whitelist missing");
     if (config_.source_address) source_address_ = asio::ip::make_address(*config_.source_address);
-    // Canal d'administration en premier : il sert de verrou d'instance.
+    // Administration channel first: it serves as the instance lock.
     if (config_.admin.enabled) {
         const auto endpoint = admin::endpoint_for(config_);
         try {
@@ -104,13 +104,13 @@ Service::Service(Config config, ServiceOptions options)
         } catch (const admin::AlreadyRunning&) {
             throw;
         } catch (const std::exception& e) {
-            // Emplacement par défaut inaccessible (exécution en console sans droits
-            // sur /run/tlsrelay) : le relais fonctionne, sans canal d'administration.
+            // Default location not accessible (console run without rights
+            // on /run/tlsrelay): the relay works, without an administration channel.
             if (config_.admin.endpoint) throw;
-            logging::config().warn("{} ; canal d'administration désactivé (définir admin.endpoint pour l'activer)",
+            logging::config().warn("{}; administration channel disabled (set admin.endpoint to enable it)",
                                    e.what());
         }
-        if (admin_) logging::config().info("canal d'administration : {}", admin_->endpoint());
+        if (admin_) logging::config().info("administration channel: {}", admin_->endpoint());
     }
     load_pki();
     if (config_.mode == Mode::server) load_whitelist();
@@ -128,12 +128,12 @@ Service::Service(Config config, ServiceOptions options)
             port.acceptor.bind(ep);
             port.acceptor.listen(asio::socket_base::max_listen_connections);
         } catch (const std::system_error& e) {
-            throw std::system_error(e.code(), "impossible d'écouter sur " + port_config.listen.to_string() +
+            throw std::system_error(e.code(), "cannot listen on " + port_config.listen.to_string() +
                                                   " (port " + std::string(to_string(kind)) + ")");
         }
         std::error_code ec;
         const auto bound = port.acceptor.local_endpoint(ec);
-        logging::config().info("port={} en écoute sur {}", to_string(kind),
+        logging::config().info("port={} listening on {}", to_string(kind),
                                Endpoint{bound.address().to_string(), bound.port()}.to_string());
     }
 
@@ -141,10 +141,10 @@ Service::Service(Config config, ServiceOptions options)
         signals_.add(SIGINT);
         signals_.add(SIGTERM);
 #ifdef SIGHUP
-        signals_.add(SIGHUP);  // rechargement de la PKI et de la liste blanche
+        signals_.add(SIGHUP);  // reload of the PKI and the whitelist
 #endif
 #ifdef SIGUSR1
-        signals_.add(SIGUSR1);  // réouverture du fichier de log
+        signals_.add(SIGUSR1);  // reopen the log file
 #endif
 #ifdef SIGBREAK
         signals_.add(SIGBREAK);
@@ -157,13 +157,13 @@ Service::~Service() = default;
 void Service::load_pki() {
     const auto requirements = pki::requirements_for(config_);
     if (!requirements) return;
-    if (!config_.credentials) throw std::runtime_error("credentials.pki_root manquant");
+    if (!config_.credentials) throw std::runtime_error("credentials.pki_root missing");
 
     const auto result = pki::load_current_generation(config_.credentials->pki_root, *requirements);
-    for (const auto& w : result.warnings) logging::config().warn("PKI : {} : {}", w.path, w.message);
+    for (const auto& w : result.warnings) logging::config().warn("PKI: {}: {}", w.path, w.message);
     if (!result.generation) {
-        std::string message = "PKI invalide dans " + config_.credentials->pki_root;
-        for (const auto& e : result.errors) message += "\n  " + e.path + " : " + e.message;
+        std::string message = "invalid PKI in " + config_.credentials->pki_root;
+        for (const auto& e : result.errors) message += "\n  " + e.path + ": " + e.message;
         throw std::runtime_error(message);
     }
     auto contexts = build_contexts(result.generation);
@@ -176,10 +176,10 @@ void Service::load_pki() {
     pki_pointer_ = read_pki_pointer();
     if (verifies_peers()) load_crl(gen, true);
     if (gen.cert) {
-        logging::config().info("PKI : génération {} chargée, certificat {} valable jusqu'au {}", gen.name,
+        logging::config().info("PKI: generation {} loaded, certificate {} valid until {}", gen.name,
                                tls::subject_of(gen.cert.get()), tls::not_after_of(gen.cert.get()));
     } else {
-        logging::config().info("PKI : génération {} chargée, AC attendue du serveur : {}", gen.name,
+        logging::config().info("PKI: generation {} loaded, expected server CA: {}", gen.name,
                                tls::subject_of(gen.trust_issuers.front().get()));
     }
 }
@@ -216,19 +216,19 @@ bool Service::load_crl(const pki::Generation& generation, bool initial) {
     crl_content_ = read_crl_file();
     const auto previous = revocations_->get();
     if (!crl_content_) {
-        if (previous) logging::config().warn("CRL : {} retiré, plus aucune révocation contrôlée", path.string());
+        if (previous) logging::config().warn("CRL: {} removed, no revocation checked any more", path.string());
         revocations_->set(nullptr);
         return true;
     }
     auto result = pki::load_revocations(path, generation);
-    for (const auto& w : result.warnings) logging::config().warn("CRL : {} : {}", w.path, w.message);
+    for (const auto& w : result.warnings) logging::config().warn("CRL: {}: {}", w.path, w.message);
     if (!result.list) {
-        std::string message = "CRL invalide : " + path.string();
-        for (const auto& e : result.errors) message += "\n  " + e.path + " : " + e.message;
+        std::string message = "invalid CRL: " + path.string();
+        for (const auto& e : result.errors) message += "\n  " + e.path + ": " + e.message;
         if (initial) throw std::runtime_error(message);
         ++stats_.crl_reload_failures;
-        logging::config().error("{} ; {}", message,
-                                previous ? "les CRL en vigueur sont conservées" : "aucune révocation contrôlée");
+        logging::config().error("{}; {}", message,
+                                previous ? "the CRLs in force are kept" : "no revocation checked");
         return false;
     }
     std::size_t added = result.list->size();
@@ -242,12 +242,12 @@ bool Service::load_crl(const pki::Generation& generation, bool initial) {
     const auto count = result.list->size();
     const auto next = result.list->next_update();
     revocations_->set(std::move(result.list));
-    logging::config().info("CRL {} : {} certificat(s) révoqué(s){}, prochaine mise à jour avant le {}",
-                           initial ? "chargée" : "rechargée", count,
-                           initial ? std::string() : " dont " + std::to_string(added) + " nouveau(x)",
+    logging::config().info("CRL {}: {} certificate(s) revoked{}, next update before {}",
+                           initial ? "loaded" : "reloaded", count,
+                           initial ? std::string() : " including " + std::to_string(added) + " new",
                            next.empty() ? std::string("?") : next);
-    // Canaux ouverts : fermés si leur pair est révoqué, sauf révocation à la
-    // prochaine renégociation (le handshake suivant le refusera).
+    // Open channels: closed if their peer is revoked, except with revocation at the
+    // next renegotiation (the following handshake will refuse it).
     const bool immediate = !config_.whitelist || config_.whitelist->revoke_mode == RevokeMode::immediate;
     if (!initial && added > 0 && immediate) {
         for (auto& ch : channels()) ch->close_if_revoked();
@@ -273,19 +273,19 @@ void Service::reload_pki(bool kill_old) {
         previous = generation_;
     }
     auto result = pki::load_current_generation(config_.credentials->pki_root, *requirements);
-    for (const auto& w : result.warnings) logging::config().warn("PKI : {} : {}", w.path, w.message);
+    for (const auto& w : result.warnings) logging::config().warn("PKI: {}: {}", w.path, w.message);
     auto refuse = [&](const std::string& why) {
         ++stats_.pki_reload_failures;
-        logging::config().error("PKI : nouvelle génération refusée ({}) ; la génération {} reste en service", why,
+        logging::config().error("PKI: new generation refused ({}); generation {} stays in service", why,
                                 previous->name);
     };
     if (!result.generation) {
-        refuse("contrôles en échec");
-        for (const auto& e : result.errors) logging::config().error("  {} : {}", e.path, e.message);
+        refuse("checks failed");
+        for (const auto& e : result.errors) logging::config().error("  {}: {}", e.path, e.message);
     } else if (result.generation->name == previous->name) {
-        logging::config().info("PKI : génération {} inchangée", previous->name);
+        logging::config().info("PKI: generation {} unchanged", previous->name);
     } else if (auto problem = pki::rotation_guard(*previous, *result.generation, *requirements)) {
-        refuse("garde-fou : " + *problem);
+        refuse("safeguard: " + *problem);
     } else {
         try {
             auto contexts = build_contexts(result.generation);
@@ -298,10 +298,10 @@ void Service::reload_pki(bool kill_old) {
             ++stats_.pki_rotations;
             const auto& gen = *result.generation;
             if (verifies_peers()) load_crl(gen, false);
-            logging::config().info("PKI : bascule vers la génération {}{} ; la génération {} reste utilisée par les "
-                                   "connexions déjà ouvertes",
+            logging::config().info("PKI: switched to generation {}{}; generation {} is still used by "
+                                   "already open connections",
                                    gen.name,
-                                   gen.cert ? " (certificat " + tls::subject_of(gen.cert.get()) + " valable jusqu'au " +
+                                   gen.cert ? " (certificate " + tls::subject_of(gen.cert.get()) + " valid until " +
                                                   tls::not_after_of(gen.cert.get()) + ")"
                                             : std::string(),
                                    previous->name);
@@ -319,7 +319,7 @@ void Service::close_retired_generations() {
         std::lock_guard lock(pki_mutex_);
         current = contexts_;
     }
-    logging::config().warn("PKI : fermeture immédiate des connexions établies avec une génération retirée");
+    logging::config().warn("PKI: closing connections established with a retired generation immediately");
     for (auto& ch : channels()) ch->close_if_retired(current.tls, current.mtls);
 }
 
@@ -327,7 +327,7 @@ void Service::sweep_generations() {
     std::lock_guard lock(pki_mutex_);
     for (auto it = retired_.begin(); it != retired_.end();) {
         if (it->released()) {
-            logging::config().info("PKI : génération {} libérée (plus aucune connexion)", it->name);
+            logging::config().info("PKI: generation {} released (no connection left)", it->name);
             it = retired_.erase(it);
         } else {
             ++it;
@@ -337,12 +337,12 @@ void Service::sweep_generations() {
 
 void Service::reload(bool kill_old) {
     asio::co_spawn(control_, [this, kill_old]() -> asio::awaitable<void> { co_await reload_now(kill_old); },
-                   log_exceptions("rechargement"));
+                   log_exceptions("reload"));
 }
 
 asio::awaitable<std::string> Service::reload_now(bool kill_old) {
-    if (stopping_) co_return "arrêt en cours : rechargement ignoré\n";
-    logging::config().info("rechargement demandé{}", kill_old ? " (avec fermeture des anciennes générations)" : "");
+    if (stopping_) co_return "shutting down: reload ignored\n";
+    logging::config().info("reload requested{}", kill_old ? " (closing old generations)" : "");
     std::string summary = reload_config();
     if (pki::requirements_for(config_)) {
         const auto before = current_generation();
@@ -351,13 +351,13 @@ asio::awaitable<std::string> Service::reload_now(bool kill_old) {
         reload_pki(kill_old);
         const auto after = current_generation();
         if (stats_.pki_reload_failures.load() != failures) {
-            summary += "PKI : nouvelle génération refusée (voir le journal) ; " + after + " reste en service\n";
+            summary += "PKI: new generation refused (see the log); " + after + " stays in service\n";
         } else if (after != before) {
-            summary += "PKI : bascule de " + before + " vers " + after + "\n";
+            summary += "PKI: switched from " + before + " to " + after + "\n";
         } else {
-            summary += "PKI : génération " + after + " inchangée\n";
+            summary += "PKI: generation " + after + " unchanged\n";
         }
-        if (kill_old) summary += "PKI : connexions des générations retirées fermées\n";
+        if (kill_old) summary += "PKI: connections of retired generations closed\n";
         if (verifies_peers()) {
             std::shared_ptr<const pki::Generation> gen;
             {
@@ -365,34 +365,34 @@ asio::awaitable<std::string> Service::reload_now(bool kill_old) {
                 gen = generation_;
             }
             if (!load_crl(*gen, false)) {
-                summary += "CRL : fichier invalide (voir le journal), CRL en vigueur conservées\n";
+                summary += "CRL: invalid file (see the log), CRLs in force kept\n";
             } else if (const auto list = revocations_->get()) {
-                summary += "CRL : " + std::to_string(list->size()) + " certificat(s) révoqué(s)\n";
+                summary += "CRL: " + std::to_string(list->size()) + " certificate(s) revoked\n";
             } else {
-                summary += "CRL : aucune\n";
+                summary += "CRL: none\n";
             }
         }
     }
     if (config_.mode == Mode::server) {
         whitelist_content_ = read_whitelist_file();
         if (reload_whitelist()) {
-            summary += "liste blanche : " + std::to_string(current_whitelist()->peers().size()) + " pair(s)\n";
+            summary += "whitelist: " + std::to_string(current_whitelist()->peers().size()) + " peer(s)\n";
         } else {
-            summary += "liste blanche : fichier invalide (voir le journal), liste en vigueur conservée\n";
+            summary += "whitelist: invalid file (see the log), whitelist in force kept\n";
         }
     }
     co_return summary;
 }
 
-// Relit le fichier de configuration : seuls les niveaux de journalisation
-// s'appliquent à chaud ; les autres changements sont signalés.
+// Rereads the configuration file: only the logging levels
+// apply live; other changes are reported.
 std::string Service::reload_config() {
     if (options_.config_path.empty()) return {};
     const auto result = load_config_file(options_.config_path);
     if (!result.config) {
-        logging::config().error("configuration {} invalide : non relue", options_.config_path);
-        for (const auto& e : result.errors) logging::config().error("  {} : {}", e.path, e.message);
-        return "configuration : fichier invalide (voir le journal), non relu\n";
+        logging::config().error("configuration {} invalid: not reread", options_.config_path);
+        for (const auto& e : result.errors) logging::config().error("  {}: {}", e.path, e.message);
+        return "configuration: invalid file (see the log), not reread\n";
     }
     Config next = *result.config;
     if (!options_.stderr_log_replacement.empty() && next.logging.output == "stderr") {
@@ -419,12 +419,12 @@ std::string Service::reload_config() {
     config_.logging.activity = log.activity;
     config_.logging.config = log.config;
 
-    std::string summary = "configuration : niveaux de journalisation appliqués\n";
+    std::string summary = "configuration: logging levels applied\n";
     if (!changed.empty()) {
         std::string list;
         for (const auto& c : changed) list += (list.empty() ? "" : ", ") + c;
-        logging::config().warn("configuration modifiée ({}) : redémarrage nécessaire pour l'appliquer", list);
-        summary += "configuration : redémarrage nécessaire pour appliquer " + list + "\n";
+        logging::config().warn("configuration changed ({}): restart required to apply it", list);
+        summary += "configuration: restart required to apply " + list + "\n";
     }
     return summary;
 }
@@ -447,14 +447,14 @@ std::vector<std::string> Service::live_generations() const {
 void Service::load_whitelist() {
     const auto& path = config_.whitelist->file;
     auto result = whitelist::Whitelist::load_file(path);
-    for (const auto& w : result.warnings) logging::config().warn("liste blanche : {} : {}", w.path, w.message);
+    for (const auto& w : result.warnings) logging::config().warn("whitelist: {}: {}", w.path, w.message);
     if (!result.whitelist) {
-        std::string message = "liste blanche invalide";
-        for (const auto& e : result.errors) message += "\n  " + e.path + " : " + e.message;
+        std::string message = "invalid whitelist";
+        for (const auto& e : result.errors) message += "\n  " + e.path + ": " + e.message;
         throw std::runtime_error(message);
     }
     whitelist_content_ = read_whitelist_file();
-    logging::config().info("liste blanche chargée depuis {} : {} pair(s)", path, result.whitelist->peers().size());
+    logging::config().info("whitelist loaded from {}: {} peer(s)", path, result.whitelist->peers().size());
     std::lock_guard lock(whitelist_mutex_);
     whitelist_ = std::move(result.whitelist);
 }
@@ -487,7 +487,7 @@ asio::awaitable<void> Service::watch() {
         co_await watch_timer_.async_wait(use_tuple);
         if (stopping_) co_return;
 
-        // Comparaison des contenus : indépendante de la précision des dates de modification.
+        // Content comparison: independent of the precision of modification times.
         if (config_.mode == Mode::server) {
             auto content = read_whitelist_file();
             if (content != whitelist_content_) {
@@ -517,10 +517,10 @@ asio::awaitable<void> Service::watch() {
 bool Service::reload_whitelist() {
     const auto& path = config_.whitelist->file;
     auto result = whitelist::Whitelist::load_file(path);
-    for (const auto& w : result.warnings) logging::config().warn("liste blanche : {} : {}", w.path, w.message);
+    for (const auto& w : result.warnings) logging::config().warn("whitelist: {}: {}", w.path, w.message);
     if (!result.whitelist) {
-        logging::config().error("liste blanche modifiée mais invalide : la liste en vigueur est conservée");
-        for (const auto& e : result.errors) logging::config().error("  {} : {}", e.path, e.message);
+        logging::config().error("whitelist changed but invalid: the whitelist in force is kept");
+        for (const auto& e : result.errors) logging::config().error("  {}: {}", e.path, e.message);
         return false;
     }
     const auto previous = current_whitelist();
@@ -528,9 +528,9 @@ bool Service::reload_whitelist() {
     auto names = [](const std::vector<std::string>& v) {
         std::string out;
         for (const auto& n : v) out += (out.empty() ? "" : ", ") + n;
-        return out.empty() ? std::string("aucun") : out;
+        return out.empty() ? std::string("none") : out;
     };
-    logging::config().info("liste blanche rechargée : {} pair(s) ; ajoutés : {} ; retirés : {} ; modifiés : {}",
+    logging::config().info("whitelist reloaded: {} peer(s); added: {}; removed: {}; changed: {}",
                            result.whitelist->peers().size(), names(changes.added), names(changes.removed),
                            names(changes.changed));
     {
@@ -538,23 +538,23 @@ bool Service::reload_whitelist() {
         whitelist_ = std::move(result.whitelist);
     }
     if (config_.whitelist->revoke_mode != RevokeMode::immediate) return true;
-    // Chaque canal vérifie de nouveau son pair et se ferme s'il n'est plus autorisé.
+    // Each channel checks its peer again and closes if it is no longer authorized.
     for (auto& ch : channels()) ch->revalidate();
     return true;
 }
 
 int Service::run() {
     for (auto& port : ports_) {
-        asio::co_spawn(port.acceptor.get_executor(), accept_loop(port), log_exceptions("acceptation"));
+        asio::co_spawn(port.acceptor.get_executor(), accept_loop(port), log_exceptions("accept"));
     }
-    if (options_.handle_signals) asio::co_spawn(control_, wait_signals(), log_exceptions("signaux"));
+    if (options_.handle_signals) asio::co_spawn(control_, wait_signals(), log_exceptions("signals"));
     if (config_.mode == Mode::server || pki::requirements_for(config_)) {
-        asio::co_spawn(control_, watch(), log_exceptions("surveillance"));
+        asio::co_spawn(control_, watch(), log_exceptions("watch"));
     }
 
     if (admin_) admin_->start();
-    logging::config().info("service démarré mode={} instance={}", to_string(config_.mode), config_.instance);
-    system::notify("READY=1\nSTATUS=en service");
+    logging::config().info("service started mode={} instance={}", to_string(config_.mode), config_.instance);
+    system::notify("READY=1\nSTATUS=in service");
 
     const unsigned count = options_.threads != 0 ? options_.threads : std::max(1u, std::thread::hardware_concurrency());
     std::vector<std::thread> threads;
@@ -563,7 +563,7 @@ int Service::run() {
     io_.run();
     for (auto& t : threads) t.join();
 
-    logging::config().info("service arrêté");
+    logging::config().info("service stopped");
     return 0;
 }
 
@@ -571,13 +571,13 @@ void Service::request_stop() { request_stop(config_.limits.shutdown_timeout); }
 
 void Service::request_stop(Duration timeout) {
     if (stopping_.exchange(true)) return;
-    asio::co_spawn(control_, drain(timeout), log_exceptions("arrêt"));
+    asio::co_spawn(control_, drain(timeout), log_exceptions("shutdown"));
 }
 
 void Service::request_abort() {
     stopping_ = true;
     if (aborting_.exchange(true)) return;
-    asio::co_spawn(control_, drain(Duration::zero()), log_exceptions("arrêt immédiat"));
+    asio::co_spawn(control_, drain(Duration::zero()), log_exceptions("immediate shutdown"));
 }
 
 std::optional<tcp::endpoint> Service::local_endpoint(PortKind kind) const {
@@ -608,21 +608,21 @@ asio::awaitable<void> Service::accept_loop(Port& port) {
         }
         if (ec) {
             if (ec == asio::error::operation_aborted || !port.acceptor.is_open()) co_return;
-            // Par exemple, plus de descripteurs disponibles : on temporise.
-            logging::activity().warn("port={} erreur d'acceptation : {}", to_string(port.kind), ec.message());
+            // For example, no more descriptors available: back off.
+            logging::activity().warn("port={} accept error: {}", to_string(port.kind), ec.message());
             pause.expires_after(100ms);
             co_await pause.async_wait(use_tuple);
             continue;
         }
 
-        // Liste blanche (mode serveur) : l'adresse doit être autorisée pour ce port,
-        // avant tout handshake.
+        // Whitelist (server mode): the address must be authorized for this port,
+        // before any handshake.
         if (config_.mode == Mode::server) {
             std::error_code rec;
             const auto remote = socket.remote_endpoint(rec);
             if (rec) {
-                // Connexion déjà fermée par le pair (RST) avant d'être traitée.
-                logging::activity().debug("port={} connexion fermée avant son acceptation : {}", to_string(port.kind),
+                // Connection already closed by the peer (RST) before being handled.
+                logging::activity().debug("port={} connection closed before being accepted: {}", to_string(port.kind),
                                           rec.message());
                 std::error_code ignored;
                 socket.close(ignored);
@@ -632,7 +632,7 @@ asio::awaitable<void> Service::accept_loop(Port& port) {
             const auto wl = current_whitelist();
             if (!wl || !wl->admits(address, port.kind)) {
                 ++stats_.peers_rejected;
-                logging::activity().info("port={} connexion de {} refusée : adresse absente de la liste blanche",
+                logging::activity().info("port={} connection from {} refused: address not in the whitelist",
                                          to_string(port.kind), address.to_string());
                 std::error_code ignored;
                 socket.close(ignored);
@@ -640,26 +640,26 @@ asio::awaitable<void> Service::accept_loop(Port& port) {
             }
         }
 
-        // Serveur : une connexion de transport peut aussi reprendre une session
-        // existante ; la limite de canaux s'applique donc à OPEN (serve).
+        // Server: a transport connection can also resume an existing
+        // session; the channel limit therefore applies to OPEN (serve).
         auto& counter = config_.mode == Mode::server ? port.handshakes : port.active;
         if (counter.load() >= config_.limits.max_channels) {
             ++stats_.channels_rejected;
             std::error_code ignored;
             const auto peer = socket.remote_endpoint(ignored);
-            logging::activity().warn("port={} limite de {} connexions atteinte : connexion de {} refusée",
+            logging::activity().warn("port={} limit of {} connections reached: connection from {} refused",
                                      to_string(port.kind), config_.limits.max_channels,
                                      Endpoint{peer.address().to_string(), peer.port()}.to_string());
             socket.close(ignored);
             continue;
         }
 
-        // Compté avant d'être enregistré : drain() ne peut pas manquer cette connexion.
+        // Counted before being registered: drain() cannot miss this connection.
         ++counter;
         const auto id = next_id_++;
         const auto strand = socket.get_executor();
         if (config_.mode == Mode::server) {
-            asio::co_spawn(strand, serve(port, std::move(socket), id), log_exceptions("connexion de transport"));
+            asio::co_spawn(strand, serve(port, std::move(socket), id), log_exceptions("transport connection"));
             continue;
         }
         auto channel = std::make_shared<Channel>(id, strand, settings_for(port), stats_,
@@ -669,7 +669,7 @@ asio::awaitable<void> Service::accept_loop(Port& port) {
             channels_.emplace(id, channel);
         }
         channel->start_client(std::move(socket));
-        // Arrêt demandé pendant l'acceptation : drain() a pu parcourir la liste avant l'enregistrement.
+        // Stop requested during accept: drain() may have walked the list before the registration.
         if (stopping_) channel->abort(CloseReason::shutdown);
     }
 }
@@ -693,16 +693,16 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
         if (context) stream = std::make_shared<Stream>(std::move(socket), context);
         else stream = std::make_shared<Stream>(std::move(socket));
     } catch (const std::exception& e) {
-        // Par exemple, session TLS impossible à créer : on refuse cette connexion seulement.
+        // For example, TLS session cannot be created: only this connection is refused.
         --port.handshakes;
-        logging::activity().error("port={} connexion de {} refusée : {}", kind, peer.endpoint, e.what());
+        logging::activity().error("port={} connection from {} refused: {}", kind, peer.endpoint, e.what());
         co_return;
     }
     {
         std::lock_guard lock(channels_mutex_);
         handshakes_.emplace(id, stream);
     }
-    // Quelle que soit l'issue, la connexion n'est plus « en attente » à la sortie.
+    // Whatever the outcome, the connection is no longer "pending" on exit.
     struct Done {
         Service& service;
         Port& port;
@@ -724,22 +724,22 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
         const auto failure = co_await secure(stream, config_.limits.handshake_timeout);
         if (!failure.empty()) {
             ++stats_.tls_handshake_failures;
-            logging::activity().info("port={} handshake TLS refusé pair={} : {}", kind, peer.endpoint, failure);
+            logging::activity().info("port={} TLS handshake refused peer={}: {}", kind, peer.endpoint, failure);
             stream->close();
             co_return;
         }
         const auto subject = stream->peer_subject();
-        logging::activity().debug("port={} TLS établi pair={} : {}, certificat du pair : {}", kind, peer.endpoint,
-                                  stream->session_description(), subject.empty() ? "aucun" : subject);
+        logging::activity().debug("port={} TLS established peer={}: {}, peer certificate: {}", kind, peer.endpoint,
+                                  stream->session_description(), subject.empty() ? "none" : subject);
     }
 
     auto transport = std::make_shared<Transport>(stream);
     const auto first = co_await read_frame(*transport, config_.limits.handshake_timeout);
     if (!first.frame) {
         if (first.protocol != tunnel::Decoder::Error::none) ++stats_.protocol_errors;
-        logging::activity().info("port={} pair={} : pas de trame OPEN ou RESUME valide ({})", kind, peer.endpoint,
+        logging::activity().info("port={} peer={}: no valid OPEN or RESUME frame ({})", kind, peer.endpoint,
                                  first.protocol != tunnel::Decoder::Error::none ? transport->decoder.error_detail()
-                                 : first.error == asio::error::timed_out        ? std::string("délai dépassé")
+                                 : first.error == asio::error::timed_out        ? std::string("timed out")
                                                                                 : first.error.message());
         stream->close();
         co_return;
@@ -748,32 +748,32 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
     const bool resume = frame.type == tunnel::FrameType::resume;
     if (frame.type != tunnel::FrameType::open && !resume) {
         ++stats_.protocol_errors;
-        logging::activity().info("port={} pair={} : trame {} au lieu de OPEN ou RESUME", kind, peer.endpoint,
+        logging::activity().info("port={} peer={}: {} frame instead of OPEN or RESUME", kind, peer.endpoint,
                                  tunnel::to_string(frame.type));
-        co_await reject(stream, tunnel::encode_close(code(tunnel::CloseCode::protocol_error), "OPEN ou RESUME attendu"));
+        co_await reject(stream, tunnel::encode_close(code(tunnel::CloseCode::protocol_error), "OPEN or RESUME expected"));
         co_return;
     }
 
-    // Liste blanche : en mTLS, l'IP et le sujet du certificat doivent figurer dans la même entrée.
+    // Whitelist: with mTLS, the IP and the certificate subject must be in the same entry.
     if (port.kind == PortKind::mtls) {
         if (X509* cert = stream->peer_certificate()) peer.subject.reset(X509_NAME_dup(X509_get_subject_name(cert)));
     }
     const auto name = authorize(peer.address, port.kind, peer.subject.get());
     if (!name) {
         ++stats_.peers_rejected;
-        logging::activity().info("port={} pair refusé par la liste blanche : ip={}{}", kind, peer.endpoint,
-                                 peer.subject ? " sujet=" + tls::name_to_string(peer.subject.get()) : std::string());
-        // Trame calculée hors du co_await : GCC 12 détruit deux fois les temporaires
-        // d'un opérateur ternaire placé dans l'argument d'un co_await.
+        logging::activity().info("port={} peer refused by the whitelist: ip={}{}", kind, peer.endpoint,
+                                 peer.subject ? " subject=" + tls::name_to_string(peer.subject.get()) : std::string());
+        // Frame computed outside the co_await: GCC 12 destroys twice the temporaries
+        // of a conditional operator placed in the argument of a co_await.
         auto refusal = resume ? tunnel::encode_resume_fail(code(tunnel::CloseCode::not_authorized))
-                              : tunnel::encode_open_fail(code(tunnel::CloseCode::not_authorized), "pair non autorisé");
+                              : tunnel::encode_open_fail(code(tunnel::CloseCode::not_authorized), "peer not authorized");
         co_await reject(stream, std::move(refusal));
         co_return;
     }
     peer.name = *name;
     if (stopping_) {
         auto refusal = resume ? tunnel::encode_resume_fail(code(tunnel::CloseCode::shutdown))
-                              : tunnel::encode_open_fail(code(tunnel::CloseCode::shutdown), "arrêt en cours");
+                              : tunnel::encode_open_fail(code(tunnel::CloseCode::shutdown), "shutting down");
         co_await reject(stream, std::move(refusal));
         co_return;
     }
@@ -789,7 +789,7 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
         const auto endpoint = peer.endpoint;
         bool accepted = false;
         if (channel) {
-            // Le canal prend la connexion sur son propre strand.
+            // The channel takes the connection on its own strand.
             accepted = co_await asio::co_spawn(
                 channel->executor(), channel->accept_resume(transport, request, std::move(peer), port.kind),
                 asio::use_awaitable);
@@ -806,14 +806,14 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
                 }
             }
             if (finished) {
-                // Tout a été livré et acquitté de ce côté : seul l'acquittement final s'est perdu.
-                logging::activity().debug("port={} reprise pair={} : session {} déjà terminée normalement", kind,
+                // Everything was delivered and acknowledged on this side: only the final acknowledgement was lost.
+                logging::activity().debug("port={} resumption peer={}: session {} already finished normally", kind,
                                           endpoint, key);
                 co_await reject(stream, tunnel::encode_resume_fail(code(tunnel::CloseCode::normal)));
                 co_return;
             }
             ++stats_.resume_failures;
-            logging::activity().info("port={} reprise refusée pair={} : session {} inconnue", kind, endpoint, key);
+            logging::activity().info("port={} resumption refused peer={}: unknown session {}", kind, endpoint, key);
         }
         if (!accepted) co_await reject(stream, tunnel::encode_resume_fail(code(tunnel::CloseCode::not_authorized)));
         co_return;
@@ -822,27 +822,27 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
     const auto open = tunnel::read_open(frame);
     std::string problem;
     if (open.version != tunnel::kVersion) {
-        problem = "version de protocole " + std::to_string(open.version) + " non prise en charge";
+        problem = "protocol version " + std::to_string(open.version) + " not supported";
     } else if (open.port != port.kind) {
-        problem = "OPEN pour le port " + std::string(to_string(open.port)) + " reçu sur le port " + std::string(kind);
+        problem = "OPEN for port " + std::string(to_string(open.port)) + " received on port " + std::string(kind);
     }
     if (!problem.empty()) {
         ++stats_.protocol_errors;
-        logging::activity().info("port={} pair={} : {}", kind, peer.endpoint, problem);
+        logging::activity().info("port={} peer={}: {}", kind, peer.endpoint, problem);
         co_await reject(stream, tunnel::encode_open_fail(code(tunnel::CloseCode::protocol_error), problem));
         co_return;
     }
     if (port.active.load() >= config_.limits.max_channels) {
         ++stats_.channels_rejected;
-        logging::activity().warn("port={} limite de {} canaux atteinte : tunnel de {} refusé", kind,
+        logging::activity().warn("port={} limit of {} channels reached: tunnel from {} refused", kind,
                                  config_.limits.max_channels, peer.endpoint);
         co_await reject(stream, tunnel::encode_open_fail(code(tunnel::CloseCode::internal_error),
-                                                         "limite de canaux atteinte"));
+                                                         "channel limit reached"));
         co_return;
     }
 
-    // co_await jamais au milieu d'autres arguments ou d'un initialiseur : GCC 12
-    // détruit alors deux fois certains temporaires (paquets Ubuntu 22.04).
+    // Never co_await in the middle of other arguments or of an initializer: GCC 12
+    // then destroys some temporaries twice (Ubuntu 22.04 packages).
     const auto executor = co_await asio::this_coro::executor;
     auto channel = std::make_shared<Channel>(id, executor, settings_for(port), stats_,
                                              [this, &port](Channel& ch) { on_channel_closed(port, ch); });
@@ -860,8 +860,8 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
     }
     if (duplicate) {
         ++stats_.protocol_errors;
-        logging::activity().info("port={} pair={} : session {} déjà ouverte", kind, peer.endpoint, key);
-        co_await reject(stream, tunnel::encode_open_fail(code(tunnel::CloseCode::protocol_error), "session déjà ouverte"));
+        logging::activity().info("port={} peer={}: session {} already open", kind, peer.endpoint, key);
+        co_await reject(stream, tunnel::encode_open_fail(code(tunnel::CloseCode::protocol_error), "session already open"));
         co_return;
     }
     channel->start_server(transport, open.session, std::move(peer));
@@ -869,11 +869,11 @@ asio::awaitable<void> Service::serve(Port& port, tcp::socket socket, std::uint64
 }
 
 asio::awaitable<void> Service::drain(Duration timeout) {
-    system::notify("STOPPING=1\nSTATUS=arrêt en cours");
+    system::notify("STOPPING=1\nSTATUS=shutting down");
     if (timeout == Duration::zero()) {
-        logging::config().warn("arrêt immédiat : {} canal(aux) actif(s) coupé(s)", active_channels());
+        logging::config().warn("immediate shutdown: {} active channel(s) cut", active_channels());
     } else {
-        logging::config().info("arrêt demandé : {} canal(aux) actif(s), drain pendant {} au plus",
+        logging::config().info("shutdown requested: {} active channel(s), drain for at most {}",
                                active_channels(), format_duration(timeout));
     }
 
@@ -893,7 +893,7 @@ asio::awaitable<void> Service::drain(Duration timeout) {
 
     if (const auto remaining = active_channels(); remaining > 0) {
         if (timeout != Duration::zero()) {
-            logging::config().info("délai de drain écoulé : fermeture de {} canal(aux)", remaining);
+            logging::config().info("drain timeout elapsed: closing {} channel(s)", remaining);
         }
         abort_all_channels();
         const auto hard_deadline = std::chrono::steady_clock::now() + 2s;
@@ -905,12 +905,12 @@ asio::awaitable<void> Service::drain(Duration timeout) {
 
     watch_timer_.cancel();
     if (admin_) admin_->stop();
-    // drain peut s'exécuter à l'intérieur de wait_signals (même strand) : le
-    // drapeau empêche la boucle de se réarmer après cette annulation.
+    // drain may run inside wait_signals (same strand): the
+    // flag prevents the loop from re-arming after this cancellation.
     signals_done_ = true;
     std::error_code ignored;
     signals_.cancel(ignored);
-    // Si des canaux n'ont pas pu se terminer, on force l'arrêt de la boucle.
+    // If some channels could not finish, force the loop to stop.
     if (active_channels() > 0) io_.stop();
 }
 
@@ -920,7 +920,7 @@ asio::awaitable<void> Service::wait_signals() {
         if (ec) co_return;
 #ifdef SIGHUP
         if (signal == SIGHUP) {
-            logging::config().info("signal SIGHUP reçu : rechargement");
+            logging::config().info("signal SIGHUP received: reload");
             reload(false);
             continue;
         }
@@ -928,18 +928,18 @@ asio::awaitable<void> Service::wait_signals() {
 #ifdef SIGUSR1
         if (signal == SIGUSR1) {
             try {
-                if (logging::reopen()) logging::config().info("signal SIGUSR1 reçu : fichier de log rouvert");
+                if (logging::reopen()) logging::config().info("signal SIGUSR1 received: log file reopened");
             } catch (const std::exception& e) {
-                logging::config().error("réouverture du fichier de log impossible : {}", e.what());
+                logging::config().error("cannot reopen the log file: {}", e.what());
             }
             continue;
         }
 #endif
         if (!stopping_) {
-            logging::config().info("signal {} reçu : arrêt propre (un second signal force l'arrêt immédiat)", signal);
+            logging::config().info("signal {} received: graceful shutdown (a second signal forces an immediate shutdown)", signal);
             request_stop();
         } else {
-            logging::config().warn("second signal {} reçu : arrêt immédiat", signal);
+            logging::config().warn("second signal {} received: immediate shutdown", signal);
             request_abort();
             co_return;
         }
@@ -964,7 +964,7 @@ ChannelSettings Service::settings_for(const Port& port) const {
         s.dial.timeout = l.handshake_timeout;
         s.dial.attempts = 1;
         if (port.kind != PortKind::plain) {
-            // Relu à chaque connexion de transport : une renégociation utilise la génération courante.
+            // Reread on each transport connection: a renegotiation uses the current generation.
             s.tls_context = [this, kind = port.kind] {
                 std::lock_guard lock(pki_mutex_);
                 return kind == PortKind::mtls ? contexts_.mtls : contexts_.tls;
@@ -993,7 +993,7 @@ std::vector<std::shared_ptr<Channel>> Service::channels() const {
 
 void Service::abort_all_channels() {
     for (auto& ch : channels()) ch->abort(CloseReason::shutdown);
-    // Connexions de transport pas encore attribuées : fermées sur leur strand.
+    // Transport connections not yet assigned: closed on their strand.
     std::vector<std::shared_ptr<Stream>> pending;
     {
         std::lock_guard lock(channels_mutex_);
@@ -1033,12 +1033,12 @@ void Service::on_channel_closed(Port& port, Channel& channel) {
 }
 
 // ---------------------------------------------------------------------------
-// Canal d'administration
+// Administration channel
 
 namespace {
 
-// Ressources du processus : mémoire résidente (octets) et descripteurs
-// ouverts (handles sous Windows). -1 si indisponible.
+// Process resources: resident memory (bytes) and open descriptors
+// (handles on Windows). -1 if unavailable.
 struct ProcessResources {
     long long resident_bytes = -1;
     long long descriptors = -1;
@@ -1086,13 +1086,13 @@ std::string format_seconds(std::chrono::steady_clock::duration d) {
     const auto days = total / 86400;
     total %= 86400;
     char out[48];
-    (void)std::snprintf(out, sizeof out, "%lldj %02lld:%02lld:%02lld", static_cast<long long>(days),
+    (void)std::snprintf(out, sizeof out, "%lldd %02lld:%02lld:%02lld", static_cast<long long>(days),
                   static_cast<long long>(total / 3600), static_cast<long long>(total / 60 % 60),
                   static_cast<long long>(total % 60));
     return out;
 }
 
-// Échappement d'une valeur d'étiquette Prometheus.
+// Escaping of a Prometheus label value.
 std::string label(std::string_view value) {
     std::string out;
     for (const char c : value) {
@@ -1107,66 +1107,66 @@ std::string label(std::string_view value) {
 }
 
 constexpr const char* kCommands =
-    "commandes : status, channels, metrics, reload [--kill-old], stop [délai], kill, log-level <niveau|catégorie=niveau>, "
+    "commands: status, channels, metrics, reload [--kill-old], stop [timeout], kill, log-level <level|category=level>, "
     "log-reopen, ping\n";
 
 }  // namespace
 
 std::string Service::status_text() const {
     std::ostringstream out;
-    out << "instance : " << config_.instance << '\n'
-        << "mode : " << to_string(config_.mode) << '\n'
-        << "état : " << (stopping_ ? "arrêt en cours" : "en service") << '\n'
+    out << "instance: " << config_.instance << '\n'
+        << "mode: " << to_string(config_.mode) << '\n'
+        << "state: " << (stopping_ ? "shutting down" : "in service") << '\n'
 #ifdef _WIN32
-        << "pid : " << GetCurrentProcessId() << '\n'
+        << "pid: " << GetCurrentProcessId() << '\n'
 #else
-        << "pid : " << ::getpid() << '\n'
+        << "pid: " << ::getpid() << '\n'
 #endif
-        << "démarré : " << iso_time(started_wall_) << " (depuis " << format_seconds(std::chrono::steady_clock::now() - started_)
+        << "started: " << iso_time(started_wall_) << " (for " << format_seconds(std::chrono::steady_clock::now() - started_)
         << ")\n"
-        << "version : tlsrelay " << kVersion << ", " << openssl_runtime_version() << '\n';
+        << "version: tlsrelay " << kVersion << ", " << openssl_runtime_version() << '\n';
     if (pki::requirements_for(config_)) {
         const auto live = live_generations();
         std::string retired;
         for (std::size_t i = 1; i < live.size(); ++i) retired += (retired.empty() ? "" : ", ") + live[i];
-        out << "génération PKI : " << current_generation()
-            << (retired.empty() ? std::string() : " (en drain : " + retired + ")") << '\n';
+        out << "PKI generation: " << current_generation()
+            << (retired.empty() ? std::string() : " (draining: " + retired + ")") << '\n';
     }
     if (verifies_peers()) {
         if (const auto crl = revocations_->get()) {
-            out << "CRL : " << crl->size() << " certificat(s) révoqué(s), prochaine mise à jour avant le "
+            out << "CRL: " << crl->size() << " certificate(s) revoked, next update before "
                 << (crl->next_update().empty() ? std::string("?") : crl->next_update()) << '\n';
         } else {
-            out << "CRL : aucune\n";
+            out << "CRL: none\n";
         }
     }
     if (config_.mode == Mode::server) {
         const auto wl = current_whitelist();
-        out << "liste blanche : " << (wl ? wl->peers().size() : 0) << " pair(s)\n";
+        out << "whitelist: " << (wl ? wl->peers().size() : 0) << " peer(s)\n";
     }
-    out << "journal : activity=" << to_string(logging::level(logging::Category::activity))
-        << " config=" << to_string(logging::level(logging::Category::config)) << ", sortie " << logging::output()
+    out << "log: activity=" << to_string(logging::level(logging::Category::activity))
+        << " config=" << to_string(logging::level(logging::Category::config)) << ", output " << logging::output()
         << '\n';
     for (const auto& port : ports_) {
         std::error_code ec;
         const auto ep = port.acceptor.local_endpoint(ec);
-        out << "port " << to_string(port.kind) << " : "
+        out << "port " << to_string(port.kind) << ": "
             << (ec ? port.config.listen.to_string() : Endpoint{ep.address().to_string(), ep.port()}.to_string())
-            << ", " << port.active.load() << " canal(aux) actif(s)";
-        if (config_.mode == Mode::server) out << ", " << port.handshakes.load() << " connexion(s) en attente";
+            << ", " << port.active.load() << " active channel(s)";
+        if (config_.mode == Mode::server) out << ", " << port.handshakes.load() << " pending connection(s)";
         out << '\n';
     }
     const auto resources = process_resources();
     if (resources.resident_bytes >= 0) {
-        out << "ressources : " << resources.resident_bytes / (1024LL * 1024) << " Mio résidents, " << resources.descriptors
+        out << "resources: " << resources.resident_bytes / (1024LL * 1024) << " MiB resident, " << resources.descriptors
 #ifdef _WIN32
             << " handles\n";
 #else
-            << " descripteurs\n";
+            << " descriptors\n";
 #endif
     }
-    out << "canaux : " << stats_.channels_opened.load() << " ouverts, " << stats_.channels_closed.load()
-        << " fermés, " << stats_.channels_rejected.load() << " refusés ; renégociations : "
+    out << "channels: " << stats_.channels_opened.load() << " opened, " << stats_.channels_closed.load()
+        << " closed, " << stats_.channels_rejected.load() << " refused; renegotiations: "
         << stats_.renegotiations.load() << '\n';
     return out.str();
 }
@@ -1180,35 +1180,35 @@ std::string Service::metrics_text() const {
             << "# TYPE tlsrelay_" << name << ' ' << type << '\n'
             << "tlsrelay_" << name << '{' << labels << "} " << value << '\n';
     };
-    metric("info", "gauge", "Version de tlsrelay et d'OpenSSL.",
+    metric("info", "gauge", "tlsrelay and OpenSSL version.",
            inst + ",mode=\"" + std::string(to_string(config_.mode)) + "\",version=\"" + label(kVersion) +
                "\",openssl=\"" + label(openssl_runtime_version()) + "\"",
            1);
-    metric("uptime_seconds", "gauge", "Durée depuis le démarrage.", inst,
+    metric("uptime_seconds", "gauge", "Time since startup.", inst,
            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - started_).count());
 
     const auto resources = process_resources();
     if (resources.resident_bytes >= 0) {
-        metric("process_resident_memory_bytes", "gauge", "Mémoire résidente du processus.", inst,
+        metric("process_resident_memory_bytes", "gauge", "Resident memory of the process.", inst,
                resources.resident_bytes);
-        metric("process_open_descriptors", "gauge", "Descripteurs ouverts (handles sous Windows).", inst,
+        metric("process_open_descriptors", "gauge", "Open descriptors (handles on Windows).", inst,
                resources.descriptors);
     }
-    out << "# HELP tlsrelay_channels_active Canaux ouverts, par port.\n# TYPE tlsrelay_channels_active gauge\n";
+    out << "# HELP tlsrelay_channels_active Open channels, per port.\n# TYPE tlsrelay_channels_active gauge\n";
     for (const auto& port : ports_) {
         out << "tlsrelay_channels_active{" << inst << ",port=\"" << to_string(port.kind) << "\"} "
             << port.active.load() << '\n';
     }
     if (pki::requirements_for(config_)) {
-        out << "# HELP tlsrelay_pki_generation_info Génération PKI courante.\n"
+        out << "# HELP tlsrelay_pki_generation_info Current PKI generation.\n"
             << "# TYPE tlsrelay_pki_generation_info gauge\n"
             << "tlsrelay_pki_generation_info{" << inst << ",generation=\"" << label(current_generation()) << "\"} 1\n";
-        metric("pki_generations_live", "gauge", "Générations PKI encore utilisées (courante comprise).", inst,
+        metric("pki_generations_live", "gauge", "PKI generations still in use (current included).", inst,
                live_generations().size());
     }
     if (verifies_peers()) {
         const auto crl = revocations_->get();
-        metric("crl_revoked_certificates", "gauge", "Certificats révoqués listés par les CRL en vigueur.", inst,
+        metric("crl_revoked_certificates", "gauge", "Revoked certificates listed by the CRLs in force.", inst,
                crl ? crl->size() : 0);
     }
 
@@ -1218,26 +1218,26 @@ std::string Service::metrics_text() const {
         const std::atomic<std::uint64_t>& value;
     };
     const Counter counters[] = {
-        {"channels_opened_total", "Canaux ouverts.", stats_.channels_opened},
-        {"channels_closed_total", "Canaux fermés.", stats_.channels_closed},
-        {"channels_rejected_total", "Connexions refusées (limite max_channels).", stats_.channels_rejected},
-        {"channels_idle_closed_total", "Canaux fermés pour inactivité.", stats_.channels_idle_closed},
-        {"dial_attempt_failures_total", "Essais de connexion sortante échoués.", stats_.dial_attempt_failures},
-        {"dial_failures_total", "Canaux abandonnés après tous les essais de connexion.", stats_.dial_failures},
-        {"tls_handshake_failures_total", "Handshakes TLS refusés ou expirés.", stats_.tls_handshake_failures},
-        {"peers_rejected_total", "Pairs refusés par la liste blanche.", stats_.peers_rejected},
-        {"certificates_revoked_total", "Canaux fermés après révocation du certificat du pair (CRL).",
+        {"channels_opened_total", "Channels opened.", stats_.channels_opened},
+        {"channels_closed_total", "Channels closed.", stats_.channels_closed},
+        {"channels_rejected_total", "Connections refused (max_channels limit).", stats_.channels_rejected},
+        {"channels_idle_closed_total", "Channels closed for inactivity.", stats_.channels_idle_closed},
+        {"dial_attempt_failures_total", "Failed outgoing connection attempts.", stats_.dial_attempt_failures},
+        {"dial_failures_total", "Channels abandoned after all connection attempts.", stats_.dial_failures},
+        {"tls_handshake_failures_total", "TLS handshakes refused or timed out.", stats_.tls_handshake_failures},
+        {"peers_rejected_total", "Peers refused by the whitelist.", stats_.peers_rejected},
+        {"certificates_revoked_total", "Channels closed after revocation of the peer certificate (CRL).",
          stats_.certificates_revoked},
-        {"crl_reload_failures_total", "Fichiers de CRL refusés.", stats_.crl_reload_failures},
-        {"peers_revoked_total", "Canaux fermés après retrait du pair de la liste blanche.", stats_.peers_revoked},
-        {"pki_rotations_total", "Bascules vers une nouvelle génération PKI.", stats_.pki_rotations},
-        {"pki_reload_failures_total", "Nouvelles générations PKI refusées.", stats_.pki_reload_failures},
-        {"renegotiations_total", "Reprises de session réussies.", stats_.renegotiations},
-        {"resume_failures_total", "Reprises de session refusées ou échouées.", stats_.resume_failures},
-        {"protocol_errors_total", "Trames non conformes reçues.", stats_.protocol_errors},
-        {"bytes_upstream_total", "Octets relayés de l'application vers la destination (canaux fermés).",
+        {"crl_reload_failures_total", "CRL files refused.", stats_.crl_reload_failures},
+        {"peers_revoked_total", "Channels closed after removal of the peer from the whitelist.", stats_.peers_revoked},
+        {"pki_rotations_total", "Switches to a new PKI generation.", stats_.pki_rotations},
+        {"pki_reload_failures_total", "New PKI generations refused.", stats_.pki_reload_failures},
+        {"renegotiations_total", "Successful session resumptions.", stats_.renegotiations},
+        {"resume_failures_total", "Session resumptions refused or failed.", stats_.resume_failures},
+        {"protocol_errors_total", "Malformed frames received.", stats_.protocol_errors},
+        {"bytes_upstream_total", "Bytes relayed from the application to the destination (closed channels).",
          stats_.bytes_upstream},
-        {"bytes_downstream_total", "Octets relayés de la destination vers l'application (canaux fermés).",
+        {"bytes_downstream_total", "Bytes relayed from the destination to the application (closed channels).",
          stats_.bytes_downstream},
     };
     for (const auto& c : counters) metric(c.name, "counter", c.help, inst, c.value.load());
@@ -1248,15 +1248,15 @@ asio::awaitable<std::string> Service::channels_text() {
     std::ostringstream out;
     auto list = channels();
     std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) { return a->id() < b->id(); });
-    out << list.size() << " canal(aux)\n";
+    out << list.size() << " channel(s)\n";
     for (const auto& ch : list) {
         const auto info = co_await asio::co_spawn(ch->executor(), ch->describe(), asio::use_awaitable);
-        out << "canal=" << info.id << " port=" << to_string(info.port) << " état=" << info.state
-            << " session=" << info.session << " pair=" << info.peer;
-        if (!info.generation.empty()) out << " génération=" << info.generation;
-        out << " connexion=" << info.transport << " âge=" << format_duration(info.age)
-            << " inactif=" << format_duration(info.idle) << " montant=" << info.bytes_up << "o"
-            << " descendant=" << info.bytes_down << "o " << info.flow << "\n";
+        out << "channel=" << info.id << " port=" << to_string(info.port) << " state=" << info.state
+            << " session=" << info.session << " peer=" << info.peer;
+        if (!info.generation.empty()) out << " generation=" << info.generation;
+        out << " connection=" << info.transport << " age=" << format_duration(info.age)
+            << " idle=" << format_duration(info.idle) << " up=" << info.bytes_up << "B"
+            << " down=" << info.bytes_down << "B " << info.flow << "\n";
     }
     co_return out.str();
 }
@@ -1264,12 +1264,12 @@ asio::awaitable<std::string> Service::channels_text() {
 asio::awaitable<admin::Reply> Service::handle(admin::Request request, std::string caller) {
     std::string line = request.command;
     for (const auto& a : request.args) line += " " + a;
-    // Toutes les opérations d'administration sont journalisées (SPEC §9).
+    // All administration operations are logged (SPEC §9).
     if (request.command == "status" || request.command == "ping" || request.command == "metrics" ||
         request.command == "channels") {
-        logging::config().debug("administration : « {} » ({})", line, caller);
+        logging::config().debug("administration: \"{}\" ({})", line, caller);
     } else {
-        logging::config().info("administration : « {} » ({})", line, caller);
+        logging::config().info("administration: \"{}\" ({})", line, caller);
     }
     auto error = [](std::string message) { return admin::Reply{false, std::move(message) + "\n"}; };
     const auto& cmd = request.command;
@@ -1290,38 +1290,38 @@ asio::awaitable<admin::Reply> Service::handle(admin::Request request, std::strin
         Duration timeout = config_.limits.shutdown_timeout;
         if (argc == 1) {
             const auto parsed = parse_duration(request.args[0]);
-            if (!parsed) co_return error("délai invalide « " + request.args[0] + " » (exemples : 10s, 1m)");
+            if (!parsed) co_return error("invalid timeout \"" + request.args[0] + "\" (examples: 10s, 1m)");
             timeout = *parsed;
         }
-        if (stopping_) co_return admin::Reply{true, "arrêt déjà en cours\n"};
+        if (stopping_) co_return admin::Reply{true, "shutdown already in progress\n"};
         request_stop(timeout);
-        co_return admin::Reply{true, "arrêt en cours : drain de " + std::to_string(active_channels()) +
-                                         " canal(aux) pendant " + format_duration(timeout) + " au plus\n"};
+        co_return admin::Reply{true, "shutting down: draining " + std::to_string(active_channels()) +
+                                         " channel(s) for at most " + format_duration(timeout) + "\n"};
     }
     if (cmd == "kill" && argc == 0) {
         request_abort();
-        co_return admin::Reply{true, "arrêt immédiat en cours\n"};
+        co_return admin::Reply{true, "immediate shutdown in progress\n"};
     }
     if (cmd == "log-level" && argc == 1) {
         if (auto problem = logging::apply_level_spec(request.args[0]); !problem.empty()) co_return error(problem);
-        logging::config().info("niveaux de journalisation : activity={} config={}",
+        logging::config().info("logging levels: activity={} config={}",
                                to_string(logging::level(logging::Category::activity)),
                                to_string(logging::level(logging::Category::config)));
-        co_return admin::Reply{true, "niveaux : activity=" +
+        co_return admin::Reply{true, "levels: activity=" +
                                          std::string(to_string(logging::level(logging::Category::activity))) +
                                          " config=" + std::string(to_string(logging::level(logging::Category::config))) +
                                          "\n"};
     }
     if (cmd == "log-reopen" && argc == 0) {
         try {
-            if (!logging::reopen()) co_return admin::Reply{true, "sortie stderr : rien à rouvrir\n"};
+            if (!logging::reopen()) co_return admin::Reply{true, "stderr output: nothing to reopen\n"};
         } catch (const std::exception& e) {
             co_return error(e.what());
         }
-        logging::config().info("fichier de log rouvert");
-        co_return admin::Reply{true, "fichier de log rouvert : " + logging::output() + "\n"};
+        logging::config().info("log file reopened");
+        co_return admin::Reply{true, "log file reopened: " + logging::output() + "\n"};
     }
-    co_return error("commande ou arguments inconnus : « " + line + " »\n" + kCommands);
+    co_return error("unknown command or arguments: \"" + line + "\"\n" + kCommands);
 }
 
 }  // namespace tlsrelay::relay

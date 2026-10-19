@@ -1,4 +1,4 @@
-// Canal d'administration sous Linux : socket Unix, verrou flock.
+// Administration channel on Linux: Unix socket, flock lock.
 
 #include "tlsrelay/admin/admin.hpp"
 #include "tlsrelay/logging.hpp"
@@ -59,43 +59,43 @@ struct Server::Impl : std::enable_shared_from_this<Server::Impl> {
     void open() {
         namespace fs = std::filesystem;
         if (endpoint.size() >= sizeof(sockaddr_un::sun_path)) {
-            throw std::runtime_error("canal d'administration : chemin trop long (" + endpoint + ")");
+            throw std::runtime_error("administration channel: path too long (" + endpoint + ")");
         }
         const fs::path path(endpoint);
         std::error_code ec;
         if (path.has_parent_path() && !fs::exists(path.parent_path(), ec)) {
             fs::create_directories(path.parent_path(), ec);
             if (ec) {
-                throw std::runtime_error("canal d'administration : impossible de créer " +
-                                         path.parent_path().string() + " : " + ec.message());
+                throw std::runtime_error("administration channel: cannot create " +
+                                         path.parent_path().string() + ": " + ec.message());
             }
             ::chmod(path.parent_path().c_str(), 0750);
         }
 
-        // Verrou d'instance : tenu pendant toute l'exécution, libéré par le système à la sortie.
+        // Instance lock: held during the whole run, released by the system on exit.
         const std::string lock_path = endpoint + ".lock";
         lock_fd = ::open(lock_path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
         if (lock_fd < 0) {
-            throw std::runtime_error("canal d'administration : impossible d'ouvrir " + lock_path + " : " + errno_text());
+            throw std::runtime_error("administration channel: cannot open " + lock_path + ": " + errno_text());
         }
         if (::flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
-            throw AlreadyRunning("une autre exécution de cette instance est en cours (verrou " + lock_path + ")");
+            throw AlreadyRunning("another run of this instance is in progress (lock " + lock_path + ")");
         }
 
-        // Socket d'une exécution précédente interrompue : remplacée.
+        // Socket of a previous interrupted run: replaced.
         ::unlink(endpoint.c_str());
         try {
             acceptor.open(local());
             acceptor.bind(local::endpoint(endpoint));
             acceptor.listen();
         } catch (const std::system_error& e) {
-            throw std::runtime_error("canal d'administration : impossible d'écouter sur " + endpoint + " : " +
+            throw std::runtime_error("administration channel: cannot listen on " + endpoint + ": " +
                                      e.code().message());
         }
         ::chmod(endpoint.c_str(), 0660);
         if (const group* g = ::getgrnam("tlsrelay")) {
             if (::chown(endpoint.c_str(), static_cast<uid_t>(-1), g->gr_gid) != 0) {
-                logging::config().warn("canal d'administration : groupe tlsrelay non appliqué : {}", errno_text());
+                logging::config().warn("administration channel: tlsrelay group not applied: {}", errno_text());
             }
         }
     }
@@ -162,15 +162,15 @@ CallResult call(const std::string& endpoint, const std::string& request, Duratio
     addr.sun_family = AF_UNIX;
     if (endpoint.size() >= sizeof addr.sun_path) {
         ::close(fd);
-        result.error = "chemin trop long : " + endpoint;
+        result.error = "path too long: " + endpoint;
         return result;
     }
     std::memcpy(addr.sun_path, endpoint.c_str(), endpoint.size() + 1);
     if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
         const int err = errno;
         result.unreachable = err == ENOENT || err == ECONNREFUSED;
-        result.error = result.unreachable ? "instance injoignable (" + endpoint + ")"
-                                          : endpoint + " : " + std::error_code(err, std::generic_category()).message();
+        result.error = result.unreachable ? "instance unreachable (" + endpoint + ")"
+                                          : endpoint + ": " + std::error_code(err, std::generic_category()).message();
         ::close(fd);
         return result;
     }
@@ -180,7 +180,7 @@ CallResult call(const std::string& endpoint, const std::string& request, Duratio
     while (sent < line.size()) {
         const auto n = ::send(fd, line.data() + sent, line.size() - sent, MSG_NOSIGNAL);
         if (n <= 0) {
-            result.error = "envoi impossible : " + errno_text();
+            result.error = "cannot send: " + errno_text();
             ::close(fd);
             return result;
         }
@@ -196,11 +196,11 @@ CallResult call(const std::string& endpoint, const std::string& request, Duratio
         if (!result.error.empty()) break;
         const auto n = ::recv(fd, buffer, sizeof buffer, 0);
         if (n < 0) {
-            result.error = errno == EAGAIN || errno == EWOULDBLOCK ? "pas de réponse dans le délai" : errno_text();
+            result.error = errno == EAGAIN || errno == EWOULDBLOCK ? "no reply in time" : errno_text();
             break;
         }
         if (n == 0) {
-            result.error = "connexion fermée avant la fin de la réponse";
+            result.error = "connection closed before the end of the reply";
             break;
         }
         data.append(buffer, static_cast<std::size_t>(n));

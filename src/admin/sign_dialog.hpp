@@ -1,8 +1,8 @@
 #pragma once
 
-// Signature d'une demande (CSR) par la mini-AC, ou renouvellement : la
-// demande est examinée dès qu'elle est choisie (sujet, preuve de possession,
-// clé P-256), comme le fera la signature.
+// Signing of a request (CSR) by the mini-CA, or renewal: the
+// request is inspected as soon as it is chosen (subject, proof of possession,
+// P-256 key), as the signing will do.
 
 #include "pki_panel.hpp"
 
@@ -20,12 +20,12 @@ class SignDialog : public QDialog {
     Q_OBJECT
 
 public:
-    // renew : assistant de renouvellement ; expected_subject : sujet du
-    // certificat à renouveler (sélection de l'inventaire), vide sinon.
+    // renew: renewal wizard; expected_subject: subject of the
+    // certificate to renew (inventory selection), empty otherwise.
     SignDialog(bool renew, const std::string& expected_subject, pki::Role role, QWidget* parent = nullptr);
 
     SignOptions options() const;
-    // Demande lisible et conforme, champs obligatoires remplis.
+    // Request readable and compliant, required fields filled in.
     bool ready() const { return ready_; }
     QString request_description() const;
 

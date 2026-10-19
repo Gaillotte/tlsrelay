@@ -15,35 +15,35 @@
 
 namespace tlsrelay::relay {
 
-// Connexion de transport entre deux tlsrelay : un flux (clair ou TLS) et le
-// décodeur de trames, qui peut contenir des octets reçus mais pas encore lus.
+// Transport connection between two tlsrelay instances: a stream (plain or TLS) and the
+// frame decoder, which may hold bytes received but not yet read.
 struct Transport {
     explicit Transport(std::shared_ptr<Stream> s) : stream(std::move(s)), buffer(16ULL * 1024) {}
 
     std::shared_ptr<Stream> stream;
     tunnel::Decoder decoder;
     std::vector<std::uint8_t> buffer;
-    bool broken = false;  // erreur constatée : plus aucune écriture
+    bool broken = false;  // error detected: no more writes
 };
 
 struct FrameRead {
     std::optional<tunnel::Frame> frame;
-    std::error_code error;                                   // erreur réseau
-    tunnel::Decoder::Error protocol = tunnel::Decoder::Error::none;  // trame non conforme
+    std::error_code error;                                   // network error
+    tunnel::Decoder::Error protocol = tunnel::Decoder::Error::none;  // malformed frame
 };
 
-// Lit la prochaine trame complète.
+// Reads the next complete frame.
 asio::awaitable<FrameRead> read_frame(Transport& transport);
 
-// Idem, avec délai : error vaut asio::error::timed_out à l'échéance (la
-// connexion est alors fermée).
+// Same, with a timeout: error is asio::error::timed_out when it expires (the
+// connection is then closed).
 asio::awaitable<FrameRead> read_frame(Transport& transport, Duration timeout);
 
-// Handshake TLS avec délai (la connexion est fermée à l'échéance). Retourne le
-// motif d'échec, vide en cas de succès.
+// TLS handshake with a timeout (the connection is closed when it expires). Returns the
+// failure reason, empty on success.
 asio::awaitable<std::string> secure(std::shared_ptr<Stream> stream, Duration timeout);
 
-// Jeton de reprise de la connexion n d'une session (SPEC §4.5).
+// Resumption token of connection n of a session (SPEC §4.5).
 std::optional<tunnel::Token> derive_token(const Stream& stream, const tunnel::SessionId& session, std::uint32_t n);
 
 }  // namespace tlsrelay::relay

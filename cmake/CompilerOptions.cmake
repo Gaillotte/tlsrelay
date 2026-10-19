@@ -1,5 +1,5 @@
-# Options de compilation communes : avertissements, durcissement, sanitizers.
-# Toutes les cibles du projet se lient à tlsrelay::options.
+# Common compilation options: warnings, hardening, sanitizers.
+# All project targets link to tlsrelay::options.
 
 include(CheckPIESupported)
 check_pie_supported()
@@ -13,15 +13,15 @@ if(MSVC)
         /sdl /guard:cf)
     target_link_options(tlsrelay_options INTERFACE
         /guard:cf /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA)
-    # Windows 10 minimum ; évite les macros min/max de windows.h.
+    # Windows 10 minimum; avoids the min/max macros of windows.h.
     target_compile_definitions(tlsrelay_options INTERFACE
         _WIN32_WINNT=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN)
     if(TLSRELAY_WARNINGS_AS_ERRORS)
         target_compile_options(tlsrelay_options INTERFACE /WX)
     endif()
     if(TLSRELAY_MSVC_ANALYZE)
-        # Code du projet seulement : les en-têtes des dépendances (inclusions
-        # système de vcpkg) ne sont ni analysés ni signalés.
+        # Project code only: the dependency headers (vcpkg system
+        # includes) are neither analyzed nor reported.
         target_compile_options(tlsrelay_options INTERFACE
             /analyze /analyze:external- /external:anglebrackets /external:W0)
     endif()
@@ -36,8 +36,8 @@ else()
     if(TLSRELAY_WARNINGS_AS_ERRORS)
         target_compile_options(tlsrelay_options INTERFACE -Werror)
     endif()
-    # GCC 12 (paquets Ubuntu 22.04) : faux positif -Wrestrict sur « littéral + std::string »
-    # (bogue GCC 105329, corrigé dans GCC 13).
+    # GCC 12 (Ubuntu 22.04 packages): false positive -Wrestrict on "literal + std::string"
+    # (GCC bug 105329, fixed in GCC 13).
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12
        AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13)
         target_compile_options(tlsrelay_options INTERFACE -Wno-restrict)
@@ -48,8 +48,8 @@ else()
         target_link_options(tlsrelay_options INTERFACE -fsanitize=${TLSRELAY_SANITIZERS})
     endif()
     if(TLSRELAY_COVERAGE)
-        # Mesure de couverture (gcov) : sans optimisation pour que lignes et branches
-        # correspondent au source ; rapport par tools/coverage.sh.
+        # Coverage measurement (gcov): without optimization so that lines and branches
+        # match the source; report by tools/coverage.sh.
         target_compile_options(tlsrelay_options INTERFACE --coverage -O0 -fprofile-update=atomic)
         target_link_options(tlsrelay_options INTERFACE --coverage)
     endif()

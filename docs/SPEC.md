@@ -3,7 +3,7 @@
 > Version 0.1 (phase 0 draft). The development plan is in [`PLAN.md`](PLAN.md).
 > Values marked "default" can be changed in the configuration.
 > The full list of requirements and how each is verified is in [section 11](#11-requirements).
-> Text in `code` that the program prints (log messages, statuses, file names such as `LISEZMOI.txt`) is quoted as the program writes it, in French.
+> Text in `code` that the program prints (log messages, statuses, file names such as `README.txt`) is quoted exactly as the program writes it.
 
 ## 1. Vocabulary
 
@@ -208,10 +208,10 @@ The deadline is pushed back by every `DATA` frame (in both directions) and by an
 ```yaml
 # whitelist.yaml
 peers:
-  - name: agence-lyon            # unique
+  - name: branch-lyon            # unique
     ip: 192.0.2.10               # address or CIDR range, IPv4 or IPv6
     ports: [mtls]                # subset of [plain, tls, mtls]; default: all
-    subject: "CN=relay-lyon.example,O=MonEntreprise"   # mandatory for mtls
+    subject: "CN=relay-lyon.example,O=MyCompany"   # mandatory for mtls
   - name: labo-test
     ip: 198.51.100.0/28
     ports: [plain, tls]
@@ -283,7 +283,7 @@ A failure keeps the current generation and produces an error in the `config` cat
 
 - Trigger: the contents of `<pki_root>/current` are compared every 2 seconds (if `credentials.watch` is `true`), or explicit reload (`SIGHUP` on Linux; `reload` command from phase 6).
 - Each generation maps to one `SSL_CTX` per TLS port. The current contexts are replaced under a lock; each connection keeps a reference to its own.
-- A retired generation is released when its last connection closes; the `config` log says so (`génération vN libérée`).
+- A retired generation is released when its last connection closes; the `config` log says so (`generation vN released`).
 - A refused generation (checks or guard) leaves the current generation in service; the error is logged.
 - Since renegotiations use the current generation, a retired generation is released at the latest after `session_lifetime + renegotiation_grace` (ports 2 and 3), or when its channels close (port 1).
 - `reload --kill-old`: immediately closes the connections of retired generations (emergency revocation).
@@ -306,18 +306,18 @@ A failure keeps the current generation and produces an error in the `config` cat
 | `tlsrelay pki activate -c <config> <vN> [--force]` | Checks like `check-pki`, then updates `current` (atomic rename) |
 | `tlsrelay ca init --dir <ca> [--org O]` | Creates the root and the two intermediate CAs (section 7.1); refuses a non-empty directory |
 | `tlsrelay ca sign --dir <ca> --role server\|client --csr <file> [--san ...] [--days 365] [--renew] --out <kit>` | Signs a request and writes the kit `cert.pem`, `chain.pem`, `trust-roots.pem`, `trust-issuer.pem` for `pki install --from` |
-| `tlsrelay ca list --dir <ca>` | Inventory: serial, role, status (`valide` valid, `remplacé` superseded, `révoqué` revoked), end of validity, subject, revocation date and reason |
+| `tlsrelay ca list --dir <ca>` | Inventory: serial, role, status (`valid`, `replaced`, `revoked`), end of validity, subject, revocation date and reason |
 | `tlsrelay ca revoke --dir <ca> --serial S [--reason reason] [--days 30] [--out crl.pem]` | Revokes an issued certificate (RFC 5280 reasons: `unspecified`, `keyCompromise`, `superseded`, `cessationOfOperation`) then publishes the CRLs (§7.7) |
 | `tlsrelay ca crl --dir <ca> [--days 30] [--out crl.pem]` | Publishes the CRLs of the Servers and Clients CAs (to be redone before they expire) |
 | `tlsrelay ca audit --dir <ca>` | Shows the CA's audit log and verifies its hash chain |
-| `tlsrelay ca root-change --dir <old> --new <new> --out <directory>` | Prepares the root change (§7.5): trust files for steps 1 and 2 per role (`serveur/`, `client/`: two roots, expected CA of both roots), CRLs of both CAs, `LISEZMOI.txt` with the commands for each step |
+| `tlsrelay ca root-change --dir <old> --new <new> --out <directory>` | Prepares the root change (§7.5): trust files for steps 1 and 2 per role (`server/`, `client/`: two roots, expected CA of both roots), CRLs of both CAs, `README.txt` with the commands for each step |
 | `tlsrelay pki crl -c <config> <file>` | Checks the CRLs against the current generation, then installs them in `<pki_root>/crl.pem` (atomic rename) |
 
 **`ca sign` policy**
 
 - The request's signature is verified (proof of possession of the key); the key must be ECDSA P-256; the subject must contain a CN.
 - Requested extensions are ignored (and listed): the certificate receives `CA:false`, `digitalSignature`, the role's purpose (`serverAuth` or `clientAuth`), SKI, AKI, and the SANs given by the operator (`--san`, mandatory for a server).
-- A subject already assigned to a currently valid certificate is refused, except with `--renew` (same role): the old certificate is then marked `remplacé` (superseded).
+- A subject already assigned to a currently valid certificate is refused, except with `--renew` (same role): the old certificate is then marked `replaced`.
 - End of validity: `--days` (365 by default), never beyond that of the signing CA. Random 128-bit serial number; SHA-384 signature.
 
 **CA directory**: `root.*`, `servers.*`, `clients.*` (`.key.pem` and `.cert.pem`), `index.tsv` (inventory), `issued/<serial>.pem`, `crl.pem` and `crlnumber` (last published CRLs), `audit.log` (audit log). CA keys: PKCS#8 encrypted with AES-256-CBC, scrypt derivation (N = 2¹⁴, r = 8, p = 1); passphrase of at least 12 characters, typed without echo, or read from `--passphrase-file` or `TLSRELAY_CA_PASSPHRASE`. Permissions: `0600` on Linux; protected ACL (SYSTEM, Administrators, operator account) on Windows.
@@ -333,9 +333,9 @@ The graphical inventory and the renewal and root-change wizards belong to the `t
 - **Publication**: `ca revoke` or `ca crl` produce one v2 CRL per intermediate CA (Servers CA, Clients CA), signed with SHA-384, with an increasing CRL number, the CA's key identifier and the revocation reason; valid 30 days by default (`--days`, never beyond the CA's own validity). Both CRLs are written to a single file, to be deployed on all instances.
 - **Deployment**: `<pki_root>/crl.pem` of each instance (`tlsrelay pki crl -c <config> <file>`, or a copy followed by a rename). The file is shared by all generations.
 - **Check on load**: only the CRLs of the CAs expected at the peer (`trust-issuer.pem`) count; their signature is verified with the CA's key. A CRL in the name of an expected CA but with an invalid signature makes the file be refused. CRLs of other CAs are ignored, except to report that the instance's own certificate is revoked. Warnings: expected CA without a CRL (its certificates are not checked), stale CRL (next-update date passed: it is still applied, it must be republished), CRL dated in the future.
-- **Enforcement**: at the handshake, a peer certificate listed in its issuer's CRL is refused (TLS alert; reason `certificat du client révoqué` or `certificat du serveur révoqué` in the log); the server does not contact the destination. The check covers the peer's certificate, not the intermediate CAs.
+- **Enforcement**: at the handshake, a peer certificate listed in its issuer's CRL is refused (TLS alert; reason `client certificate revoked` or `server certificate revoked` in the log); the server does not contact the destination. The check covers the peer's certificate, not the intermediate CAs.
 - **Reloading**: the contents of `crl.pem` are compared every 2 seconds (if `credentials.watch` is `true`), and reread by `reload` and at every generation switch. An invalid file keeps the CRLs in force (error in the `config` category, counter `tlsrelay_crl_reload_failures_total`); at startup, it prevents the service from starting. A deleted file disables the check (warning).
-- **Open channels**: when a CRL adds revoked certificates, the channels whose peer presents one of them are closed (code `PEER_REVOKED`, reason `certificat_revoque`, counter `tlsrelay_certificates_revoked_total`), except with `revoke_mode: next_renegotiation` (server): they are then refused at their next renegotiation.
+- **Open channels**: when a CRL adds revoked certificates, the channels whose peer presents one of them are closed (code `PEER_REVOKED`, reason `certificate_revoked`, counter `tlsrelay_certificates_revoked_total`), except with `revoke_mode: next_renegotiation` (server): they are then refused at their next renegotiation.
 - **Instances concerned**: those that verify their peer's certificate: server with an `mtls` port, client with a `tls` or `mtls` port. `status` shows the number of revoked certificates and the next update; metric `tlsrelay_crl_revoked_certificates`.
 
 ## 8. Configuration
@@ -451,7 +451,7 @@ admin:
 
 - Endpoint: Unix socket `/run/tlsrelay/<instance>.sock` (permissions `0660`, group `tlsrelay` if it exists, directory `0750`); named pipe `\\.\pipe\tlsrelay-<instance>` (Administrators, SYSTEM and the instance's account; remote clients refused). Configurable: `admin.endpoint`; can be disabled: `admin.enabled: false`.
 - In the console, if the default location is not accessible (user without rights on `/run/tlsrelay`), the relay starts without a channel, with a warning.
-- Protocol: one command per connection. Request: one line of text (4 KiB at most, 5 s to send it). Response: `OK <n>` or `ERREUR <n>` (error), then `n` bytes of UTF-8 text.
+- Protocol: one command per connection. Request: one line of text (4 KiB at most, 5 s to send it). Response: `OK <n>` or `ERROR <n>` (error), then `n` bytes of UTF-8 text.
 - Each command is logged with the caller's identity (uid and pid on Linux, pid on Windows): `info` level for commands that change the state, `debug` for queries.
 - Instance lock: `flock` on `<endpoint>.lock` on Linux, first instance of the named pipe on Windows. A second execution of the same instance is refused; a socket left behind by an abrupt stop is replaced.
 
@@ -490,14 +490,14 @@ Prometheus text format (version 0.0.4), read by `tlsrelay metrics` over the admi
 
 ## 11. Requirements
 
-Full list of the solution's requirements, deliveries 1.0 (service) and 1.1 (editor), with how each is verified. A requirement is met when all its verifications pass (PLAN §5.1). Test names refer to the GoogleTest suites (`tests/`) and Qt Test cases (`tests/admin/`); scripts are in `tests/lifecycle/`, `tests/perf/` and `tools/`; R01 to R13, M01 to M09 and E01 to E10 are the acceptance-test scenarios ([RECETTE.md](RECETTE.md)). Each test is described, and the coverage of each requirement detailed, in [TESTS.md](TESTS.md).
+Full list of the solution's requirements, deliveries 1.0 (service) and 1.1 (editor), with how each is verified. A requirement is met when all its verifications pass (PLAN §5.1). Test names refer to the GoogleTest suites (`tests/`) and Qt Test cases (`tests/admin/`); scripts are in `tests/lifecycle/`, `tests/perf/` and `tools/`; R01 to R13, M01 to M09 and E01 to E10 are the acceptance-test scenarios ([ACCEPTANCE.md](ACCEPTANCE.md)). Each test is described, and the coverage of each requirement detailed, in [TESTS.md](TESTS.md).
 
 ### 11.1 General and platforms
 
 | Id | Requirement | Ref. | Del. | Verification |
 |---|---|---|---|---|
 | GEN-01 | Runs on Windows 10, 11 and Server 2019 or later (64-bit) and on Linux: Ubuntu 22.04 and 24.04, Debian 12, RHEL 9 and equivalents | PLAN §2 | 1.0 | CI: Windows MSVC, Linux GCC and Clang; packages installed on Ubuntu 22.04 and 24.04, Debian 12, Rocky 9, Alma 9; R13 (cross tests) |
-| GEN-02 | OpenSSL 3.0 or later, dynamically linked; OpenSSL 3.5 LTS shipped on Windows; version checked and logged at startup | §10.3 | 1.0 | Job "Linux OpenSSL 3.5 LTS"; Windows CI step "Version d'OpenSSL embarquée"; R02 |
+| GEN-02 | OpenSSL 3.0 or later, dynamically linked; OpenSSL 3.5 LTS shipped on Windows; version checked and logged at startup | §10.3 | 1.0 | Job "Linux OpenSSL 3.5 LTS"; Windows CI step "Bundled OpenSSL version"; R02 |
 | GEN-03 | Works as a pair: one client tlsrelay and one server tlsrelay; the peer is always a tlsrelay (tunnel protocol and ALPN mandatory) | §2, §3 | 1.0 | `TlsTest.ServerRejectsMissingAlpn`, `AttackTest.ClientSendsNothingToValidFakeServerWithoutTunnelProtocol` |
 | GEN-04 | Three ports per instance: `plain` (plaintext), `tls` (TLS 1.3), `mtls` (mutual TLS 1.3); a port absent from the configuration is not opened | §2, §8 | 1.0 | `Relay.PlainChainPreservesDataIntegrity`, `TlsTest.ChainPreservesDataIntegrity`, `MtlsTest.ChainPreservesDataIntegrity`, R03 |
 | GEN-05 | Server mode: plaintext output to a single destination (configurable address and port); client mode: plaintext input from the application | §2, §8 | 1.0 | `Relay.*`, R03 |
@@ -645,7 +645,7 @@ Full list of the solution's requirements, deliveries 1.0 (service) and 1.1 (edit
 |---|---|---|---|---|
 | PKG-01 | `.deb`, `.rpm` and `.msi` packages: installation, in-place upgrade, uninstallation | PLAN §4 | 1.0 | CI: package build, installation on 5 distributions, MSI installed, acceptance tests on the installed binaries, uninstallation |
 | PKG-02 | Licence and third-party notices shipped with the packages | PLAN §4 | 1.0 | `packaging/test-linux-package.sh`, Windows CI (licence files) |
-| PKG-03 | Delivery accompanied by the SHA-256 hashes of the packages | INSTALLATION §1 | 1.0 | CI: `tlsrelay-livraison` artifact (`SHA256SUMS`) |
+| PKG-03 | Delivery accompanied by the SHA-256 hashes of the packages | INSTALLATION §1 | 1.0 | CI: `tlsrelay-release` artifact (`SHA256SUMS`) |
 
 ### 11.15 tlsrelay-admin editor
 
@@ -656,7 +656,7 @@ Full list of the solution's requirements, deliveries 1.0 (service) and 1.1 (edit
 | EDT-03 | Export of a deployment package for Linux or Windows (configuration, whitelist, kit, CRL, script, instructions) | EDITEUR §4 | 1.1 | Qt `export_package_for_linux_and_windows`, E05 |
 | EDT-04 | PKI module: open or create the mini-CA, inventory, signing, renewal, revocation and CRLs, audit log; passphrase never stored | EDITEUR §5 | 1.1 | Qt `pki_panel_full_cycle`, `pki_panel_refuses_wrong_passphrase_and_bad_directory`, `sign_dialog_inspects_request`, E06 to E09 |
 | EDT-05 | Root-change wizard | EDITEUR §5 | 1.1 | Qt `pki_root_change_preparation`, E10 |
-| EDT-06 | Shipped in the MSI ("tlsrelay-admin" feature, Qt 6 under LGPLv3, dynamic linking); headless `--check` | EDITEUR §1 | 1.1 | `Admin.CheckValid`, `Admin.CheckInvalid`, Windows CI step "Éditeur installé", E01 |
+| EDT-06 | Shipped in the MSI ("tlsrelay-admin" feature, Qt 6 under LGPLv3, dynamic linking); headless `--check` | EDITEUR §1 | 1.1 | `Admin.CheckValid`, `Admin.CheckInvalid`, Windows CI step "Installed editor", E01 |
 
 ## 12. Open points
 

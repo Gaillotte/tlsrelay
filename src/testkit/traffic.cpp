@@ -1,5 +1,5 @@
-// Trafic de test : destination d'écho, charge massive avec empreinte par
-// canal, débit, latence aller-retour.
+// Test traffic: echo destination, massive load with a hash per
+// channel, throughput, round-trip latency.
 
 #include "traffic.hpp"
 
@@ -35,7 +35,7 @@ std::string json_escape(const std::string& s) {
     return out;
 }
 
-// Écho à l'alternat : ne lit pas tant que la réponse n'est pas écrite.
+// Half-duplex echo: does not read until the reply is written.
 asio::awaitable<void> echo_half_duplex(tcp::socket socket) {
     std::vector<unsigned char> buffer(64ULL * 1024);
     for (;;) {
@@ -49,8 +49,8 @@ asio::awaitable<void> echo_half_duplex(tcp::socket socket) {
     socket.shutdown(tcp::socket::shutdown_send, ignored);
 }
 
-// Écho bidirectionnel simultané : la lecture continue pendant l'écriture, dans
-// la limite d'une file de kEchoBuffer octets.
+// Simultaneous bidirectional echo: reading continues while writing, within
+// the limit of a queue of kEchoBuffer bytes.
 constexpr std::size_t kEchoBuffer = 8ULL << 20;
 
 struct EchoConnection {
@@ -92,7 +92,7 @@ asio::awaitable<void> echo_writer(std::shared_ptr<EchoConnection> c) {
             c->has_data.expires_at(asio::steady_timer::time_point::max());
             co_await c->has_data.async_wait(use_tuple);
         }
-        if (c->pending.empty()) break;  // fin de lecture et tout est renvoyé
+        if (c->pending.empty()) break;  // end of reading and everything sent back
         auto [ec, w] = co_await asio::async_write(c->socket, asio::buffer(c->pending.front()), use_tuple);
         if (ec) {
             c->failed = true;
@@ -127,8 +127,8 @@ asio::awaitable<void> echo_accept(tcp::acceptor& acceptor, asio::io_context& io,
     }
 }
 
-// Écrit size octets du motif seed (ou jusqu'à deadline), en calculant l'empreinte.
-// rate_mbps > 0 : débit d'émission limité (Mbit/s).
+// Writes size bytes of the seed pattern (or until deadline), computing the hash.
+// rate_mbps > 0: send rate limited (Mbit/s).
 asio::awaitable<std::uint64_t> send_pattern(tcp::socket& s, std::uint64_t size, std::uint64_t seed,
                                             Clock::time_point deadline, std::string& digest, double rate_mbps = 0) {
     Pattern pattern(seed);
@@ -182,7 +182,7 @@ struct LoadState {
     std::atomic<int> ok{0};
     std::atomic<int> failed{0};
     std::atomic<std::uint64_t> bytes{0};
-    Clock::time_point transfer_start{};  // écrit avant go, lu après la fin des threads
+    Clock::time_point transfer_start{};  // written before go, read after the threads end
 };
 
 asio::awaitable<void> load_channel(tcp::endpoint target, const LoadOptions& o, std::uint64_t seed, LoadState& st) {
@@ -191,25 +191,25 @@ asio::awaitable<void> load_channel(tcp::endpoint target, const LoadOptions& o, s
     auto fail = [&](const std::string& why) {
         ++st.failed;
         std::lock_guard lock(st.mutex);
-        if (st.errors.size() < 10) st.errors.push_back("canal " + std::to_string(seed) + " : " + why);
+        if (st.errors.size() < 10) st.errors.push_back("channel " + std::to_string(seed) + ": " + why);
     };
     const auto t0 = Clock::now();
     auto [cec] = co_await s.async_connect(target, use_tuple);
     if (cec) {
-        fail("connexion : " + cec.message());
+        fail("connection: " + cec.message());
         ++st.ready;
         co_return;
     }
     std::error_code ignored;
     s.set_option(tcp::no_delay(true), ignored);
-    // Premier aller-retour : le tunnel est établi de bout en bout.
+    // First round trip: the tunnel is established end to end.
     unsigned char probe = 0x5a, back = 0;
     auto [wec, w] = co_await asio::async_write(s, asio::buffer(&probe, 1), use_tuple);
     (void)w;
     auto [rec, r] = co_await asio::async_read(s, asio::buffer(&back, 1), use_tuple);
     (void)r;
     if (wec || rec || back != probe) {
-        fail("tunnel non établi : " + (wec ? wec.message() : rec ? rec.message() : std::string("écho incorrect")));
+        fail("tunnel not established: " + (wec ? wec.message() : rec ? rec.message() : std::string("incorrect echo")));
         ++st.ready;
         co_return;
     }
@@ -219,7 +219,7 @@ asio::awaitable<void> load_channel(tcp::endpoint target, const LoadOptions& o, s
     }
     ++st.connected;
     ++st.ready;
-    // Tous les canaux ouverts en même temps avant le transfert.
+    // All channels open at the same time before the transfer.
     asio::steady_timer wait(ex);
     while (!st.go) {
         wait.expires_after(std::chrono::milliseconds(10));
@@ -234,9 +234,9 @@ asio::awaitable<void> load_channel(tcp::endpoint target, const LoadOptions& o, s
                                   receive_all(s, received_digest, error));
     const auto [sent, received] = result;
     st.bytes += received;
-    if (received != o.bytes || sent != o.bytes) fail("reçu " + std::to_string(received) + " / " + std::to_string(o.bytes) +
-                                                      " octets" + (error.empty() ? "" : " (" + error + ")"));
-    else if (sent_digest != received_digest) fail("empreinte différente");
+    if (received != o.bytes || sent != o.bytes) fail("received " + std::to_string(received) + " / " + std::to_string(o.bytes) +
+                                                      " bytes" + (error.empty() ? "" : " (" + error + ")"));
+    else if (sent_digest != received_digest) fail("hash mismatch");
     else ++st.ok;
 }
 
@@ -246,7 +246,7 @@ asio::awaitable<void> ramp(tcp::endpoint target, const LoadOptions& o, LoadState
         asio::co_spawn(asio::make_strand(io), load_channel(target, o, static_cast<std::uint64_t>(i) + 1, st),
                        asio::detached);
         if (o.batch > 0 && (i + 1) % o.batch == 0) {
-            // Ouverture par vagues : la file d'attente d'acceptation n'est pas saturée.
+            // Opening in waves: the accept queue is not saturated.
             while (st.ready.load() < i + 1) {
                 pause.expires_after(std::chrono::milliseconds(5));
                 co_await pause.async_wait(use_tuple);
@@ -276,7 +276,7 @@ int run_echo(const tcp::endpoint& listen, unsigned threads, bool half_duplex) {
     acceptor.set_option(tcp::acceptor::reuse_address(true));
     acceptor.bind(listen);
     acceptor.listen(asio::socket_base::max_listen_connections);
-    std::cout << "écho en écoute sur " << acceptor.local_endpoint() << '\n' << std::flush;
+    std::cout << "echo listening on " << acceptor.local_endpoint() << '\n' << std::flush;
     asio::signal_set signals(io, SIGINT, SIGTERM);
     signals.async_wait([&](std::error_code, int) {
         std::error_code ignored;
@@ -310,9 +310,9 @@ int run_load(const tcp::endpoint& target, const LoadOptions& o) {
         }
         std::cout << "]}" << '\n' << std::flush;
     } else {
-        std::printf("canaux : %d demandés, %d ouverts simultanément, %d intègres, %d en échec\n", o.channels,
+        std::printf("channels: %d requested, %d open simultaneously, %d intact, %d failed\n", o.channels,
                     st.connected.load(), st.ok.load(), st.failed.load());
-        std::printf("transfert : %.1f Mio en %.2f s, %.1f Mbit/s agrégés ; établissement p50 %.0f µs, p99 %.0f µs\n",
+        std::printf("transfer: %.1f MiB in %.2f s, %.1f Mbit/s aggregate; establishment p50 %.0f µs, p99 %.0f µs\n",
                     static_cast<double>(st.bytes.load()) / (1 << 20), seconds, mbits, percentile(st.connect_us, 50),
                     percentile(st.connect_us, 99));
         for (const auto& e : st.errors) std::printf("  %s\n", e.c_str());
@@ -337,7 +337,7 @@ int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milli
                 auto [cec] = co_await s.async_connect(target, use_tuple);
                 if (cec) {
                     std::lock_guard lock(errors_mutex);
-                    errors.push_back("canal " + std::to_string(i) + " : connexion impossible : " + cec.message());
+                    errors.push_back("channel " + std::to_string(i) + ": connection failed: " + cec.message());
                     co_return;
                 }
                 std::error_code ignored;
@@ -353,9 +353,9 @@ int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milli
                 }
                 const double at = std::chrono::duration<double>(Clock::now() - start).count();
                 std::lock_guard lock(errors_mutex);
-                errors.push_back("canal " + std::to_string(i) + " : " + std::to_string(std::get<0>(result)) +
-                                 " octets émis, " + std::to_string(std::get<1>(result)) + " reçus, arrêt à " +
-                                 std::to_string(static_cast<int>(at)) + " s" + (error.empty() ? "" : " : " + error));
+                errors.push_back("channel " + std::to_string(i) + ": " + std::to_string(std::get<0>(result)) +
+                                 " bytes sent, " + std::to_string(std::get<1>(result)) + " received, stopped at " +
+                                 std::to_string(static_cast<int>(at)) + " s" + (error.empty() ? "" : ": " + error));
             },
             asio::detached);
     }
@@ -369,8 +369,8 @@ int run_throughput(const tcp::endpoint& target, int channels, std::chrono::milli
         for (std::size_t k = 0; k < errors.size(); ++k) std::cout << (k ? "," : "") << '"' << json_escape(errors[k]) << '"';
         std::cout << "]}" << '\n' << std::flush;
     } else {
-        std::printf("débit : %.1f Mbit/s sur %d canal(aux), soit %.1f Mbit/s par canal (%.1f Mio en %.2f s, %d/%d "
-                    "intègres)\n",
+        std::printf("throughput: %.1f Mbit/s over %d channel(s), i.e. %.1f Mbit/s per channel (%.1f MiB in %.2f s, %d/%d "
+                    "intact)\n",
                     mbits, channels, mbits / channels, static_cast<double>(total.load()) / (1 << 20), seconds,
                     intact.load(), channels);
         for (const auto& e : errors) std::printf("  %s\n", e.c_str());
@@ -393,7 +393,7 @@ int run_latency(const tcp::endpoint& target, int count, std::size_t size, bool j
             }
             s.set_option(tcp::no_delay(true));
             std::vector<unsigned char> out(size, 0x42), in(size);
-            for (int i = -100; i < count; ++i) {  // 100 échanges d'échauffement
+            for (int i = -100; i < count; ++i) {  // 100 warm-up exchanges
                 const auto t0 = Clock::now();
                 auto [wec, w] = co_await asio::async_write(s, asio::buffer(out), use_tuple);
                 (void)w;
@@ -409,7 +409,7 @@ int run_latency(const tcp::endpoint& target, int count, std::size_t size, bool j
         asio::detached);
     io.run();
     if (!error.empty()) {
-        std::cerr << "erreur : " << error << '\n';
+        std::cerr << "error: " << error << '\n';
         return 1;
     }
     if (json) {
@@ -417,7 +417,7 @@ int run_latency(const tcp::endpoint& target, int count, std::size_t size, bool j
                   << ",\"p90_us\":" << percentile(rtt, 90) << ",\"p99_us\":" << percentile(rtt, 99)
                   << ",\"max_us\":" << percentile(rtt, 100) << "}" << '\n' << std::flush;
     } else {
-        std::printf("aller-retour (%zu octets, %d mesures) : p50 %.0f µs, p90 %.0f µs, p99 %.0f µs, max %.0f µs\n", size,
+        std::printf("round trip (%zu bytes, %d measurements): p50 %.0f µs, p90 %.0f µs, p99 %.0f µs, max %.0f µs\n", size,
                     count, percentile(rtt, 50), percentile(rtt, 90), percentile(rtt, 99), percentile(rtt, 100));
     }
     return 0;

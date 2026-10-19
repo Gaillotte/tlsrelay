@@ -1,6 +1,6 @@
-// Perturbations réseau entre deux tlsrelay (PLAN §5, à la manière de
-// toxiproxy) : latence ajoutée, débit limité, coupures (RST) périodiques,
-// lien muet périodique.
+// Network disturbances between two tlsrelay instances (PLAN §5, in the manner of
+// toxiproxy): added latency, limited throughput, periodic cuts (RST),
+// periodic silent link.
 
 #include "proxy.hpp"
 
@@ -58,12 +58,12 @@ private:
             }
             auto link = std::make_shared<Link>(Link{std::move(in), tcp::socket(strand)});
             if (options_.source) {
-                // Le relais en aval voit l'adresse du vrai client (liste blanche par IP).
+                // The downstream relay sees the real client's address (whitelist by IP).
                 std::error_code bec;
                 link->out.open(target_.protocol(), bec);
                 if (!bec) link->out.bind(tcp::endpoint(*options_.source, 0), bec);
                 if (bec) {
-                    std::cerr << "adresse source " << *options_.source << " : " << bec.message() << '\n';
+                    std::cerr << "source address " << *options_.source << ": " << bec.message() << '\n';
                     continue;
                 }
             }
@@ -94,13 +94,13 @@ private:
                 else to.close(ignored);
                 co_return;
             }
-            if (link->frozen) continue;  // lien muet : données perdues, sans erreur
+            if (link->frozen) continue;  // silent link: data lost, without error
             if (options_.delay > Clock::duration::zero()) {
                 timer.expires_after(options_.delay);
                 co_await timer.async_wait(use_tuple);
             }
             if (options_.rate_mbps > 0) {
-                // Débit limité : durée d'émission de n octets au débit donné.
+                // Limited throughput: time to send n bytes at the given rate.
                 timer.expires_after(std::chrono::microseconds(static_cast<long long>(static_cast<double>(n) * 8 / options_.rate_mbps)));
                 co_await timer.async_wait(use_tuple);
             }
@@ -122,7 +122,7 @@ private:
         }
     }
 
-    // Coupe (RST) ou rend muettes les connexions en cours.
+    // Cuts (RST) or silences the current connections.
     void cut_all(bool freeze) {
         std::list<std::shared_ptr<Link>> links;
         {
@@ -143,7 +143,7 @@ private:
             });
         }
         if (!links.empty()) {
-            std::cout << (freeze ? "lien muet sur " : "coupure de ") << links.size() << " connexion(s)" << '\n' << std::flush;
+            std::cout << (freeze ? "silent link on " : "cut of ") << links.size() << " connection(s)" << '\n' << std::flush;
         }
     }
 

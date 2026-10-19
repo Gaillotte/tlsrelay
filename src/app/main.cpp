@@ -1,27 +1,27 @@
-// Point d'entrée de tlsrelay (SPEC §10). Commandes disponibles :
+// tlsrelay entry point (SPEC §10). Available commands:
 //   tlsrelay run -c <config> [--instance N] [-v|-vv|-q]
 //   tlsrelay check-config -c <config>
-//   tlsrelay check-pki -c <config> [génération]
-//   tlsrelay pki activate -c <config> <génération> [--force]
+//   tlsrelay check-pki -c <config> [generation]
+//   tlsrelay pki activate -c <config> <generation> [--force]
 //   tlsrelay pki gen-csr -c <config> --subject DN [--san ...]
 //   tlsrelay pki install -c <config> [--generation vN] [--from kit] [--cert --chain --roots --issuer]
-//   tlsrelay pki crl -c <config> <fichier>
-//   tlsrelay ca init --dir <ac> [--org nom]
-//   tlsrelay ca sign --dir <ac> --role server|client --csr <fichier> [--san ...] [--days N] [--renew] --out <kit>
-//   tlsrelay ca list --dir <ac>
-//   tlsrelay ca revoke --dir <ac> --serial S [--reason motif] [--days N] [--out crl.pem]
-//   tlsrelay ca crl --dir <ac> [--days N] [--out crl.pem]
-//   tlsrelay ca audit --dir <ac>
-//   tlsrelay ca root-change --dir <ancienne ac> --new <nouvelle ac> --out <répertoire>
-//   tlsrelay status|channels|metrics|kill|log-reopen [cible]
-//   tlsrelay stop [cible] [--timeout durée]
-//   tlsrelay reload [cible] [--kill-old]
-//   tlsrelay log-level [cible] <niveau|catégorie=niveau>
-//   tlsrelay start|restart --instance N [--timeout durée]
+//   tlsrelay pki crl -c <config> <file>
+//   tlsrelay ca init --dir <ca> [--org name]
+//   tlsrelay ca sign --dir <ca> --role server|client --csr <file> [--san ...] [--days N] [--renew] --out <kit>
+//   tlsrelay ca list --dir <ca>
+//   tlsrelay ca revoke --dir <ca> --serial S [--reason reason] [--days N] [--out crl.pem]
+//   tlsrelay ca crl --dir <ca> [--days N] [--out crl.pem]
+//   tlsrelay ca audit --dir <ca>
+//   tlsrelay ca root-change --dir <old ca> --new <new ca> --out <directory>
+//   tlsrelay status|channels|metrics|kill|log-reopen [target]
+//   tlsrelay stop [target] [--timeout duration]
+//   tlsrelay reload [target] [--kill-old]
+//   tlsrelay log-level [target] <level|category=level>
+//   tlsrelay start|restart --instance N [--timeout duration]
 //   tlsrelay service install --instance N [-c config] [--boot]
 //   tlsrelay service uninstall --instance N
 //   tlsrelay version
-// cible : --instance N (défaut : default), -c <config> ou --admin <point d'accès>.
+// target: --instance N (default: default), -c <config> or --admin <endpoint>.
 
 #include "passphrase.hpp"
 #include "platform.hpp"
@@ -55,35 +55,35 @@
 
 namespace {
 
-// Codes de sortie
+// Exit codes
 constexpr int kExitOk = 0;
 constexpr int kExitRuntime = 1;
 constexpr int kExitConfig = 2;
 
 void print_issues(const tlsrelay::LoadResult& result) {
-    for (const auto& e : result.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
-    for (const auto& w : result.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+    for (const auto& e : result.errors) std::cerr << "error: " << e.path << ": " << e.message << '\n';
+    for (const auto& w : result.warnings) std::cerr << "warning: " << w.path << ": " << w.message << '\n';
 }
 
 int cmd_check_config(const std::string& path) {
     const auto result = tlsrelay::load_config_file(path);
     print_issues(result);
     if (!result.config) {
-        std::cerr << result.errors.size() << " erreur(s) dans " << path << '\n';
+        std::cerr << result.errors.size() << " error(s) in " << path << '\n';
         return kExitConfig;
     }
-    std::cout << "configuration valide : " << path << '\n';
+    std::cout << "valid configuration: " << path << '\n';
     return kExitOk;
 }
 
-// Charge la configuration et en déduit les exigences PKI ; nullopt si erreur (déjà affichée).
+// Loads the configuration and derives the PKI requirements from it; nullopt on error (already printed).
 std::optional<std::pair<tlsrelay::Config, tlsrelay::pki::Requirements>> pki_context(const std::string& path) {
     const auto result = tlsrelay::load_config_file(path);
     print_issues(result);
     if (!result.config) return std::nullopt;
     const auto req = tlsrelay::pki::requirements_for(*result.config);
     if (!req || !result.config->credentials) {
-        std::cerr << "erreur : aucun port tls ou mtls configuré dans " << path << '\n';
+        std::cerr << "error: no tls or mtls port configured in " << path << '\n';
         return std::nullopt;
     }
     return std::pair{*result.config, *req};
@@ -98,52 +98,52 @@ int cmd_check_pki(const std::string& config_path, std::string name) {
         std::getline(in, name);
     }
     const auto result = tlsrelay::pki::check_candidate(root, name, ctx->second);
-    for (const auto& e : result.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
-    for (const auto& w : result.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+    for (const auto& e : result.errors) std::cerr << "error: " << e.path << ": " << e.message << '\n';
+    for (const auto& w : result.warnings) std::cerr << "warning: " << w.path << ": " << w.message << '\n';
     if (!result.generation) {
-        std::cerr << "génération « " << name << " » refusée\n";
+        std::cerr << "generation \"" << name << "\" rejected\n";
         return kExitConfig;
     }
     const auto& gen = *result.generation;
-    std::cout << "génération « " << name << " » valide";
-    if (gen.cert) std::cout << " : certificat " << tlsrelay::tls::subject_of(gen.cert.get()) << ", valable jusqu'au "
+    std::cout << "generation \"" << name << "\" valid";
+    if (gen.cert) std::cout << ": certificate " << tlsrelay::tls::subject_of(gen.cert.get()) << ", valid until "
                             << tlsrelay::tls::not_after_of(gen.cert.get());
     std::cout << '\n';
-    // CRL en place : contrôlée pour cette génération (seulement si elle vérifie les pairs).
+    // CRL in place: checked for this generation (only if it verifies its peers).
     const auto crl = std::filesystem::path(root) / tlsrelay::pki::kCrlFile;
     if (ctx->second.trust && std::filesystem::exists(crl)) {
         const auto revocations = tlsrelay::pki::load_revocations(crl, gen);
-        for (const auto& e : revocations.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
-        for (const auto& w : revocations.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+        for (const auto& e : revocations.errors) std::cerr << "error: " << e.path << ": " << e.message << '\n';
+        for (const auto& w : revocations.warnings) std::cerr << "warning: " << w.path << ": " << w.message << '\n';
         if (!revocations.list) {
-            std::cerr << "CRL refusée\n";
+            std::cerr << "CRL rejected\n";
             return kExitConfig;
         }
-        std::cout << "CRL valide : " << revocations.list->size() << " certificat(s) révoqué(s)\n";
+        std::cout << "CRL valid: " << revocations.list->size() << " certificate(s) revoked\n";
     }
     return kExitOk;
 }
 
-// Contrôle un fichier de CRL pour la génération courante, puis le place dans
-// <pki_root>/crl.pem par renommage atomique (pris en compte à chaud).
+// Checks a CRL file against the current generation, then places it in
+// <pki_root>/crl.pem by atomic rename (picked up live).
 int cmd_pki_crl(const std::string& config_path, const std::string& file) {
     const auto ctx = pki_context(config_path);
     if (!ctx) return kExitConfig;
     if (!ctx->second.trust) {
-        std::cerr << "erreur : cette instance ne vérifie pas le certificat de ses pairs : CRL sans objet\n";
+        std::cerr << "error: this instance does not verify its peers' certificates: CRL not applicable\n";
         return kExitConfig;
     }
     const std::filesystem::path root = ctx->first.credentials->pki_root;
     const auto current = tlsrelay::pki::load_current_generation(root, ctx->second);
     if (!current.generation) {
-        for (const auto& e : current.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
+        for (const auto& e : current.errors) std::cerr << "error: " << e.path << ": " << e.message << '\n';
         return kExitConfig;
     }
     const auto result = tlsrelay::pki::load_revocations(file, *current.generation);
-    for (const auto& e : result.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
-    for (const auto& w : result.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+    for (const auto& e : result.errors) std::cerr << "error: " << e.path << ": " << e.message << '\n';
+    for (const auto& w : result.warnings) std::cerr << "warning: " << w.path << ": " << w.message << '\n';
     if (!result.list) {
-        std::cerr << "CRL refusée : " << file << '\n';
+        std::cerr << "CRL rejected: " << file << '\n';
         return kExitConfig;
     }
     try {
@@ -151,12 +151,12 @@ int cmd_pki_crl(const std::string& config_path, const std::string& file) {
         std::filesystem::copy_file(file, tmp, std::filesystem::copy_options::overwrite_existing);
         std::filesystem::rename(tmp, root / tlsrelay::pki::kCrlFile);
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
-    std::cout << "CRL installée dans " << (root / tlsrelay::pki::kCrlFile).string() << " : "
-              << result.list->size() << " certificat(s) révoqué(s) ; prise en compte par le service en cours "
-              << "d'exécution à la prochaine surveillance, ou avec reload\n";
+    std::cout << "CRL installed in " << (root / tlsrelay::pki::kCrlFile).string() << ": "
+              << result.list->size() << " certificate(s) revoked; picked up by the running service "
+              << "at the next watch check, or with reload\n";
     return kExitOk;
 }
 
@@ -165,26 +165,26 @@ int cmd_pki_activate(const std::string& config_path, const std::string& name, bo
     if (!ctx) return kExitConfig;
     const auto& root = ctx->first.credentials->pki_root;
     const auto result = tlsrelay::pki::check_candidate(root, name, ctx->second);
-    for (const auto& e : result.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
-    for (const auto& w : result.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+    for (const auto& e : result.errors) std::cerr << "error: " << e.path << ": " << e.message << '\n';
+    for (const auto& w : result.warnings) std::cerr << "warning: " << w.path << ": " << w.message << '\n';
     if (!result.generation && !force) {
-        std::cerr << "génération « " << name << " » non activée (--force pour passer outre)\n";
+        std::cerr << "generation \"" << name << "\" not activated (--force to override)\n";
         return kExitConfig;
     }
     try {
         tlsrelay::pki::activate(root, name);
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
-    std::cout << "génération « " << name << " » activée dans " << root
-              << " (prise en compte par le service en cours d'exécution à la prochaine surveillance, ou avec SIGHUP)\n";
+    std::cout << "generation \"" << name << "\" activated in " << root
+              << " (picked up by the running service at the next watch check, or with SIGHUP)\n";
     return kExitOk;
 }
 
 void print_check(const tlsrelay::pki::LoadResult& result) {
-    for (const auto& e : result.errors) std::cerr << "erreur : " << e.path << " : " << e.message << '\n';
-    for (const auto& w : result.warnings) std::cerr << "avertissement : " << w.path << " : " << w.message << '\n';
+    for (const auto& e : result.errors) std::cerr << "error: " << e.path << ": " << e.message << '\n';
+    for (const auto& w : result.warnings) std::cerr << "warning: " << w.path << ": " << w.message << '\n';
 }
 
 const char* role_text(tlsrelay::pki::Role role) { return role == tlsrelay::pki::Role::server ? "server" : "client"; }
@@ -194,28 +194,28 @@ int cmd_gen_csr(const std::string& config_path, const std::string& subject, cons
     if (!ctx) return kExitConfig;
     const auto& [config, req] = *ctx;
     if (!req.identity) {
-        std::cerr << "erreur : cette instance ne présente pas de certificat (client sans port mtls) : "
-                     "seuls les fichiers de confiance sont nécessaires (tlsrelay pki install --roots --issuer)\n";
+        std::cerr << "error: this instance does not present a certificate (client without an mtls port): "
+                     "only the trust files are needed (tlsrelay pki install --roots --issuer)\n";
         return kExitConfig;
     }
     std::string error;
     const auto sans = tlsrelay::pki::parse_sans(san_items, error);
     if (!sans) {
-        std::cerr << "erreur : " << error << '\n';
+        std::cerr << "error: " << error << '\n';
         return kExitConfig;
     }
     try {
         const auto result = tlsrelay::pki::generate_csr(config.credentials->pki_root, subject, *sans);
-        std::cout << "génération " << result.generation << " : clé ECDSA P-256 créée (elle ne quitte pas cette machine)\n"
-                  << "demande de signature : " << result.csr.string() << " (sujet " << result.subject << ")\n"
-                  << "étapes suivantes :\n"
-                  << "  1. sur le poste de l'AC : tlsrelay ca sign --dir <ac> --role " << role_text(req.role)
+        std::cout << "generation " << result.generation << ": ECDSA P-256 key created (it never leaves this machine)\n"
+                  << "signing request: " << result.csr.string() << " (subject " << result.subject << ")\n"
+                  << "next steps:\n"
+                  << "  1. on the CA workstation: tlsrelay ca sign --dir <ca> --role " << role_text(req.role)
                   << " --csr " << result.csr.string() << (sans->empty() ? std::string() : " --san " + sans->to_openssl())
                   << " --out <kit>\n"
-                  << "  2. ici : tlsrelay pki install -c " << config_path << " --from <kit>\n"
-                  << "  3. ici : tlsrelay pki activate -c " << config_path << " " << result.generation << '\n';
+                  << "  2. here: tlsrelay pki install -c " << config_path << " --from <kit>\n"
+                  << "  3. here: tlsrelay pki activate -c " << config_path << " " << result.generation << '\n';
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
     return kExitOk;
@@ -232,13 +232,13 @@ int cmd_pki_install(const std::string& config_path, const std::string& generatio
                                                    files, req);
         print_check(result.check);
         if (!result.check.generation) {
-            std::cerr << "génération « " << result.generation << " » installée mais refusée par les contrôles\n";
+            std::cerr << "generation \"" << result.generation << "\" installed but rejected by the checks\n";
             return kExitConfig;
         }
-        std::cout << "génération « " << result.generation << " » prête ; activation : tlsrelay pki activate -c "
+        std::cout << "generation \"" << result.generation << "\" ready; to activate: tlsrelay pki activate -c "
                   << config_path << " " << result.generation << '\n';
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
     return kExitOk;
@@ -252,11 +252,11 @@ int cmd_ca_init(const std::string& dir, const std::string& organization, const s
         if (!organization.empty()) options.organization = organization;
         tlsrelay::pki::init_authority(dir, *passphrase, options);
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
-    std::cout << "AC créée dans " << dir << " : racine (P-384), AC Serveurs et AC Clients ; clés chiffrées\n"
-              << "conserver ce répertoire et la phrase de passe sur le poste d'administration\n";
+    std::cout << "CA created in " << dir << ": root (P-384), Servers CA and Clients CA; keys encrypted\n"
+              << "keep this directory and the passphrase on the administration workstation\n";
     return kExitOk;
 }
 
@@ -266,12 +266,12 @@ int cmd_ca_sign(const std::string& dir, const std::string& role, const std::stri
     std::string error;
     const auto sans = tlsrelay::pki::parse_sans(san_items, error);
     if (!sans) {
-        std::cerr << "erreur : " << error << '\n';
+        std::cerr << "error: " << error << '\n';
         return kExitConfig;
     }
     std::ifstream in(csr_path, std::ios::binary);
     if (!in) {
-        std::cerr << "erreur : lecture impossible : " << csr_path << '\n';
+        std::cerr << "error: cannot read: " << csr_path << '\n';
         return kExitRuntime;
     }
     tlsrelay::pki::SignRequest request;
@@ -285,18 +285,18 @@ int cmd_ca_sign(const std::string& dir, const std::string& role, const std::stri
     try {
         const auto issued = tlsrelay::pki::sign_request(dir, *passphrase, request);
         tlsrelay::pki::write_bundle(out, issued);
-        std::cout << "certificat " << role << " émis : série " << issued.serial << ", sujet " << issued.subject
-                  << ", valable jusqu'au " << issued.not_after << '\n';
+        std::cout << "certificate " << role << " issued: serial " << issued.serial << ", subject " << issued.subject
+                  << ", valid until " << issued.not_after << '\n';
         if (!issued.ignored_extensions.empty()) {
             std::string list;
             for (const auto& e : issued.ignored_extensions) list += (list.empty() ? "" : ", ") + e;
-            std::cout << "extensions demandées ignorées (politique de l'AC) : " << list << '\n';
+            std::cout << "requested extensions ignored (CA policy): " << list << '\n';
         }
-        std::cout << "kit à transmettre à l'instance : " << out
-                  << " (cert.pem, chain.pem, trust-roots.pem, trust-issuer.pem) ; puis tlsrelay pki install -c <config> "
+        std::cout << "kit to hand over to the instance: " << out
+                  << " (cert.pem, chain.pem, trust-roots.pem, trust-issuer.pem); then tlsrelay pki install -c <config> "
                      "--from <kit>\n";
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
     return kExitOk;
@@ -305,21 +305,21 @@ int cmd_ca_sign(const std::string& dir, const std::string& role, const std::stri
 int cmd_ca_list(const std::string& dir) {
     try {
         const auto entries = tlsrelay::pki::list_issued(dir);
-        std::cout << entries.size() << " certificat(s) émis\n";
+        std::cout << entries.size() << " certificate(s) issued\n";
         for (const auto& e : entries) {
-            std::cout << e.serial << "  " << e.role << "  " << e.status << "  jusqu'au " << e.not_after << "  "
+            std::cout << e.serial << "  " << e.role << "  " << e.status << "  until " << e.not_after << "  "
                       << e.subject;
-            if (!e.revoked_at.empty()) std::cout << "  (révoqué le " << e.revoked_at << ", " << e.reason << ")";
+            if (!e.revoked_at.empty()) std::cout << "  (revoked on " << e.revoked_at << ", " << e.reason << ")";
             std::cout << '\n';
         }
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
     return kExitOk;
 }
 
-// Publie les CRL et, si demandé, en écrit une copie (à déployer dans <pki_root>/crl.pem).
+// Publishes the CRLs and, if requested, writes a copy (to deploy to <pki_root>/crl.pem).
 int publish_crl(const std::string& dir, int days, const std::string& out, const std::string& passphrase_file) {
     const auto passphrase = tlsrelay::app::read_passphrase(passphrase_file, false);
     if (!passphrase) return kExitRuntime;
@@ -328,14 +328,14 @@ int publish_crl(const std::string& dir, int days, const std::string& out, const 
         if (!out.empty()) {
             std::ofstream file(out, std::ios::binary | std::ios::trunc);
             file << crl.pem;
-            if (!file) throw std::runtime_error("écriture impossible : " + out);
+            if (!file) throw std::runtime_error("cannot write: " + out);
         }
-        std::cout << "CRL n° " << crl.number << " publiée : " << crl.revoked << " certificat(s) révoqué(s), "
-                  << "prochaine mise à jour avant le " << crl.next_update << '\n'
-                  << "à copier dans <pki_root>/crl.pem de chaque instance : "
+        std::cout << "CRL #" << crl.number << " published: " << crl.revoked << " certificate(s) revoked, "
+                  << "next update before " << crl.next_update << '\n'
+                  << "copy to <pki_root>/crl.pem on each instance: "
                   << (out.empty() ? (std::filesystem::path(dir) / "crl.pem").string() : out) << '\n';
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
     return kExitOk;
@@ -345,16 +345,16 @@ int cmd_ca_revoke(const std::string& dir, const std::string& serial, const std::
                   const std::string& out, const std::string& passphrase_file) {
     const auto reason = tlsrelay::pki::parse_revocation_reason(reason_text);
     if (!reason) {
-        std::cerr << "erreur : motif inconnu « " << reason_text
-                  << " » (unspecified, keyCompromise, superseded, cessationOfOperation)\n";
+        std::cerr << "error: unknown reason \"" << reason_text
+                  << "\" (unspecified, keyCompromise, superseded, cessationOfOperation)\n";
         return kExitConfig;
     }
     try {
         const auto entry = tlsrelay::pki::revoke_certificate(dir, serial, *reason);
-        std::cout << "certificat " << entry.serial << " (" << entry.role << ", " << entry.subject << ") révoqué : "
+        std::cout << "certificate " << entry.serial << " (" << entry.role << ", " << entry.subject << ") revoked: "
                   << entry.reason << '\n';
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
     return publish_crl(dir, days, out, passphrase_file);
@@ -364,11 +364,11 @@ int cmd_ca_root_change(const std::string& dir, const std::string& new_dir, const
     try {
         tlsrelay::pki::write_root_transition(dir, new_dir, out);
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
-    std::cout << "fichiers de confiance des étapes 1 et 2 écrits dans " << out
-              << " (serveur/, client/) ; procédure complète : " << (std::filesystem::path(out) / "LISEZMOI.txt").string()
+    std::cout << "trust files for steps 1 and 2 written to " << out
+              << " (server/, client/); full procedure: " << (std::filesystem::path(out) / "README.txt").string()
               << '\n';
     return kExitOk;
 }
@@ -380,19 +380,19 @@ int cmd_ca_audit(const std::string& dir) {
             std::cout << e.date << "  " << e.operator_name << "  " << e.operation << "  " << e.details << '\n';
         }
         if (log.broken_line) {
-            std::cerr << "journal d'audit altéré à la ligne " << *log.broken_line << " : " << log.problem << '\n';
+            std::cerr << "audit log tampered with at line " << *log.broken_line << ": " << log.problem << '\n';
             return kExitRuntime;
         }
-        std::cout << log.entries.size() << " opération(s), chaîne d'empreintes intacte\n";
+        std::cout << log.entries.size() << " operation(s), hash chain intact\n";
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
     return kExitOk;
 }
 
-// Exécute une instance jusqu'à son arrêt. instance : nom attendu (vide : celui
-// de la configuration). control : gestionnaire de services (nullptr en console).
+// Runs an instance until it stops. instance: expected name (empty: the one
+// in the configuration). control: service manager (nullptr in console mode).
 int run_instance(const std::string& path, std::optional<tlsrelay::LogLevel> cli_level, const std::string& instance,
                  tlsrelay::app::ServiceControl* control) {
     using namespace tlsrelay;
@@ -401,33 +401,33 @@ int run_instance(const std::string& path, std::optional<tlsrelay::LogLevel> cli_
     print_issues(result);
     std::string refusal;
     if (result.config && !instance.empty() && instance != result.config->instance) {
-        refusal = "la configuration " + path + " est celle de l'instance « " + result.config->instance +
-                  " » et non de « " + instance + " »";
-        std::cerr << "erreur : " << refusal << '\n';
+        refusal = "configuration " + path + " belongs to instance \"" + result.config->instance +
+                  "\", not \"" + instance + "\"";
+        std::cerr << "error: " << refusal << '\n';
     }
     if (!result.config || !refusal.empty()) {
 #ifdef _WIN32
-        // Un service n'a pas de console : la cause de l'échec va dans son journal par défaut,
-        // dont le répertoire lui est ouvert à l'installation.
+        // A service has no console: the cause of the failure goes to its default log,
+        // whose directory is opened to it at installation.
         if (control) {
             std::ofstream log(app::default_service_log(instance), std::ios::app);
-            log << "erreur : démarrage impossible, configuration " << path << " refusée\n";
-            for (const auto& e : result.errors) log << "erreur : " << e.path << " : " << e.message << '\n';
-            if (!refusal.empty()) log << "erreur : " << refusal << '\n';
+            log << "error: cannot start, configuration " << path << " rejected\n";
+            for (const auto& e : result.errors) log << "error: " << e.path << ": " << e.message << '\n';
+            if (!refusal.empty()) log << "error: " << refusal << '\n';
         }
 #endif
         return kExitConfig;
     }
     Config config = *result.config;
 #ifdef _WIN32
-    // Un service Windows n'a pas de console : journal dans %ProgramData%.
+    // A Windows service has no console: log in %ProgramData%.
     std::string stderr_replacement;
     if (control) stderr_replacement = app::default_service_log(config.instance).string();
     if (control && config.logging.output == "stderr") config.logging.output = stderr_replacement;
 #endif
 
     if (!openssl_runtime_supported()) {
-        std::cerr << "erreur : OpenSSL 3.0 ou plus récent est requis (version chargée : " << openssl_runtime_version()
+        std::cerr << "error: OpenSSL 3.0 or later is required (loaded version: " << openssl_runtime_version()
                   << ")\n";
         return kExitRuntime;
     }
@@ -435,17 +435,17 @@ int run_instance(const std::string& path, std::optional<tlsrelay::LogLevel> cli_
     try {
         logging::init(config.logging, cli_level);
     } catch (const std::exception& e) {
-        std::cerr << "erreur : " << e.what() << '\n';
+        std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
-    logging::config().info("tlsrelay {} : configuration chargée depuis {} (mode={}, instance={})", kVersion, path,
+    logging::config().info("tlsrelay {}: configuration loaded from {} (mode={}, instance={})", kVersion, path,
                            to_string(config.mode), config.instance);
-    logging::config().info("OpenSSL chargé : {}", openssl_runtime_version());
+    logging::config().info("OpenSSL loaded: {}", openssl_runtime_version());
 
     try {
         relay::ServiceOptions options;
 #ifdef _WIN32
-        options.handle_signals = control == nullptr;  // un service reçoit ses ordres du gestionnaire
+        options.handle_signals = control == nullptr;  // a service takes its orders from the manager
         options.stderr_log_replacement = stderr_replacement;
 #endif
         options.config_path = std::filesystem::absolute(path).string();
@@ -454,19 +454,19 @@ int run_instance(const std::string& path, std::optional<tlsrelay::LogLevel> cli_
         return service.run();
     } catch (const std::exception& e) {
         logging::config().error("{}", e.what());
-        // Journal dans un fichier : l'erreur de démarrage est aussi affichée.
-        if (config.logging.output != "stderr" && !control) std::cerr << "erreur : " << e.what() << '\n';
+        // Logging to a file: the startup error is also printed.
+        if (config.logging.output != "stderr" && !control) std::cerr << "error: " << e.what() << '\n';
         return kExitRuntime;
     }
 }
 
-// Instance visée par une commande d'administration.
+// Instance targeted by an administration command.
 struct Target {
     std::string instance;
     std::string config;
     std::string admin;
 
-    // Point d'accès du canal ; vide si la configuration est illisible (erreur affichée).
+    // Channel endpoint; empty if the configuration is unreadable (error printed).
     std::string endpoint() const {
         if (!admin.empty()) return admin;
         if (!config.empty()) {
@@ -490,19 +490,19 @@ struct Target {
 
 constexpr auto kCallTimeout = std::chrono::seconds(30);
 
-// Envoie une commande et affiche la réponse. Retourne le code de sortie.
+// Sends a command and prints the reply. Returns the exit code.
 int send_command(const std::string& endpoint, const std::string& request, bool print = true) {
     if (endpoint.empty()) return kExitConfig;
     const auto result = tlsrelay::admin::call(endpoint, request, kCallTimeout);
     if (!result.reply) {
-        std::cerr << "erreur : " << result.error << '\n';
+        std::cerr << "error: " << result.error << '\n';
         return kExitRuntime;
     }
     if (print) (result.reply->ok ? std::cout : std::cerr) << result.reply->body;
     return result.reply->ok ? kExitOk : kExitRuntime;
 }
 
-// Attend que l'instance ne réponde plus (arrêtée).
+// Waits until the instance no longer answers (stopped).
 bool wait_stopped(const std::string& endpoint, tlsrelay::Duration timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -512,7 +512,7 @@ bool wait_stopped(const std::string& endpoint, tlsrelay::Duration timeout) {
     return false;
 }
 
-// Attend que l'instance réponde (démarrée).
+// Waits until the instance answers (started).
 bool wait_running(const std::string& endpoint, tlsrelay::Duration timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -530,7 +530,7 @@ int cmd_stop(const Target& target, const std::string& timeout_text) {
     if (!timeout_text.empty()) {
         const auto timeout = tlsrelay::parse_duration(timeout_text);
         if (!timeout) {
-            std::cerr << "erreur : délai invalide « " << timeout_text << " »\n";
+            std::cerr << "error: invalid timeout \"" << timeout_text << "\"\n";
             return kExitConfig;
         }
         request += " " + timeout_text;
@@ -539,22 +539,22 @@ int cmd_stop(const Target& target, const std::string& timeout_text) {
     const auto result = tlsrelay::admin::call(endpoint, request, kCallTimeout);
     if (!result.reply) {
         if (result.unreachable) {
-            std::cout << "instance « " << target.name() << " » déjà arrêtée\n";
+            std::cout << "instance \"" << target.name() << "\" already stopped\n";
             return kExitOk;
         }
-        std::cerr << "erreur : " << result.error << '\n';
+        std::cerr << "error: " << result.error << '\n';
         return kExitRuntime;
     }
     std::cout << result.reply->body;
     if (!result.reply->ok) return kExitRuntime;
     if (!wait_stopped(endpoint, wait)) {
-        std::cerr << "erreur : l'instance ne s'est pas arrêtée dans le délai (tlsrelay kill pour forcer)\n";
+        std::cerr << "error: the instance did not stop within the timeout (tlsrelay kill to force)\n";
         return kExitRuntime;
     }
     if (tlsrelay::app::service_installed(target.name())) {
         tlsrelay::app::service_wait_stopped(target.name(), std::chrono::seconds(10));
     }
-    std::cout << "instance « " << target.name() << " » arrêtée\n";
+    std::cout << "instance \"" << target.name() << "\" stopped\n";
     return kExitOk;
 }
 
@@ -566,46 +566,46 @@ int cmd_kill(const Target& target) {
         if (tlsrelay::app::service_installed(target.name())) {
             tlsrelay::app::service_wait_stopped(target.name(), std::chrono::seconds(10));
         }
-        std::cout << "instance « " << target.name() << " » arrêtée immédiatement\n";
+        std::cout << "instance \"" << target.name() << "\" stopped immediately\n";
         return kExitOk;
     }
     if (result.unreachable && !tlsrelay::app::service_installed(target.name())) {
-        std::cout << "instance « " << target.name() << " » déjà arrêtée\n";
+        std::cout << "instance \"" << target.name() << "\" already stopped\n";
         return kExitOk;
     }
-    // Canal muet : arrêt forcé par le gestionnaire de services.
+    // Silent channel: forced stop through the service manager.
     if (tlsrelay::app::service_installed(target.name())) {
-        std::cerr << "canal d'administration sans réponse : arrêt forcé du service\n";
+        std::cerr << "administration channel not responding: forcing the service to stop\n";
         return tlsrelay::app::service_force_kill(target.name());
     }
-    std::cerr << "erreur : " << (result.reply ? "l'instance ne s'est pas arrêtée" : result.error) << '\n';
+    std::cerr << "error: " << (result.reply ? "the instance did not stop" : result.error) << '\n';
     return kExitRuntime;
 }
 
 int cmd_start(const std::string& instance, tlsrelay::Duration timeout) {
     if (!tlsrelay::app::service_installed(instance)) {
-        std::cerr << "erreur : l'instance « " << instance
-                  << " » n'est pas installée comme service (tlsrelay service install, ou tlsrelay run)\n";
+        std::cerr << "error: instance \"" << instance
+                  << "\" is not installed as a service (tlsrelay service install, or tlsrelay run)\n";
         return kExitRuntime;
     }
     const auto endpoint = tlsrelay::admin::default_endpoint(instance);
     if (tlsrelay::admin::call(endpoint, "ping", std::chrono::seconds(2)).reply) {
-        std::cout << "instance « " << instance << " » déjà démarrée\n";
+        std::cout << "instance \"" << instance << "\" already started\n";
         return kExitOk;
     }
     if (const int code = tlsrelay::app::service_start(instance, timeout); code != kExitOk) return code;
     if (!wait_running(endpoint, timeout)) {
-        std::cerr << "erreur : le service est lancé mais son canal d'administration ne répond pas (" << endpoint
+        std::cerr << "error: the service was launched but its administration channel does not respond (" << endpoint
                   << ")\n";
         return kExitRuntime;
     }
-    std::cout << "instance « " << instance << " » démarrée\n";
+    std::cout << "instance \"" << instance << "\" started\n";
     return kExitOk;
 }
 
 int cmd_install(const std::string& instance, std::string config_path, bool boot) {
     if (!tlsrelay::valid_instance_name(instance)) {
-        std::cerr << "erreur : nom d'instance invalide « " << instance << " »\n";
+        std::cerr << "error: invalid instance name \"" << instance << "\"\n";
         return kExitConfig;
     }
     if (config_path.empty()) config_path = tlsrelay::app::default_config_path(instance).string();
@@ -614,12 +614,12 @@ int cmd_install(const std::string& instance, std::string config_path, bool boot)
     print_issues(result);
     if (!result.config) return kExitConfig;
     if (result.config->instance != instance) {
-        std::cerr << "erreur : " << absolute.string() << " déclare l'instance « " << result.config->instance
-                  << " » (instance: " << instance << " attendu)\n";
+        std::cerr << "error: " << absolute.string() << " declares instance \"" << result.config->instance
+                  << "\" (instance: " << instance << " expected)\n";
         return kExitConfig;
     }
     if (result.config->admin.endpoint) {
-        std::cerr << "erreur : un service utilise le canal d'administration par défaut : retirer admin.endpoint\n";
+        std::cerr << "error: a service uses the default administration channel: remove admin.endpoint\n";
         return kExitConfig;
     }
     return tlsrelay::app::service_install(
@@ -634,155 +634,155 @@ int main(int argc, char** argv) {
 #endif
     tlsrelay::logging::init_default();
 
-    CLI::App app{"tlsrelay : relais TCP clair / TLS 1.3 / mTLS"};
+    CLI::App app{"tlsrelay: plain TCP / TLS 1.3 / mTLS relay"};
     app.require_subcommand(1);
-    app.set_help_all_flag("--help-all", "Aide de toutes les commandes");
+    app.set_help_all_flag("--help-all", "Help for all commands");
 
     std::string config_path;
     int verbosity = 0;
     bool quiet = false;
 
-    auto* run = app.add_subcommand("run", "Exécute le relais au premier plan (Ctrl+C pour arrêter)");
-    run->add_option("-c,--config", config_path, "Fichier de configuration")->required();
-    auto* verbose_flag = run->add_flag("-v,--verbose", verbosity, "Mode verbose : -v (debug), -vv (trace)");
-    run->add_flag("-q,--quiet", quiet, "Erreurs uniquement")->excludes(verbose_flag);
+    auto* run = app.add_subcommand("run", "Runs the relay in the foreground (Ctrl+C to stop)");
+    run->add_option("-c,--config", config_path, "Configuration file")->required();
+    auto* verbose_flag = run->add_flag("-v,--verbose", verbosity, "Verbose mode: -v (debug), -vv (trace)");
+    run->add_flag("-q,--quiet", quiet, "Errors only")->excludes(verbose_flag);
     std::string run_instance_name;
-    run->add_option("--instance", run_instance_name, "Nom d'instance attendu dans la configuration (services)");
+    run->add_option("--instance", run_instance_name, "Instance name expected in the configuration (services)");
 
-    auto* check = app.add_subcommand("check-config", "Valide un fichier de configuration sans le charger");
-    check->add_option("-c,--config", config_path, "Fichier de configuration")->required();
+    auto* check = app.add_subcommand("check-config", "Validates a configuration file without loading it");
+    check->add_option("-c,--config", config_path, "Configuration file")->required();
 
     std::string generation;
     bool force = false;
-    auto* check_pki = app.add_subcommand("check-pki", "Valide une génération PKI (par défaut la génération courante)");
-    check_pki->add_option("-c,--config", config_path, "Fichier de configuration")->required();
-    check_pki->add_option("generation", generation, "Nom de la génération (ex. v2)");
+    auto* check_pki = app.add_subcommand("check-pki", "Validates a PKI generation (the current generation by default)");
+    check_pki->add_option("-c,--config", config_path, "Configuration file")->required();
+    check_pki->add_option("generation", generation, "Generation name (e.g. v2)");
 
-    auto* pki = app.add_subcommand("pki", "Gestion de la PKI");
+    auto* pki = app.add_subcommand("pki", "PKI management");
     pki->require_subcommand(1);
-    auto* activate = pki->add_subcommand("activate", "Active une génération (remplace le fichier current)");
-    activate->add_option("-c,--config", config_path, "Fichier de configuration")->required();
-    activate->add_option("generation", generation, "Nom de la génération à activer (ex. v2)")->required();
-    activate->add_flag("--force", force, "Active même si les contrôles échouent (urgence uniquement)");
+    auto* activate = pki->add_subcommand("activate", "Activates a generation (replaces the current file)");
+    activate->add_option("-c,--config", config_path, "Configuration file")->required();
+    activate->add_option("generation", generation, "Name of the generation to activate (e.g. v2)")->required();
+    activate->add_flag("--force", force, "Activates even if the checks fail (emergency only)");
     std::string subject;
     std::vector<std::string> sans;
-    auto* gen_csr = pki->add_subcommand("gen-csr", "Nouvelle génération : clé P-256 et demande de signature (CSR)");
-    gen_csr->add_option("-c,--config", config_path, "Fichier de configuration")->required();
-    gen_csr->add_option("--subject", subject, "Sujet, par exemple \"CN=relay.exemple,O=MonEntreprise\"")->required();
-    gen_csr->add_option("--san", sans, "Noms DNS ou adresses IP (indicatif : l'AC fixe ceux du certificat)");
+    auto* gen_csr = pki->add_subcommand("gen-csr", "New generation: P-256 key and certificate signing request (CSR)");
+    gen_csr->add_option("-c,--config", config_path, "Configuration file")->required();
+    gen_csr->add_option("--subject", subject, "Subject, for example \"CN=relay.example,O=MyCompany\"")->required();
+    gen_csr->add_option("--san", sans, "DNS names or IP addresses (advisory: the CA sets those in the certificate)");
     tlsrelay::pki::InstallFiles install_files;
     std::string from, cert, chain, roots, issuer;
-    auto* pki_install = pki->add_subcommand("install", "Complète une génération avec le certificat signé (sans l'activer)");
-    pki_install->add_option("-c,--config", config_path, "Fichier de configuration")->required();
-    pki_install->add_option("--generation", generation, "Génération à compléter (défaut : la demande en attente)");
-    pki_install->add_option("--from", from, "Kit produit par « ca sign »");
-    pki_install->add_option("--cert", cert, "Certificat signé");
-    pki_install->add_option("--chain", chain, "AC intermédiaire qui l'a signé");
-    pki_install->add_option("--roots", roots, "Racines de confiance (défaut : celles de la génération courante)");
-    pki_install->add_option("--issuer", issuer, "AC attendue chez les pairs (défaut : celle de la génération courante)");
+    auto* pki_install = pki->add_subcommand("install", "Completes a generation with the signed certificate (without activating it)");
+    pki_install->add_option("-c,--config", config_path, "Configuration file")->required();
+    pki_install->add_option("--generation", generation, "Generation to complete (default: the pending request)");
+    pki_install->add_option("--from", from, "Kit produced by \"ca sign\"");
+    pki_install->add_option("--cert", cert, "Signed certificate");
+    pki_install->add_option("--chain", chain, "Intermediate CA that signed it");
+    pki_install->add_option("--roots", roots, "Trust roots (default: those of the current generation)");
+    pki_install->add_option("--issuer", issuer, "CA expected from peers (default: that of the current generation)");
     std::string crl_file;
-    auto* pki_crl = pki->add_subcommand("crl", "Contrôle et installe les CRL publiées par l'AC (<pki_root>/crl.pem)");
-    pki_crl->add_option("-c,--config", config_path, "Fichier de configuration")->required();
-    pki_crl->add_option("file", crl_file, "Fichier de CRL (ca crl --out)")->required();
+    auto* pki_crl = pki->add_subcommand("crl", "Checks and installs the CRLs published by the CA (<pki_root>/crl.pem)");
+    pki_crl->add_option("-c,--config", config_path, "Configuration file")->required();
+    pki_crl->add_option("file", crl_file, "CRL file (ca crl --out)")->required();
 
-    // Mini-AC (poste d'administration).
+    // Mini-CA (administration workstation).
     std::string ca_dir, organization, passphrase_file, role, csr_path, out;
     int days = 365;
     bool renew = false;
-    auto* ca = app.add_subcommand("ca", "Mini-AC : racine, AC Serveurs et AC Clients");
+    auto* ca = app.add_subcommand("ca", "Mini-CA: root, Servers CA and Clients CA");
     ca->require_subcommand(1);
-    auto* ca_init = ca->add_subcommand("init", "Crée l'AC (clés chiffrées, phrase de passe demandée)");
-    ca_init->add_option("--dir", ca_dir, "Répertoire de l'AC (vide ou absent)")->required();
-    ca_init->add_option("--org", organization, "Organisation (O) des certificats d'AC (défaut : tlsrelay)");
-    ca_init->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
-    auto* ca_sign = ca->add_subcommand("sign", "Signe une demande selon la politique de l'AC");
-    ca_sign->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
-    ca_sign->add_option("--role", role, "server ou client")->required()->check(CLI::IsMember({"server", "client"}));
-    ca_sign->add_option("--csr", csr_path, "Demande de signature (request.csr)")->required();
-    ca_sign->add_option("--san", sans, "Noms DNS ou adresses IP du certificat (obligatoire pour un serveur)");
-    ca_sign->add_option("--days", days, "Durée de validité en jours (défaut : 365)")->check(CLI::Range(1, 3650));
-    ca_sign->add_flag("--renew", renew, "Renouvellement : le certificat en cours pour ce sujet est remplacé");
-    ca_sign->add_option("--out", out, "Répertoire du kit à transmettre à l'instance")->required();
-    ca_sign->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
-    auto* ca_list = ca->add_subcommand("list", "Inventaire des certificats émis");
-    ca_list->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
+    auto* ca_init = ca->add_subcommand("init", "Creates the CA (encrypted keys, passphrase prompted)");
+    ca_init->add_option("--dir", ca_dir, "CA directory (empty or absent)")->required();
+    ca_init->add_option("--org", organization, "Organization (O) of the CA certificates (default: tlsrelay)");
+    ca_init->add_option("--passphrase-file", passphrase_file, "Passphrase read from a file");
+    auto* ca_sign = ca->add_subcommand("sign", "Signs a request according to the CA policy");
+    ca_sign->add_option("--dir", ca_dir, "CA directory")->required();
+    ca_sign->add_option("--role", role, "server or client")->required()->check(CLI::IsMember({"server", "client"}));
+    ca_sign->add_option("--csr", csr_path, "Signing request (request.csr)")->required();
+    ca_sign->add_option("--san", sans, "DNS names or IP addresses of the certificate (required for a server)");
+    ca_sign->add_option("--days", days, "Validity period in days (default: 365)")->check(CLI::Range(1, 3650));
+    ca_sign->add_flag("--renew", renew, "Renewal: the current certificate for this subject is replaced");
+    ca_sign->add_option("--out", out, "Directory of the kit to hand over to the instance")->required();
+    ca_sign->add_option("--passphrase-file", passphrase_file, "Passphrase read from a file");
+    auto* ca_list = ca->add_subcommand("list", "Inventory of issued certificates");
+    ca_list->add_option("--dir", ca_dir, "CA directory")->required();
     std::string serial, reason = "unspecified";
     int crl_days = 30;
-    auto* ca_revoke = ca->add_subcommand("revoke", "Révoque un certificat émis et publie les CRL");
-    ca_revoke->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
-    ca_revoke->add_option("--serial", serial, "Numéro de série (ca list)")->required();
-    ca_revoke->add_option("--reason", reason, "unspecified, keyCompromise, superseded ou cessationOfOperation");
-    ca_revoke->add_option("--days", crl_days, "Validité des CRL en jours (défaut : 30)")->check(CLI::Range(1, 366));
-    ca_revoke->add_option("--out", out, "Copie des CRL à déployer (crl.pem)");
-    ca_revoke->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
-    auto* ca_crl = ca->add_subcommand("crl", "Publie les CRL des AC Serveurs et Clients");
-    ca_crl->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
-    ca_crl->add_option("--days", crl_days, "Validité des CRL en jours (défaut : 30)")->check(CLI::Range(1, 366));
-    ca_crl->add_option("--out", out, "Copie des CRL à déployer (crl.pem)");
-    ca_crl->add_option("--passphrase-file", passphrase_file, "Phrase de passe lue dans un fichier");
-    auto* ca_audit = ca->add_subcommand("audit", "Journal d'audit de l'AC et contrôle de son intégrité");
-    ca_audit->add_option("--dir", ca_dir, "Répertoire de l'AC")->required();
+    auto* ca_revoke = ca->add_subcommand("revoke", "Revokes an issued certificate and publishes the CRLs");
+    ca_revoke->add_option("--dir", ca_dir, "CA directory")->required();
+    ca_revoke->add_option("--serial", serial, "Serial number (ca list)")->required();
+    ca_revoke->add_option("--reason", reason, "unspecified, keyCompromise, superseded or cessationOfOperation");
+    ca_revoke->add_option("--days", crl_days, "CRL validity in days (default: 30)")->check(CLI::Range(1, 366));
+    ca_revoke->add_option("--out", out, "Copy of the CRLs to deploy (crl.pem)");
+    ca_revoke->add_option("--passphrase-file", passphrase_file, "Passphrase read from a file");
+    auto* ca_crl = ca->add_subcommand("crl", "Publishes the CRLs of the Servers and Clients CAs");
+    ca_crl->add_option("--dir", ca_dir, "CA directory")->required();
+    ca_crl->add_option("--days", crl_days, "CRL validity in days (default: 30)")->check(CLI::Range(1, 366));
+    ca_crl->add_option("--out", out, "Copy of the CRLs to deploy (crl.pem)");
+    ca_crl->add_option("--passphrase-file", passphrase_file, "Passphrase read from a file");
+    auto* ca_audit = ca->add_subcommand("audit", "CA audit log and integrity check");
+    ca_audit->add_option("--dir", ca_dir, "CA directory")->required();
     std::string new_ca_dir;
-    auto* ca_root_change = ca->add_subcommand("root-change", "Prépare le changement de racine (fichiers de confiance, étapes)");
-    ca_root_change->add_option("--dir", ca_dir, "AC en service (ancienne racine)")->required();
-    ca_root_change->add_option("--new", new_ca_dir, "Nouvelle AC (ca init)")->required();
-    ca_root_change->add_option("--out", out, "Répertoire à produire")->required();
+    auto* ca_root_change = ca->add_subcommand("root-change", "Prepares the root change (trust files, steps)");
+    ca_root_change->add_option("--dir", ca_dir, "CA in service (old root)")->required();
+    ca_root_change->add_option("--new", new_ca_dir, "New CA (ca init)")->required();
+    ca_root_change->add_option("--out", out, "Directory to produce")->required();
 
-    auto* version = app.add_subcommand("version", "Affiche la version de tlsrelay et d'OpenSSL");
+    auto* version = app.add_subcommand("version", "Shows the tlsrelay and OpenSSL versions");
 
-    // Commandes vers une instance en cours d'exécution (canal d'administration).
+    // Commands to a running instance (administration channel).
     Target target;
     auto add_target = [&target](CLI::App* cmd) {
-        auto* inst = cmd->add_option("--instance", target.instance, "Nom de l'instance (défaut : default)");
-        auto* cfg = cmd->add_option("-c,--config", target.config, "Configuration de l'instance");
-        auto* adm = cmd->add_option("--admin", target.admin, "Point d'accès du canal d'administration");
+        auto* inst = cmd->add_option("--instance", target.instance, "Instance name (default: default)");
+        auto* cfg = cmd->add_option("-c,--config", target.config, "Instance configuration");
+        auto* adm = cmd->add_option("--admin", target.admin, "Administration channel endpoint");
         inst->excludes(cfg)->excludes(adm);
         cfg->excludes(adm);
     };
-    auto* status = app.add_subcommand("status", "État de l'instance : PID, durée, OpenSSL, génération PKI, canaux");
+    auto* status = app.add_subcommand("status", "Instance status: PID, uptime, OpenSSL, PKI generation, channels");
     add_target(status);
-    auto* channels = app.add_subcommand("channels", "Liste des canaux ouverts");
+    auto* channels = app.add_subcommand("channels", "List of open channels");
     add_target(channels);
-    auto* metrics = app.add_subcommand("metrics", "Métriques au format texte Prometheus");
+    auto* metrics = app.add_subcommand("metrics", "Metrics in Prometheus text format");
     add_target(metrics);
     std::string timeout_text;
-    auto* stop = app.add_subcommand("stop", "Arrêt propre : drain des canaux, puis arrêt");
+    auto* stop = app.add_subcommand("stop", "Graceful stop: drain the channels, then stop");
     add_target(stop);
-    stop->add_option("--timeout", timeout_text, "Durée maximale du drain (défaut : limits.shutdown_timeout)");
-    auto* kill = app.add_subcommand("kill", "Arrêt immédiat, sans drain");
+    stop->add_option("--timeout", timeout_text, "Maximum drain duration (default: limits.shutdown_timeout)");
+    auto* kill = app.add_subcommand("kill", "Immediate stop, without draining");
     add_target(kill);
     bool kill_old = false;
-    auto* reload = app.add_subcommand("reload", "Recharge la liste blanche, la PKI et les niveaux de journalisation");
+    auto* reload = app.add_subcommand("reload", "Reloads the whitelist, the PKI and the log levels");
     add_target(reload);
-    reload->add_flag("--kill-old", kill_old, "Ferme aussi les connexions des générations PKI retirées");
+    reload->add_flag("--kill-old", kill_old, "Also closes the connections of retired PKI generations");
     std::string level_spec;
-    auto* log_level = app.add_subcommand("log-level", "Change le niveau de journalisation à chaud");
+    auto* log_level = app.add_subcommand("log-level", "Changes the log level live");
     add_target(log_level);
-    log_level->add_option("niveau", level_spec, "error|info|debug|trace, ou activity=<niveau>, config=<niveau>")
+    log_level->add_option("level", level_spec, "error|info|debug|trace, or activity=<level>, config=<level>")
         ->required();
-    auto* log_reopen = app.add_subcommand("log-reopen", "Rouvre le fichier de log (après rotation)");
+    auto* log_reopen = app.add_subcommand("log-reopen", "Reopens the log file (after rotation)");
     add_target(log_reopen);
 
-    // Gestionnaire de services (systemd, services Windows).
+    // Service manager (systemd, Windows services).
     std::string instance = "default";
-    auto* start = app.add_subcommand("start", "Démarre le service d'une instance installée");
-    start->add_option("--instance", instance, "Nom de l'instance (défaut : default)");
-    start->add_option("--timeout", timeout_text, "Attente maximale du démarrage (défaut : 30s)");
-    auto* restart = app.add_subcommand("restart", "Arrêt propre puis redémarrage du service");
-    restart->add_option("--instance", instance, "Nom de l'instance (défaut : default)");
-    restart->add_option("--timeout", timeout_text, "Durée maximale du drain");
-    auto* service = app.add_subcommand("service", "Installation comme service du système");
+    auto* start = app.add_subcommand("start", "Starts the service of an installed instance");
+    start->add_option("--instance", instance, "Instance name (default: default)");
+    start->add_option("--timeout", timeout_text, "Maximum wait for startup (default: 30s)");
+    auto* restart = app.add_subcommand("restart", "Graceful stop then restart of the service");
+    restart->add_option("--instance", instance, "Instance name (default: default)");
+    restart->add_option("--timeout", timeout_text, "Maximum drain duration");
+    auto* service = app.add_subcommand("service", "Installation as a system service");
     service->require_subcommand(1);
     bool boot = false;
     std::string service_config;
-    auto* install = service->add_subcommand("install", "Installe le service (systemd tlsrelay@N, Windows tlsrelay-N)");
-    install->add_option("--instance", instance, "Nom de l'instance (défaut : default)");
-    install->add_option("-c,--config", service_config, "Configuration (défaut : emplacement standard de l'instance)");
-    install->add_flag("--boot", boot, "Démarrage automatique avec le système");
-    auto* uninstall = service->add_subcommand("uninstall", "Arrête et désinstalle le service");
-    uninstall->add_option("--instance", instance, "Nom de l'instance (défaut : default)");
+    auto* install = service->add_subcommand("install", "Installs the service (systemd tlsrelay@N, Windows tlsrelay-N)");
+    install->add_option("--instance", instance, "Instance name (default: default)");
+    install->add_option("-c,--config", service_config, "Configuration (default: standard location for the instance)");
+    install->add_flag("--boot", boot, "Start automatically with the system");
+    auto* uninstall = service->add_subcommand("uninstall", "Stops and uninstalls the service");
+    uninstall->add_option("--instance", instance, "Instance name (default: default)");
 #ifdef _WIN32
-    // Commande interne : processus lancé par le gestionnaire de services.
+    // Internal command: process launched by the service manager.
     auto* service_run = app.add_subcommand("service-run", "")->group("");
     service_run->add_option("--instance", instance)->required();
     service_run->add_option("-c,--config", config_path)->required();
@@ -811,7 +811,7 @@ int main(int argc, char** argv) {
 
     if (*version) {
         std::cout << "tlsrelay " << tlsrelay::kVersion << '\n'
-                  << "bibliothèque : " << tlsrelay::openssl_runtime_version() << '\n';
+                  << "library: " << tlsrelay::openssl_runtime_version() << '\n';
         return kExitOk;
     }
     if (*check) return cmd_check_config(config_path);
@@ -831,17 +831,17 @@ int main(int argc, char** argv) {
     };
     if (*start || *restart) {
         if (!tlsrelay::valid_instance_name(instance)) {
-            std::cerr << "erreur : nom d'instance invalide « " << instance << " »\n";
+            std::cerr << "error: invalid instance name \"" << instance << "\"\n";
             return kExitConfig;
         }
         const auto timeout = service_timeout();
         if (!timeout) {
-            std::cerr << "erreur : délai invalide « " << timeout_text << " »\n";
+            std::cerr << "error: invalid timeout \"" << timeout_text << "\"\n";
             return kExitConfig;
         }
         if (*restart) {
             if (!tlsrelay::app::service_installed(instance)) {
-                std::cerr << "erreur : l'instance « " << instance << " » n'est pas installée comme service\n";
+                std::cerr << "error: instance \"" << instance << "\" is not installed as a service\n";
                 return kExitRuntime;
             }
             Target t;
@@ -853,7 +853,7 @@ int main(int argc, char** argv) {
     if (*install) return cmd_install(instance, service_config, boot);
     if (*uninstall) {
         if (!tlsrelay::valid_instance_name(instance)) {
-            std::cerr << "erreur : nom d'instance invalide « " << instance << " »\n";
+            std::cerr << "error: invalid instance name \"" << instance << "\"\n";
             return kExitConfig;
         }
         return tlsrelay::app::service_uninstall(instance);

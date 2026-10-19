@@ -35,7 +35,7 @@ gtest_discover_tests(tlsrelay_tests
     DISCOVERY_TIMEOUT 60
     PROPERTIES TIMEOUT 60)
 
-# Cycle de vie en console avec le binaire réel (Linux).
+# Console lifecycle with the real binary (Linux).
 if(NOT WIN32)
     add_test(NAME Lifecycle.Console
              COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle/console.sh" $<TARGET_FILE:tlsrelay>)
@@ -45,7 +45,7 @@ if(NOT WIN32)
     add_test(NAME Lifecycle.Pki
              COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle/pki.sh" $<TARGET_FILE:tlsrelay>)
     set_tests_properties(Lifecycle.Pki PROPERTIES TIMEOUT 180)
-    # Refus et cas limites de la ligne de commande, phrase de passe de l'AC (TESTS.md §6.4).
+    # Command-line refusals and edge cases, CA passphrase (TESTS.md §6.4).
     add_test(NAME Lifecycle.Cli
              COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle/cli.sh" $<TARGET_FILE:tlsrelay>)
     set_tests_properties(Lifecycle.Cli PROPERTIES TIMEOUT 180)

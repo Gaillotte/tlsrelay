@@ -1,5 +1,5 @@
-// Décodeur de trames du tunnel (SPEC §4.1) : entrée arbitraire, découpée en
-// morceaux de tailles variables comme sur le réseau.
+// Tunnel frame decoder (SPEC §4.1): arbitrary input, split into
+// chunks of variable sizes as on the network.
 #include "tlsrelay/tunnel/frame.hpp"
 
 #include <cstddef>
@@ -10,7 +10,7 @@ using namespace tlsrelay::tunnel;
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
     if (size == 0) return 0;
     Decoder decoder;
-    // Le premier octet choisit la taille des morceaux (1 à 256 octets).
+    // The first byte chooses the chunk size (1 to 256 bytes).
     const std::size_t step = static_cast<std::size_t>(data[0]) + 1;
     for (std::size_t offset = 1; offset < size; offset += step) {
         decoder.feed(data + offset, std::min(step, size - offset));

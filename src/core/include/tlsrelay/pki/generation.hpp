@@ -10,17 +10,17 @@
 #include <string>
 #include <vector>
 
-// Génération PKI (SPEC §7.2) : contenu d'un répertoire <pki_root>/vN désigné
-// par le fichier <pki_root>/current.
+// PKI generation (SPEC §7.2): contents of a <pki_root>/vN directory designated
+// by the <pki_root>/current file.
 namespace tlsrelay::pki {
 
 enum class Role { server, client };
 
-// Ce dont l'instance a besoin selon son mode et ses ports.
+// What the instance needs according to its mode and ports.
 struct Requirements {
     Role role = Role::server;
-    bool identity = false;  // key.pem, cert.pem, chain.pem : présentés au pair
-    bool trust = false;     // trust-roots.pem, trust-issuer.pem : vérification du pair
+    bool identity = false;  // key.pem, cert.pem, chain.pem: presented to the peer
+    bool trust = false;     // trust-roots.pem, trust-issuer.pem: peer verification
     Duration expiry_warning = std::chrono::days(30);
 };
 
@@ -29,45 +29,45 @@ struct Generation {
     std::filesystem::path dir;
     tls::EvpPkeyPtr key;
     tls::X509Ptr cert;
-    std::vector<tls::X509Ptr> chain;        // AC intermédiaire(s) qui a émis cert
-    std::vector<tls::X509Ptr> trust_roots;  // racines de confiance
-    std::vector<tls::X509Ptr> trust_issuers;  // AC qui peuvent avoir émis le certificat du pair
-                                              // (une par racine ; deux pendant un changement de racine)
+    std::vector<tls::X509Ptr> chain;        // intermediate CA(s) that issued cert
+    std::vector<tls::X509Ptr> trust_roots;  // trusted roots
+    std::vector<tls::X509Ptr> trust_issuers;  // CAs that may have issued the peer's certificate
+                                              // (one per root; two during a root change)
 
-    // Vrai si ca est l'une des AC attendues chez le pair.
+    // True if ca is one of the CAs expected from the peer.
     bool is_expected_issuer(const X509* ca) const;
-    // Vrai si les deux générations ont au moins une racine de confiance commune.
+    // True if both generations share at least one trusted root.
     bool shares_root_with(const Generation& other) const;
 };
 
 struct LoadResult {
-    std::shared_ptr<const Generation> generation;  // présent seulement si errors est vide
+    std::shared_ptr<const Generation> generation;  // present only if errors is empty
     std::vector<Issue> errors;
     std::vector<Issue> warnings;
 };
 
-// Lit <pki_root>/current et charge le répertoire qu'il désigne.
+// Reads <pki_root>/current and loads the directory it designates.
 LoadResult load_current_generation(const std::filesystem::path& pki_root, const Requirements& req);
 
-// Charge et valide un répertoire de génération (contrôles de SPEC §7.3, hors
-// garde-fou de rotation qui relève de la phase 4).
+// Loads and validates a generation directory (checks of SPEC §7.3, except
+// the rotation safeguard, which belongs to phase 4).
 LoadResult load_generation(const std::filesystem::path& dir, const Requirements& req);
 
-// Garde-fou de rotation (SPEC §7.3) : retourne la raison du refus, ou
-// std::nullopt si next peut remplacer current sans couper les pairs :
-// - au moins une racine de confiance commune ;
-// - le nouveau certificat se rattache à une racine de la génération courante.
+// Rotation safeguard (SPEC §7.3): returns the reason for refusal, or
+// std::nullopt if next can replace current without cutting off peers:
+// - at least one common trusted root;
+// - the new certificate chains to a root of the current generation.
 std::optional<std::string> rotation_guard(const Generation& current, const Generation& next, const Requirements& req);
 
-// Contrôle d'une génération candidate avant activation : contrôles de
-// load_generation, plus le garde-fou de rotation.
+// Checks a candidate generation before activation: the checks of
+// load_generation, plus the rotation safeguard.
 LoadResult check_candidate(const std::filesystem::path& pki_root, const std::string& name, const Requirements& req);
 
-// Active une génération : remplace <pki_root>/current par renommage atomique.
-// Lève std::filesystem::filesystem_error en cas d'échec.
+// Activates a generation: replaces <pki_root>/current by atomic rename.
+// Throws std::filesystem::filesystem_error on failure.
 void activate(const std::filesystem::path& pki_root, const std::string& name);
 
-// Exigences d'une configuration, ou std::nullopt si aucun port TLS n'est configuré.
+// Requirements of a configuration, or std::nullopt if no TLS port is configured.
 std::optional<Requirements> requirements_for(const Config& config);
 
 }  // namespace tlsrelay::pki

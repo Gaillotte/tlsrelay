@@ -61,7 +61,7 @@ std::optional<IpRange> parse_ip_range(std::string_view text, std::string& error)
     std::error_code ec;
     const auto address = asio::ip::make_address(std::string(text.substr(0, slash)), ec);
     if (ec) {
-        error = "adresse IP invalide « " + std::string(text) + " »";
+        error = "invalid IP address \"" + std::string(text) + "\"";
         return std::nullopt;
     }
     IpRange range;
@@ -73,16 +73,16 @@ std::optional<IpRange> parse_ip_range(std::string_view text, std::string& error)
         unsigned prefix = 0;
         auto [end, pec] = std::from_chars(digits.data(), digits.data() + digits.size(), prefix);
         if (digits.empty() || pec != std::errc{} || end != digits.data() + digits.size() || prefix > full) {
-            error = "longueur de préfixe invalide dans « " + std::string(text) + " »";
+            error = "invalid prefix length in \"" + std::string(text) + "\"";
             return std::nullopt;
         }
         range.prefix = prefix;
     }
-    // Les bits hors du préfixe doivent être nuls : 192.0.2.5/28 est probablement une erreur de saisie.
+    // Bits outside the prefix must be zero: 192.0.2.5/28 is probably a typo.
     const auto bytes = bytes_of(range.network);
     for (unsigned bit = range.prefix; bit < full; ++bit) {
         if (bytes[bit / 8] & (0x80 >> (bit % 8))) {
-            error = "bits d'hôte non nuls dans « " + std::string(text) + " » (adresse du réseau attendue)";
+            error = "non-zero host bits in \"" + std::string(text) + "\" (network address expected)";
             return std::nullopt;
         }
     }
@@ -112,24 +112,24 @@ LoadResult Whitelist::load_string(std::string_view yaml) {
         root = YAML::Load(std::string(yaml));
     } catch (const YAML::Exception& e) {
         std::ostringstream where;
-        where << "ligne " << (e.mark.line + 1) << ", colonne " << (e.mark.column + 1);
-        err(where.str(), "syntaxe YAML invalide : " + e.msg);
+        where << "line " << (e.mark.line + 1) << ", column " << (e.mark.column + 1);
+        err(where.str(), "invalid YAML syntax: " + e.msg);
         return result;
     }
     if (!root.IsMap()) {
-        err("(racine)", "une section « peers » est attendue");
+        err("(root)", "a \"peers\" section is expected");
         return result;
     }
     for (const auto& item : root) {
-        if (item.first.as<std::string>("") != "peers") err(item.first.as<std::string>(""), "clé inconnue");
+        if (item.first.as<std::string>("") != "peers") err(item.first.as<std::string>(""), "unknown key");
     }
     const YAML::Node peers = root["peers"];
     if (!peers.IsDefined() || peers.IsNull()) {
-        err("peers", "valeur obligatoire manquante (liste éventuellement vide : peers: [])");
+        err("peers", "missing required value (the list may be empty: peers: [])");
         return result;
     }
     if (!peers.IsSequence()) {
-        err("peers", "une liste est attendue");
+        err("peers", "a list is expected");
         return result;
     }
 
@@ -139,7 +139,7 @@ LoadResult Whitelist::load_string(std::string_view yaml) {
     for (const auto& node : peers) {
         const std::string path = "peers[" + std::to_string(index++) + "]";
         if (!node.IsMap()) {
-            err(path, "une entrée (name, ip, ports, subject) est attendue");
+            err(path, "an entry (name, ip, ports, subject) is expected");
             continue;
         }
         for (const auto& item : node) {
@@ -147,14 +147,14 @@ LoadResult Whitelist::load_string(std::string_view yaml) {
             if (key != "name" && key != "ip" && key != "ports" && key != "subject") {
                 std::string where = path;
                 where.append(".").append(key);
-                err(where, "clé inconnue");
+                err(where, "unknown key");
             }
         }
         auto scalar = [&](const char* key) -> std::optional<std::string> {
             const YAML::Node v = node[key];
             if (!v.IsDefined()) return std::nullopt;
             if (!v.IsScalar()) {
-                err(path + "." + key, "une valeur simple est attendue");
+                err(path + "." + key, "a scalar value is expected");
                 return std::nullopt;
             }
             return v.Scalar();
@@ -165,11 +165,11 @@ LoadResult Whitelist::load_string(std::string_view yaml) {
         if (auto name = scalar("name"); name && !name->empty()) {
             peer.name = *name;
             if (auto [it, inserted] = names.emplace(*name, index - 1); !inserted) {
-                err(path + ".name", "nom déjà utilisé par peers[" + std::to_string(it->second) + "]");
+                err(path + ".name", "name already used by peers[" + std::to_string(it->second) + "]");
                 ok = false;
             }
         } else {
-            err(path + ".name", "valeur obligatoire manquante");
+            err(path + ".name", "missing required value");
             ok = false;
         }
 
@@ -181,7 +181,7 @@ LoadResult Whitelist::load_string(std::string_view yaml) {
                 ok = false;
             }
         } else {
-            err(path + ".ip", "valeur obligatoire manquante");
+            err(path + ".ip", "missing required value");
             ok = false;
         }
 
@@ -189,7 +189,7 @@ LoadResult Whitelist::load_string(std::string_view yaml) {
             std::string error;
             auto name = tls::parse_dn(*subject, error);
             if (!name) {
-                err(path + ".subject", "sujet invalide : " + error);
+                err(path + ".subject", "invalid subject: " + error);
                 ok = false;
             } else {
                 peer.subject_text = *subject;
@@ -202,45 +202,45 @@ LoadResult Whitelist::load_string(std::string_view yaml) {
         const YAML::Node ports = node["ports"];
         if (ports.IsDefined()) {
             if (!ports.IsSequence() || ports.size() == 0) {
-                err(path + ".ports", "liste non vide attendue, parmi plain, tls, mtls");
+                err(path + ".ports", "non-empty list expected, from plain, tls, mtls");
                 ok = false;
             } else {
                 peer.ports_explicit = true;
                 for (const auto& p : ports) {
                     const auto kind = p.IsScalar() ? parse_port_kind(p.Scalar()) : std::nullopt;
                     if (!kind) {
-                        err(path + ".ports", "port inconnu (plain, tls ou mtls attendu)");
+                        err(path + ".ports", "unknown port (plain, tls or mtls expected)");
                         ok = false;
                     } else {
                         peer.ports.insert(*kind);
                     }
                 }
                 if (peer.ports.count(PortKind::mtls) && !peer.subject) {
-                    err(path + ".subject", "obligatoire quand le port mtls est autorisé");
+                    err(path + ".subject", "required when the mtls port is allowed");
                     ok = false;
                 }
             }
         } else {
-            // Sans liste de ports : tous les ports, sauf mtls si aucun sujet n'est donné.
+            // Without a port list: all ports, except mtls if no subject is given.
             peer.ports = {PortKind::plain, PortKind::tls};
             if (peer.subject) peer.ports.insert(PortKind::mtls);
         }
         if (ok) wl->peers_.push_back(std::move(peer));
     }
 
-    // Un même sujet ne peut pas désigner deux pairs.
+    // The same subject cannot designate two peers.
     for (std::size_t i = 0; i < wl->peers_.size(); ++i) {
         for (std::size_t j = i + 1; j < wl->peers_.size(); ++j) {
             const auto& a = wl->peers_[i];
             const auto& b = wl->peers_[j];
             if (a.subject && b.subject && X509_NAME_cmp(a.subject.get(), b.subject.get()) == 0) {
-                err("peers", "le sujet « " + b.subject_text + " » est utilisé par « " + a.name + " » et « " + b.name +
-                                 " »");
+                err("peers", "subject \"" + b.subject_text + "\" is used by \"" + a.name + "\" and \"" + b.name +
+                                 "\"");
             }
         }
     }
     if (result.errors.empty() && wl->peers_.empty()) {
-        result.warnings.push_back({"peers", "liste vide : aucune connexion ne sera acceptée"});
+        result.warnings.push_back({"peers", "empty list: no connection will be accepted"});
     }
     if (result.errors.empty()) result.whitelist = std::move(wl);
     return result;
@@ -250,14 +250,14 @@ LoadResult Whitelist::load_file(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         LoadResult result;
-        result.errors.push_back({path.string(), "fichier absent ou illisible"});
+        result.errors.push_back({path.string(), "missing or unreadable file"});
         return result;
     }
     std::ostringstream text;
     text << in.rdbuf();
     auto result = load_string(text.str());
-    for (auto& e : result.errors) e.path = path.string() + " : " + e.path;
-    for (auto& w : result.warnings) w.path = path.string() + " : " + w.path;
+    for (auto& e : result.errors) e.path = path.string() + ": " + e.path;
+    for (auto& w : result.warnings) w.path = path.string() + ": " + w.path;
     return result;
 }
 
@@ -319,7 +319,7 @@ std::string to_yaml(const std::vector<PeerSpec>& peers, std::string_view header)
         out << YAML::EndMap;
     }
     out << YAML::EndSeq << YAML::EndMap;
-    if (!out.good()) throw std::runtime_error("écriture YAML impossible : " + out.GetLastError());
+    if (!out.good()) throw std::runtime_error("cannot write YAML: " + out.GetLastError());
     std::string text;
     std::istringstream lines{std::string(header)};
     for (std::string line; std::getline(lines, line);) text += line.empty() ? "#\n" : "# " + line + "\n";

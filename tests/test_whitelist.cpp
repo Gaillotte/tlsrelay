@@ -1,4 +1,4 @@
-// Liste blanche (SPEC §6) : format du fichier, plages IP, sujets, autorisation.
+// Whitelist (SPEC §6): file format, IP ranges, subjects, authorization.
 
 #include "tlsrelay/whitelist.hpp"
 
@@ -16,7 +16,7 @@ asio::ip::address ip(const char* text) { return asio::ip::make_address(text); }
 tls::X509NamePtr dn(const char* text) {
     std::string error;
     auto name = tls::parse_dn(text, error);
-    EXPECT_TRUE(name) << text << " : " << error;
+    EXPECT_TRUE(name) << text << ": " << error;
     return name;
 }
 
@@ -28,21 +28,21 @@ bool has_error(const whitelist::LoadResult& r, const std::string& path, const st
 
 std::string dump(const whitelist::LoadResult& r) {
     std::string s;
-    for (const auto& e : r.errors) s += e.path + " : " + e.message + "\n";
+    for (const auto& e : r.errors) s += e.path + ": " + e.message + "\n";
     return s;
 }
 
 const char* kList = R"(
 peers:
-  - name: agence-lyon
+  - name: branch-lyon
     ip: 192.0.2.10
     ports: [mtls]
-    subject: "CN=relay-lyon.example,O=MonEntreprise"
-  - name: labo
+    subject: "CN=relay-lyon.example,O=MyCompany"
+  - name: lab
     ip: 198.51.100.0/28
-  - name: siege
+  - name: hq
     ip: "2001:db8::/32"
-    subject: "CN=siege.example,O=MonEntreprise"
+    subject: "CN=hq.example,O=MyCompany"
 )";
 
 }  // namespace
@@ -53,10 +53,10 @@ TEST(Whitelist, LoadsEntriesWithDefaults) {
     const auto& peers = r.whitelist->peers();
     ASSERT_EQ(peers.size(), 3u);
     EXPECT_EQ(peers[0].ports, (std::set<PortKind>{PortKind::mtls}));
-    // Sans liste de ports ni sujet : plain et tls seulement.
+    // Without a port list or subject: plain and tls only.
     EXPECT_EQ(peers[1].ports, (std::set<PortKind>{PortKind::plain, PortKind::tls}));
     EXPECT_EQ(peers[1].range.to_string(), "198.51.100.0/28");
-    // Sans liste de ports mais avec sujet : tous les ports.
+    // Without a port list but with a subject: all ports.
     EXPECT_EQ(peers[2].ports, (std::set<PortKind>{PortKind::plain, PortKind::tls, PortKind::mtls}));
     EXPECT_TRUE(r.warnings.empty());
 }
@@ -84,24 +84,24 @@ peers:
     subject: "CN=x+O=y"
   - name: h
     ip: 10.0.0.5
-    subject: "XX=inconnu"
+    subject: "XX=unknown"
   - name: i
     ip: 10.0.0.6
     ports: []
 )");
     EXPECT_FALSE(r.whitelist);
-    EXPECT_TRUE(has_error(r, "extra", "clé inconnue")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[0].ip", "adresse IP invalide")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[0].colour", "clé inconnue")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[1].name", "déjà utilisé")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[1].ip", "bits d'hôte")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[2].ip", "préfixe")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[3].name", "obligatoire")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[4].subject", "obligatoire quand le port mtls")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[5].ports", "port inconnu")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[6].subject", "plusieurs valeurs")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[7].subject", "attribut inconnu")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[8].ports", "liste non vide")) << dump(r);
+    EXPECT_TRUE(has_error(r, "extra", "unknown key")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[0].ip", "invalid IP address")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[0].colour", "unknown key")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[1].name", "already used")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[1].ip", "host bits")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[2].ip", "prefix")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[3].name", "required")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[4].subject", "required when the mtls port")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[5].ports", "unknown port")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[6].subject", "multi-valued")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[7].subject", "unknown attribute")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[8].ports", "non-empty list")) << dump(r);
 }
 
 TEST(Whitelist, RejectsSameSubjectTwice) {
@@ -110,12 +110,12 @@ peers:
   - { name: a, ip: 10.0.0.1, subject: "CN=x,O=y" }
   - { name: b, ip: 10.0.0.2, subject: "cn=X, o=Y" }
 )");
-    EXPECT_TRUE(has_error(r, "peers", "utilisé par « a » et « b »")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers", "used by \"a\" and \"b\"")) << dump(r);
 }
 
 TEST(Whitelist, RequiresPeersSection) {
-    EXPECT_TRUE(has_error(Whitelist::load_string("autre: 1"), "peers", "obligatoire"));
-    EXPECT_TRUE(has_error(Whitelist::load_string("peers: 5"), "peers", "liste"));
+    EXPECT_TRUE(has_error(Whitelist::load_string("other: 1"), "peers", "required"));
+    EXPECT_TRUE(has_error(Whitelist::load_string("peers: 5"), "peers", "list"));
     EXPECT_FALSE(Whitelist::load_string("peers: [unclosed").whitelist);
 }
 
@@ -137,7 +137,7 @@ TEST(IpRange, MatchesAddresses) {
     ASSERT_TRUE(net);
     EXPECT_TRUE(net->contains(ip("198.51.100.15")));
     EXPECT_FALSE(net->contains(ip("198.51.100.16")));
-    // Adresse IPv4 vue à travers une socket IPv6.
+    // IPv4 address seen through an IPv6 socket.
     EXPECT_TRUE(net->contains(ip("::ffff:198.51.100.3")));
     EXPECT_FALSE(net->contains(ip("2001:db8::1")));
 
@@ -159,33 +159,33 @@ TEST(Whitelist, AuthorizesByIpAndPort) {
     EXPECT_TRUE(wl.admits(ip("198.51.100.3"), PortKind::plain));
     EXPECT_TRUE(wl.admits(ip("198.51.100.3"), PortKind::tls));
     EXPECT_FALSE(wl.admits(ip("198.51.100.3"), PortKind::mtls));
-    EXPECT_FALSE(wl.admits(ip("192.0.2.10"), PortKind::plain));  // agence-lyon : mtls uniquement
+    EXPECT_FALSE(wl.admits(ip("192.0.2.10"), PortKind::plain));  // branch-lyon: mtls only
     EXPECT_TRUE(wl.admits(ip("192.0.2.10"), PortKind::mtls));
     EXPECT_FALSE(wl.admits(ip("203.0.113.1"), PortKind::tls));
 
-    const auto* labo = wl.authorize(ip("198.51.100.3"), PortKind::tls, nullptr);
-    ASSERT_TRUE(labo);
-    EXPECT_EQ(labo->name, "labo");
+    const auto* lab = wl.authorize(ip("198.51.100.3"), PortKind::tls, nullptr);
+    ASSERT_TRUE(lab);
+    EXPECT_EQ(lab->name, "lab");
 }
 
 TEST(Whitelist, MtlsRequiresIpAndSubjectInTheSameEntry) {
     const auto r = Whitelist::load_string(kList);
     ASSERT_TRUE(r.whitelist) << dump(r);
     const auto& wl = *r.whitelist;
-    const auto lyon = dn("CN=relay-lyon.example,O=MonEntreprise");
-    const auto siege = dn("CN=siege.example,O=MonEntreprise");
+    const auto lyon = dn("CN=relay-lyon.example,O=MyCompany");
+    const auto hq = dn("CN=hq.example,O=MyCompany");
 
     const auto* peer = wl.authorize(ip("192.0.2.10"), PortKind::mtls, lyon.get());
     ASSERT_TRUE(peer);
-    EXPECT_EQ(peer->name, "agence-lyon");
-    // Comparaison canonique : casse et espaces sans effet.
-    EXPECT_TRUE(wl.authorize(ip("192.0.2.10"), PortKind::mtls, dn("cn=Relay-Lyon.example,  o=monentreprise").get()));
-    // Bon sujet mais IP d'une autre entrée, et inversement.
+    EXPECT_EQ(peer->name, "branch-lyon");
+    // Canonical comparison: case and spaces have no effect.
+    EXPECT_TRUE(wl.authorize(ip("192.0.2.10"), PortKind::mtls, dn("cn=Relay-Lyon.example,  o=mycompany").get()));
+    // Right subject but IP of another entry, and vice versa.
     EXPECT_FALSE(wl.authorize(ip("2001:db8::1"), PortKind::mtls, lyon.get()));
-    EXPECT_FALSE(wl.authorize(ip("192.0.2.10"), PortKind::mtls, siege.get()));
-    // Sujet absent ou ordre des composants différent.
+    EXPECT_FALSE(wl.authorize(ip("192.0.2.10"), PortKind::mtls, hq.get()));
+    // Missing subject or different component order.
     EXPECT_FALSE(wl.authorize(ip("192.0.2.10"), PortKind::mtls, nullptr));
-    EXPECT_FALSE(wl.authorize(ip("192.0.2.10"), PortKind::mtls, dn("O=MonEntreprise,CN=relay-lyon.example").get()));
+    EXPECT_FALSE(wl.authorize(ip("192.0.2.10"), PortKind::mtls, dn("O=MyCompany,CN=relay-lyon.example").get()));
 }
 
 TEST(Dn, ParsesEscapesAndMatchesCertificateForm) {
@@ -221,29 +221,29 @@ peers:
     EXPECT_EQ(d.changed, std::vector<std::string>{"b"});
 }
 
-// Structure du fichier (CT-13) : chaque erreur désigne son emplacement.
+// File structure (CT-13): each error points to its location.
 TEST(Whitelist, StructureErrors) {
     auto r = whitelist::Whitelist::load_string("- a\n- b\n");
-    EXPECT_TRUE(has_error(r, "(racine)", "peers")) << dump(r);
+    EXPECT_TRUE(has_error(r, "(root)", "peers")) << dump(r);
 
-    r = whitelist::Whitelist::load_string("peers: []\nautres: 1\n");
-    EXPECT_TRUE(has_error(r, "autres", "clé inconnue")) << dump(r);
+    r = whitelist::Whitelist::load_string("peers: []\nothers: 1\n");
+    EXPECT_TRUE(has_error(r, "others", "unknown key")) << dump(r);
 
     r = whitelist::Whitelist::load_string("peers: { name: a }\n");
-    EXPECT_TRUE(has_error(r, "peers", "liste")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers", "list")) << dump(r);
 
-    r = whitelist::Whitelist::load_string("peers:\n  - poste\n  - { name: [a, b], ip: 10.0.0.1 }\n");
-    EXPECT_TRUE(has_error(r, "peers[0]", "entrée")) << dump(r);
-    EXPECT_TRUE(has_error(r, "peers[1].name", "valeur simple")) << dump(r);
+    r = whitelist::Whitelist::load_string("peers:\n  - host\n  - { name: [a, b], ip: 10.0.0.1 }\n");
+    EXPECT_TRUE(has_error(r, "peers[0]", "entry")) << dump(r);
+    EXPECT_TRUE(has_error(r, "peers[1].name", "scalar value")) << dump(r);
     EXPECT_FALSE(r.whitelist);
 
     r = whitelist::Whitelist::load_string("peers: [\n");
     EXPECT_FALSE(r.errors.empty());
-    EXPECT_NE(r.errors.front().path.find("ligne"), std::string::npos) << dump(r);
+    EXPECT_NE(r.errors.front().path.find("line"), std::string::npos) << dump(r);
 }
 
 TEST(Whitelist, MissingFileIsReported) {
     const auto r = whitelist::Whitelist::load_file("/nonexistent/whitelist.yaml");
     ASSERT_EQ(r.errors.size(), 1u);
-    EXPECT_NE(r.errors.front().message.find("absent ou illisible"), std::string::npos);
+    EXPECT_NE(r.errors.front().message.find("missing or unreadable"), std::string::npos);
 }

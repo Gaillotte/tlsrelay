@@ -1,7 +1,7 @@
 #pragma once
 
-// Fichiers édités par tlsrelay-admin : lecture, écriture atomique avec copie
-// de sauvegarde, chemins. Sans dépendance à Qt (testé seul).
+// Files edited by tlsrelay-admin: reading, atomic writing with a backup
+// copy, paths. No dependency on Qt (tested alone).
 
 #include <QString>
 
@@ -12,27 +12,27 @@
 
 namespace tlsrelay::admin {
 
-// En-tête des fichiers écrits par l'éditeur (commentaire YAML).
+// Header of the files written by the editor (YAML comment).
 inline constexpr const char* kWrittenBy =
-    "Écrit par tlsrelay-admin. Les commentaires ne sont pas conservés à l'enregistrement.";
+    "Written by tlsrelay-admin. Comments are not kept when saving.";
 
-// Contenu d'un fichier, ou std::nullopt s'il est absent ou illisible.
+// Content of a file, or std::nullopt if it is missing or unreadable.
 std::optional<std::string> read_text(const std::filesystem::path& path);
 
-// Écrit un fichier par renommage atomique. Si le fichier existait avec un
-// autre contenu, il est d'abord copié en <fichier>.bak. Lève std::runtime_error.
+// Writes a file by atomic rename. If the file existed with different
+// content, it is first copied to <file>.bak. Throws std::runtime_error.
 void write_with_backup(const std::filesystem::path& path, const std::string& content);
 
-// Chemin d'un fichier référencé par une configuration (liste blanche) : un
-// chemin relatif est résolu depuis le répertoire de la configuration.
+// Path of a file referenced by a configuration (whitelist): a relative
+// path is resolved from the configuration's directory.
 std::filesystem::path resolve_from(const std::filesystem::path& config_path, const std::string& file);
 
-// Conversions sans perte (UTF-8) entre QString et chemins.
+// Lossless conversions (UTF-8) between QString and paths.
 std::filesystem::path to_path(const QString& text);
 QString to_qstring(const std::filesystem::path& path);
 
-// Modification proposée à l'enregistrement : un fichier, son contenu actuel
-// (absent : création) et le nouveau contenu.
+// Change proposed when saving: a file, its current content
+// (missing: creation) and the new content.
 struct FileChange {
     std::filesystem::path path;
     std::optional<std::string> before;

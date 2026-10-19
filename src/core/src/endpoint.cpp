@@ -26,7 +26,7 @@ std::optional<Endpoint> parse_endpoint(std::string_view text) {
         if (colon == std::string_view::npos) return std::nullopt;
         host = text.substr(0, colon);
         port = text.substr(colon + 1);
-        // Une IPv6 doit être entre crochets.
+        // An IPv6 must be in brackets.
         if (host.find(':') != std::string_view::npos) return std::nullopt;
     }
     if (host.empty() || port.empty()) return std::nullopt;

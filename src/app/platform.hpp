@@ -1,8 +1,8 @@
 #pragma once
 
-// Intégration au gestionnaire de services du système (SPEC §10) :
-// systemd (unité modèle tlsrelay@.service) sous Linux, gestionnaire de
-// services (service tlsrelay-<instance>) sous Windows.
+// Integration with the system service manager (SPEC §10):
+// systemd (template unit tlsrelay@.service) on Linux, Service Control
+// Manager (service tlsrelay-<instance>) on Windows.
 
 #include "tlsrelay/units.hpp"
 
@@ -13,43 +13,43 @@
 
 namespace tlsrelay::app {
 
-// Fichier de configuration par défaut d'une instance :
-// /etc/tlsrelay/<instance>.yaml ou %ProgramData%\tlsrelay\<instance>.yaml.
+// Default configuration file of an instance:
+// /etc/tlsrelay/<instance>.yaml or %ProgramData%\tlsrelay\<instance>.yaml.
 std::filesystem::path default_config_path(const std::string& instance);
 
 struct InstallOptions {
     std::string instance;
-    std::filesystem::path config;  // chemin absolu, configuration déjà validée
-    bool boot = false;             // démarrage automatique avec le système
-    Duration shutdown_timeout{};   // limits.shutdown_timeout de la configuration
+    std::filesystem::path config;  // absolute path, configuration already validated
+    bool boot = false;             // start automatically with the system
+    Duration shutdown_timeout{};   // limits.shutdown_timeout from the configuration
 };
 
-// Chaque fonction affiche ce qu'elle fait et retourne un code de sortie.
+// Each function prints what it does and returns an exit code.
 int service_install(const InstallOptions& options);
 int service_uninstall(const std::string& instance);
 bool service_installed(const std::string& instance);
-// Démarre le service installé (sans attendre le canal d'administration).
+// Starts the installed service (without waiting for the administration channel).
 int service_start(const std::string& instance, Duration timeout);
-// Attend que le gestionnaire de services constate l'arrêt de l'instance.
+// Waits until the service manager sees the instance as stopped.
 void service_wait_stopped(const std::string& instance, Duration timeout);
-// Arrêt forcé par le gestionnaire de services (si le canal ne répond plus).
+// Forced stop through the service manager (if the channel no longer responds).
 int service_force_kill(const std::string& instance);
 
-// Lien entre l'instance en cours d'exécution et le gestionnaire de services.
+// Link between the running instance and the service manager.
 class ServiceControl {
 public:
     virtual ~ServiceControl() = default;
-    // Ports ouverts : le service est en marche. request_stop déclenche l'arrêt propre.
+    // Ports open: the service is running. request_stop triggers the graceful stop.
     virtual void ready(std::function<void()> request_stop) = 0;
 };
 
 #ifdef _WIN32
-// Journal d'un service dont la configuration écrit sur stderr :
+// Log of a service whose configuration writes to stderr:
 // %ProgramData%\tlsrelay\logs\<instance>.log.
 std::filesystem::path default_service_log(const std::string& instance);
 
-// Point d'entrée du processus lancé par le gestionnaire de services Windows
-// (commande interne service-run). run exécute l'instance jusqu'à son arrêt.
+// Entry point of the process launched by the Windows service manager
+// (internal command service-run). run executes the instance until it stops.
 int service_dispatch(const std::string& instance, std::function<int(ServiceControl&)> run);
 #endif
 

@@ -1,7 +1,7 @@
-# Répétition des performances et de l'endurance pour traquer un défaut
-# intermittent : sur demande, ou à chaque push sur une branche stress/*.
-# RATE=0 et STREAM_RATE=0 dans l'environnement : flux saturés (limite connue).
-name: Stress performances
+# Repeats the performance and soak runs to track down an intermittent
+# defect: on demand, or on every push to a stress/* branch.
+# RATE=0 and STREAM_RATE=0 in the environment: saturated streams (known limit).
+name: Performance stress
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   stress:
-    name: Essai ${{ matrix.run }}
+    name: Run ${{ matrix.run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -20,20 +20,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dépendances
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
             libyaml-cpp-dev libspdlog-dev libcli11-dev
 
-      - name: Compilation
+      - name: Build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_BUILD_TESTS=OFF
           cmake --build build
 
-      - name: Objectifs de performance (3 fois)
-        run: for i in 1 2 3; do echo "=== passe $i"; bash tests/perf/perf.sh build 1000 || exit 1; done
+      - name: Performance targets (3 times)
+        run: for i in 1 2 3; do echo "=== pass $i"; bash tests/perf/perf.sh build 1000 || exit 1; done
 
-      - name: Endurance
+      - name: Soak
         if: always()
         run: bash tests/perf/soak.sh build 4

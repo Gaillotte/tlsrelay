@@ -1,5 +1,5 @@
-// Tests d'intégration TLS 1.3 (phase 2) : port tls entre un tlsrelay client
-// et un tlsrelay serveur, et cas de refus (SPEC §3, PLAN §5.3 et §5.4).
+// TLS 1.3 integration tests (phase 2): tls port between a client tlsrelay
+// and a server tlsrelay, and refusal cases (SPEC §3, PLAN §5.3 and §5.4).
 
 #include "support/net_helpers.hpp"
 #include "support/raw_tls_client.hpp"
@@ -53,7 +53,7 @@ protected:
         write_generation(client_pki(), "v1", client_files(*h_));
     }
 
-    std::filesystem::path server_pki() const { return dir_ / "serveur"; }
+    std::filesystem::path server_pki() const { return dir_ / "server"; }
     std::filesystem::path client_pki() const { return dir_ / "client"; }
 
     static Hierarchy* h_;
@@ -111,7 +111,7 @@ TEST_F(TlsTest, HalfClosePropagatesOverTls) {
     TestClient app(client.port(PortKind::tls));
     const auto data = make_random_data(64 * 1024, 11);
     app.write(data);
-    app.shutdown_send();  // traverse le TLS sous forme de close_notify
+    app.shutdown_send();  // crosses TLS as close_notify
     const auto received = app.read_until_eof(5s);
     EXPECT_EQ(sha256(received), sha256(data));
 }
@@ -127,7 +127,7 @@ TEST_F(TlsTest, ClientAcceptsIpAddressAsServerName) {
 }
 
 TEST_F(TlsTest, ClientRejectsServerFromAnotherPki) {
-    const auto other = Hierarchy::create("Autre");
+    const auto other = Hierarchy::create("Other");
     write_generation(server_pki(), "v1", server_files(other));
     EchoServer echo;
     RunningService server(tls_server_config(echo.port(), server_pki()));
@@ -136,13 +136,13 @@ TEST_F(TlsTest, ClientRejectsServerFromAnotherPki) {
     TestClient app(client.port(PortKind::tls));
     EXPECT_TRUE(app.wait_closed(3s));
     EXPECT_TRUE(eventually([&] { return client.stats().tls_handshake_failures.load() == 1; }));
-    EXPECT_EQ(echo.accepted(), 0);  // la destination n'est jamais contactée
+    EXPECT_EQ(echo.accepted(), 0);  // the destination is never contacted
 }
 
 TEST_F(TlsTest, ClientRejectsWrongServerName) {
     EchoServer echo;
     RunningService server(tls_server_config(echo.port(), server_pki()));
-    RunningService client(tls_client_config(server.port(PortKind::tls), client_pki(), "autre.test"));
+    RunningService client(tls_client_config(server.port(PortKind::tls), client_pki(), "other.test"));
 
     TestClient app(client.port(PortKind::tls));
     EXPECT_TRUE(app.wait_closed(3s));
@@ -151,8 +151,8 @@ TEST_F(TlsTest, ClientRejectsWrongServerName) {
 }
 
 TEST_F(TlsTest, ClientRejectsServerCertificateFromUnexpectedCa) {
-    // Même racine, mais le certificat serveur est émis par une autre AC que l'AC Serveurs attendue.
-    auto other_ca = make_certificate({.common_name = "Test AC Serveurs bis", .ca = true, .usage = Usage::server,
+    // Same root, but the server certificate is issued by a CA other than the expected Servers CA.
+    auto other_ca = make_certificate({.common_name = "Test Servers CA bis", .ca = true, .usage = Usage::server,
                                       .curve = "P-384"}, &h_->root);
     auto server_cert = make_certificate({.common_name = "relay.test", .usage = Usage::server, .dns = {"relay.test"}},
                                         &other_ca);
@@ -169,7 +169,7 @@ TEST_F(TlsTest, ClientRejectsServerCertificateFromUnexpectedCa) {
     TestClient app(client.port(PortKind::tls));
     EXPECT_TRUE(app.wait_closed(3s));
     EXPECT_TRUE(eventually([&] { return client.stats().tls_handshake_failures.load() == 1; }));
-    // Refus pendant le handshake : le serveur reçoit une alerte et ne contacte pas la destination.
+    // Refusal during the handshake: the server receives an alert and does not contact the destination.
     EXPECT_TRUE(eventually([&] { return server.stats().tls_handshake_failures.load() == 1; }));
     EXPECT_EQ(echo.accepted(), 0);
 }
@@ -188,8 +188,8 @@ TEST_F(TlsTest, ServerNegotiatesTls13WithAlpn) {
     EXPECT_STREQ(SSL_CIPHER_get_name(SSL_get_current_cipher(raw.ssl())), "TLS_AES_256_GCM_SHA384");
     TunnelProbe tunnel(raw);
     ASSERT_TRUE(tunnel.open(PortKind::tls));
-    ASSERT_TRUE(tunnel.send("bonjour"));
-    EXPECT_EQ(tunnel.receive(7), "bonjour");
+    ASSERT_TRUE(tunnel.send("hello!!"));
+    EXPECT_EQ(tunnel.receive(7), "hello!!");
 }
 
 TEST_F(TlsTest, ServerRejectsTls12) {
@@ -216,8 +216,8 @@ TEST_F(TlsTest, ServerRejectsMissingAlpn) {
     EchoServer echo;
     RunningService server(tls_server_config(echo.port(), server_pki()));
 
-    // Sans ALPN, le handshake aboutit côté client, mais le serveur ferme avant
-    // de contacter la destination.
+    // Without ALPN, the handshake completes on the client side, but the server
+    // closes before contacting the destination.
     RawTlsClient raw(server.port(PortKind::tls), TLS1_3_VERSION, std::nullopt);
     raw.handshake();
     EXPECT_EQ(raw.read(1), "");
@@ -259,8 +259,8 @@ TEST_F(TlsTest, ServiceRefusesToStartWithInvalidPki) {
 
     try {
         relay::Service service(without_default_admin(tls_server_config(9, server_pki())));
-        FAIL() << "le service aurait dû refuser de démarrer";
+        FAIL() << "the service should have refused to start";
     } catch (const std::runtime_error& e) {
-        EXPECT_NE(std::string(e.what()).find("expiré"), std::string::npos) << e.what();
+        EXPECT_NE(std::string(e.what()).find("expired"), std::string::npos) << e.what();
     }
 }

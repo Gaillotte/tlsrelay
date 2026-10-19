@@ -18,7 +18,7 @@
 namespace tlsrelay::admin {
 namespace {
 
-// Sections du fichier : chemins qui contiennent d'autres clés.
+// Sections of the file: paths that contain other keys.
 const std::vector<std::string> kContainers = {"",       "logging", "logging.categories", "credentials", "limits",
                                               "ports",  "ports.plain", "ports.tls", "ports.mtls",
                                               "destination", "whitelist", "admin"};
@@ -37,7 +37,7 @@ std::vector<std::string> split_path(const std::string& path) {
 
 std::string join(const std::string& path, const std::string& key) { return path.empty() ? key : path + "." + key; }
 
-// Affecte une valeur à un chemin, en créant les sections intermédiaires.
+// Assigns a value to a path, creating the intermediate sections.
 void put(YAML::Node node, const std::vector<std::string>& keys, std::size_t i, const YAML::Node& value) {
     if (i + 1 == keys.size()) {
         node[keys[i]] = value;
@@ -71,7 +71,7 @@ ConfigForm::ConfigForm(QWidget* parent) : QWidget(parent) {
     const Destination destination;
     const Credentials credentials;
 
-    auto* general = section("", tr("Général"));
+    auto* general = section("", tr("General"));
     add_combo(general, "mode", tr("Mode"), {"client", "server"}, false);
     add_line(general, "instance", tr("Instance"), "default");
 
@@ -80,9 +80,9 @@ ConfigForm::ConfigForm(QWidget* parent) : QWidget(parent) {
     sections_["ports"] = ports_box;
     column->addWidget(ports_box);
     const std::tuple<PortKind, QString, QString> kinds[] = {
-        {PortKind::plain, tr("Port plain (en clair)"), "9001"},
+        {PortKind::plain, tr("Port plain (cleartext)"), "9001"},
         {PortKind::tls, tr("Port tls (TLS 1.3)"), "9002"},
-        {PortKind::mtls, tr("Port mtls (TLS 1.3 avec certificat client)"), "9003"}};
+        {PortKind::mtls, tr("Port mtls (TLS 1.3 with client certificate)"), "9003"}};
     for (const auto& [kind, title, number] : kinds) {
         const auto base = "ports." + std::string(to_string(kind));
         auto* box = new QGroupBox(title);
@@ -90,10 +90,10 @@ ConfigForm::ConfigForm(QWidget* parent) : QWidget(parent) {
         box->setChecked(false);
         auto* form = new QFormLayout(box);
         form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-        add_line(form, base + ".listen", tr("Écoute (adresse IP:port)"), "0.0.0.0:" + number);
-        add_line(form, base + ".upstream", tr("Serveur tlsrelay (hôte:port)"), "relais.exemple:" + number,
+        add_line(form, base + ".listen", tr("Listen (IP address:port)"), "0.0.0.0:" + number);
+        add_line(form, base + ".upstream", tr("tlsrelay server (host:port)"), "relay.example:" + number,
                  Field::Scope::client);
-        add_line(form, base + ".server_name", tr("Nom attendu du serveur"), "relais.exemple",
+        add_line(form, base + ".server_name", tr("Expected server name"), "relay.example",
                  kind == PortKind::plain ? Field::Scope::never : Field::Scope::client);
         connect(box, &QGroupBox::toggled, this, [this] {
             if (!loading_) emit changed();
@@ -103,57 +103,57 @@ ConfigForm::ConfigForm(QWidget* parent) : QWidget(parent) {
         ports_layout->addWidget(box);
     }
 
-    auto* dest = section("destination", tr("Destination (mode serveur)"));
-    add_line(dest, "destination.address", tr("Adresse"), "10.0.0.5", Field::Scope::server);
+    auto* dest = section("destination", tr("Destination (server mode)"));
+    add_line(dest, "destination.address", tr("Address"), "10.0.0.5", Field::Scope::server);
     add_line(dest, "destination.port", tr("Port"), "8080", Field::Scope::server);
-    add_line(dest, "destination.dial_timeout", tr("Délai de connexion"),
+    add_line(dest, "destination.dial_timeout", tr("Connection timeout"),
              QString::fromStdString(format_duration(destination.dial_timeout)), Field::Scope::server);
-    add_line(dest, "destination.dial_retries", tr("Essais"), QString::number(destination.dial_retries),
+    add_line(dest, "destination.dial_retries", tr("Attempts"), QString::number(destination.dial_retries),
              Field::Scope::server);
-    add_line(dest, "destination.dial_backoff", tr("Attente entre essais"),
+    add_line(dest, "destination.dial_backoff", tr("Wait between attempts"),
              QString::fromStdString(format_duration(destination.dial_backoff)), Field::Scope::server);
 
-    auto* wl = section("whitelist", tr("Liste blanche (mode serveur)"));
-    add_line(wl, "whitelist.file", tr("Fichier"), tr("/etc/tlsrelay/agence/whitelist.yaml"), Field::Scope::server);
-    add_combo(wl, "whitelist.revoke_mode", tr("Pair retiré"), {"immediate", "next_renegotiation"}, true,
+    auto* wl = section("whitelist", tr("Whitelist (server mode)"));
+    add_line(wl, "whitelist.file", tr("File"), tr("/etc/tlsrelay/branch/whitelist.yaml"), Field::Scope::server);
+    add_combo(wl, "whitelist.revoke_mode", tr("Removed peer"), {"immediate", "next_renegotiation"}, true,
               Field::Scope::server);
 
-    auto* source = section("source", tr("Connexions sortantes (mode client)"));
-    add_line(source, "source_address", tr("Adresse source"), tr("(choisie par le système)"), Field::Scope::client);
+    auto* source = section("source", tr("Outgoing connections (client mode)"));
+    add_line(source, "source_address", tr("Source address"), tr("(chosen by the system)"), Field::Scope::client);
 
     auto* cred = section("credentials", tr("PKI"));
-    add_line(cred, "credentials.pki_root", tr("Répertoire PKI"), tr("/etc/tlsrelay/agence/pki"));
-    add_combo(cred, "credentials.watch", tr("Surveillance (2 s)"), {"true", "false"});
-    add_line(cred, "credentials.expiry_warning", tr("Alerte d'expiration"),
+    add_line(cred, "credentials.pki_root", tr("PKI directory"), tr("/etc/tlsrelay/branch/pki"));
+    add_combo(cred, "credentials.watch", tr("Watch (2 s)"), {"true", "false"});
+    add_line(cred, "credentials.expiry_warning", tr("Expiry warning"),
              QString::fromStdString(format_duration(credentials.expiry_warning)));
 
-    auto* lim = section("limits", tr("Limites"));
-    add_line(lim, "limits.idle_timeout", tr("Inactivité"), QString::fromStdString(format_duration(limits.idle_timeout)));
-    add_line(lim, "limits.session_lifetime", tr("Durée de session"),
+    auto* lim = section("limits", tr("Limits"));
+    add_line(lim, "limits.idle_timeout", tr("Idle timeout"), QString::fromStdString(format_duration(limits.idle_timeout)));
+    add_line(lim, "limits.session_lifetime", tr("Session lifetime"),
              QString::fromStdString(format_duration(limits.session_lifetime)));
-    add_line(lim, "limits.session_jitter", tr("Variation de la durée"),
+    add_line(lim, "limits.session_jitter", tr("Lifetime jitter"),
              QString::fromStdString(format_percent(limits.session_jitter)));
-    add_line(lim, "limits.renegotiation_grace", tr("Délai de renégociation"),
+    add_line(lim, "limits.renegotiation_grace", tr("Renegotiation grace period"),
              QString::fromStdString(format_duration(limits.renegotiation_grace)));
-    add_line(lim, "limits.resume_buffer", tr("Tampon de reprise"), QString::fromStdString(format_size(limits.resume_buffer)));
-    add_line(lim, "limits.handshake_timeout", tr("Délai de handshake"),
+    add_line(lim, "limits.resume_buffer", tr("Resumption buffer"), QString::fromStdString(format_size(limits.resume_buffer)));
+    add_line(lim, "limits.handshake_timeout", tr("Handshake timeout"),
              QString::fromStdString(format_duration(limits.handshake_timeout)));
-    add_line(lim, "limits.keepalive_interval", tr("Intervalle de PING"),
+    add_line(lim, "limits.keepalive_interval", tr("PING interval"),
              QString::fromStdString(format_duration(limits.keepalive_interval)));
-    add_line(lim, "limits.max_channels", tr("Canaux au plus"), QString::number(limits.max_channels));
-    add_line(lim, "limits.shutdown_timeout", tr("Drain à l'arrêt"),
+    add_line(lim, "limits.max_channels", tr("Maximum channels"), QString::number(limits.max_channels));
+    add_line(lim, "limits.shutdown_timeout", tr("Drain on shutdown"),
              QString::fromStdString(format_duration(limits.shutdown_timeout)));
 
-    auto* log = section("logging", tr("Journalisation"));
-    add_combo(log, "logging.level", tr("Niveau"), kLevels);
-    add_combo(log, "logging.categories.activity", tr("Niveau « activity »"), kLevels);
-    add_combo(log, "logging.categories.config", tr("Niveau « config »"), kLevels);
+    auto* log = section("logging", tr("Logging"));
+    add_combo(log, "logging.level", tr("Level"), kLevels);
+    add_combo(log, "logging.categories.activity", tr("\"activity\" level"), kLevels);
+    add_combo(log, "logging.categories.config", tr("\"config\" level"), kLevels);
     add_combo(log, "logging.format", tr("Format"), {"text", "json"});
-    add_line(log, "logging.output", tr("Sortie"), "stderr");
+    add_line(log, "logging.output", tr("Output"), "stderr");
 
-    auto* adm = section("admin", tr("Canal d'administration"));
-    add_combo(adm, "admin.enabled", tr("Activé"), {"true", "false"});
-    add_line(adm, "admin.endpoint", tr("Point d'accès"), tr("(par défaut, conseillé pour un service)"));
+    auto* adm = section("admin", tr("Administration channel"));
+    add_combo(adm, "admin.enabled", tr("Enabled"), {"true", "false"});
+    add_line(adm, "admin.endpoint", tr("Endpoint"), tr("(default, recommended for a service)"));
 
     column->addStretch();
     auto* scroll = new QScrollArea;
@@ -184,7 +184,7 @@ QComboBox* ConfigForm::add_combo(QFormLayout* form, const std::string& path, con
                                  const std::vector<QString>& values, bool with_default, Field::Scope scope) {
     auto* combo = new QComboBox;
     combo->setObjectName(QString::fromStdString(path));
-    if (with_default) combo->addItem(tr("(par défaut)"), QString());
+    if (with_default) combo->addItem(tr("(default)"), QString());
     for (const auto& v : values) combo->addItem(v, v);
     form->addRow(label, combo);
     fields_[path] = {combo, form, scope};
@@ -213,7 +213,7 @@ void ConfigForm::set_value(const std::string& path, const QString& value) {
     auto* combo = qobject_cast<QComboBox*>(it->second.widget);
     int index = combo->findData(value);
     if (index < 0) {
-        // Valeur hors liste (fichier invalide) : ajoutée pour être signalée par la validation.
+        // Value not in the list (invalid file): added so that validation reports it.
         combo->addItem(value, value);
         index = combo->count() - 1;
     }
@@ -240,9 +240,9 @@ std::vector<std::string> ConfigForm::load_yaml(const std::string& text) {
     try {
         const YAML::Node root = YAML::Load(text);
         if (root.IsMap()) read_node(root, "", ignored);
-        else if (root.IsDefined() && !root.IsNull()) ignored.emplace_back("(racine)");
+        else if (root.IsDefined() && !root.IsNull()) ignored.emplace_back("(root)");
     } catch (const YAML::Exception& e) {
-        ignored.push_back("syntaxe YAML invalide : " + e.msg);
+        ignored.push_back("invalid YAML syntax: " + e.msg);
     }
     loading_ = false;
     update_visibility();
@@ -342,8 +342,8 @@ void ConfigForm::update_visibility() {
             case Field::Scope::server: relevant = server; break;
             case Field::Scope::never: relevant = false; break;
         }
-        // Un champ sans objet reste visible s'il a une valeur : l'erreur
-        // signalée par la validation doit pouvoir être corrigée.
+        // A non-applicable field stays visible if it has a value: the error
+        // reported by validation must be correctable.
         const bool shown = relevant || !value(path).isEmpty();
         field.form->setRowVisible(field.widget, shown);
     }

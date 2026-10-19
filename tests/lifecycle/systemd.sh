@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Cycle de vie sous systemd (SPEC §10), à exécuter en root sur une machine de
-# test : installation, démarrage au boot, relais, reload, restart, stop, kill,
-# arrêt par systemctl, refus d'un utilisateur non autorisé, désinstallation.
-# Usage : sudo systemd.sh <chemin de tlsrelay>
+# Lifecycle under systemd (SPEC §10), to be run as root on a test
+# machine: installation, start at boot, relaying, reload, restart, stop, kill,
+# stop through systemctl, refusal of an unauthorized user, uninstallation.
+# Usage: sudo systemd.sh <path to tlsrelay>
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-fail() { echo "ÉCHEC : $*" >&2; journalctl -u tlsrelay@ci --no-pager -n 50 || true; exit 1; }
+fail() { echo "FAILED: $*" >&2; journalctl -u tlsrelay@ci --no-pager -n 50 || true; exit 1; }
 step() { echo "== $*"; }
 
-# Binaire installé hors de /home (ProtectHome=yes dans l'unité).
+# Binary installed outside /home (ProtectHome=yes in the unit).
 install -m 0755 "$1" /usr/local/bin/tlsrelay
 bin=/usr/local/bin/tlsrelay
 
@@ -37,20 +37,20 @@ ports:
   plain: { listen: "127.0.0.1:19001" }
 YAML
 
-step "installation avec démarrage au boot"
+step "installation with start at boot"
 "$bin" service install --instance ci --boot
 chgrp tlsrelay /etc/tlsrelay/ci.yaml /etc/tlsrelay/ci-whitelist.yaml
 chmod 0640 /etc/tlsrelay/ci.yaml /etc/tlsrelay/ci-whitelist.yaml
-[ "$(systemctl is-enabled tlsrelay@ci)" = enabled ] || fail "démarrage au boot"
+[ "$(systemctl is-enabled tlsrelay@ci)" = enabled ] || fail "start at boot"
 
-step "démarrage"
+step "startup"
 "$bin" start --instance ci
-[ "$(systemctl is-active tlsrelay@ci)" = active ] || fail "service inactif"
-"$bin" status --instance ci | tee "$work/status" | grep -q "instance : ci" || fail "status"
-[ "$(ps -o user= -p "$(systemctl show -p MainPID --value tlsrelay@ci)")" = tlsrelay ] || fail "compte du service"
-"$bin" start --instance ci | grep -q "déjà démarrée" || fail "second démarrage"
+[ "$(systemctl is-active tlsrelay@ci)" = active ] || fail "service inactive"
+"$bin" status --instance ci | tee "$work/status" | grep -q "instance: ci" || fail "status"
+[ "$(ps -o user= -p "$(systemctl show -p MainPID --value tlsrelay@ci)")" = tlsrelay ] || fail "service account"
+"$bin" start --instance ci | grep -q "already started" || fail "second start"
 
-step "relais de données à travers le service"
+step "relaying data through the service"
 cat > "$work/client.yaml" <<YAML
 mode: client
 instance: ci-client
@@ -60,46 +60,46 @@ ports:
 YAML
 "$bin" run -c "$work/client.yaml" & client_pid=$!
 sleep 0.5
-python3 "$here/exchange.py" 17001 || fail "échange"
+python3 "$here/exchange.py" 17001 || fail "exchange"
 
-step "accès refusé à un utilisateur non autorisé"
-if sudo -u nobody "$bin" status --instance ci 2>"$work/nobody.err"; then fail "nobody a obtenu l'état"; fi
+step "access refused to an unauthorized user"
+if sudo -u nobody "$bin" status --instance ci 2>"$work/nobody.err"; then fail "nobody obtained the status"; fi
 cat "$work/nobody.err"
 
-step "rechargement (tlsrelay reload et systemctl reload)"
-"$bin" reload --instance ci | grep -q "liste blanche : 1 pair" || fail "reload"
+step "reload (tlsrelay reload and systemctl reload)"
+"$bin" reload --instance ci | grep -q "whitelist: 1 peer" || fail "reload"
 systemctl reload tlsrelay@ci || fail "systemctl reload"
 
-step "redémarrage"
+step "restart"
 pid1=$(systemctl show -p MainPID --value tlsrelay@ci)
 "$bin" restart --instance ci
 pid2=$(systemctl show -p MainPID --value tlsrelay@ci)
-[ "$pid1" != "$pid2" ] && [ "$pid2" != 0 ] || fail "PID inchangé après restart"
-python3 "$here/exchange.py" 17001 || fail "échange après restart"
+[ "$pid1" != "$pid2" ] && [ "$pid2" != 0 ] || fail "PID unchanged after restart"
+python3 "$here/exchange.py" 17001 || fail "exchange after restart"
 
-step "arrêt propre"
+step "graceful stop"
 "$bin" stop --instance ci
 sleep 0.5
-[ "$(systemctl is-active tlsrelay@ci || true)" = inactive ] || fail "toujours actif après stop"
-"$bin" stop --instance ci | grep -q "déjà arrêtée" || fail "arrêt d'une instance arrêtée"
+[ "$(systemctl is-active tlsrelay@ci || true)" = inactive ] || fail "still active after stop"
+"$bin" stop --instance ci | grep -q "already stopped" || fail "stop of a stopped instance"
 
-step "arrêt par systemctl stop (SIGTERM, drain)"
-# Journal lu depuis ce démarrage (un binaire instrumenté pour la couverture y ajoute ses propres lignes).
+step "stop through systemctl stop (SIGTERM, drain)"
+# Log read since this start (a binary instrumented for coverage adds its own lines to it).
 since=$(date '+%Y-%m-%d %H:%M:%S')
 "$bin" start --instance ci
 systemctl stop tlsrelay@ci
-journalctl -u tlsrelay@ci --no-pager --since "$since" | grep -q "service arrêté" || fail "arrêt propre non journalisé"
+journalctl -u tlsrelay@ci --no-pager --since "$since" | grep -q "service stopped" || fail "graceful stop not logged"
 
-step "arrêt immédiat"
+step "immediate stop"
 "$bin" start --instance ci
 "$bin" kill --instance ci
 sleep 0.5
-[ "$(systemctl is-active tlsrelay@ci || true)" != active ] || fail "toujours actif après kill"
+[ "$(systemctl is-active tlsrelay@ci || true)" != active ] || fail "still active after kill"
 
-step "désinstallation"
+step "uninstallation"
 "$bin" service uninstall --instance ci
-[ ! -e /etc/systemd/system/tlsrelay@ci.service.d ] || fail "drop-in restant"
-if "$bin" service uninstall --instance ci 2>"$work/uninstall.err"; then fail "seconde désinstallation acceptée"; fi
-grep -q "n'est pas installé" "$work/uninstall.err" || fail "message de la seconde désinstallation"
+[ ! -e /etc/systemd/system/tlsrelay@ci.service.d ] || fail "drop-in left behind"
+if "$bin" service uninstall --instance ci 2>"$work/uninstall.err"; then fail "second uninstallation accepted"; fi
+grep -q "is not installed" "$work/uninstall.err" || fail "message of the second uninstallation"
 
-echo "cycle de vie systemd : OK"
+echo "systemd lifecycle: OK"

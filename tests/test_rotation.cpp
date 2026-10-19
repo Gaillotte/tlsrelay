@@ -1,6 +1,6 @@
-// Rotation à chaud de la PKI (phase 4, SPEC §7.4 et §7.5) : les nouvelles
-// connexions passent sur la nouvelle génération, les connexions ouvertes
-// finissent sur l'ancienne, qui est libérée quand elle n'a plus de connexion.
+// Live PKI rotation (phase 4, SPEC §7.4 and §7.5): new
+// connections move to the new generation, open connections
+// finish on the old one, which is released when it has no connection left.
 
 #include "support/net_helpers.hpp"
 #include "support/raw_tls_client.hpp"
@@ -24,13 +24,13 @@ std::string pems(std::initializer_list<const X509*> certs) {
     return out;
 }
 
-// Génération d'un tlsrelay serveur : identité, racines de confiance, AC Clients attendues.
+// Generation of a server tlsrelay: identity, trust roots, expected Clients CAs.
 GenerationFiles server_generation(const Issued& leaf, const Issued& ca, std::initializer_list<const X509*> roots,
                                   std::initializer_list<const X509*> client_cas) {
     return {pem(leaf.key.get()), pem(leaf.cert.get()), pem(ca.cert.get()), pems(roots), pems(client_cas)};
 }
 
-// Génération d'un tlsrelay client : identité, racines de confiance, AC Serveurs attendues.
+// Generation of a client tlsrelay: identity, trust roots, expected Servers CAs.
 GenerationFiles client_generation(const Issued& leaf, const Issued& ca, std::initializer_list<const X509*> roots,
                                   std::initializer_list<const X509*> server_cas) {
     return {pem(leaf.key.get()), pem(leaf.cert.get()), pem(ca.cert.get()), pems(roots), pems(server_cas)};
@@ -52,11 +52,11 @@ protected:
     void SetUp() override {
         write_generation(server_pki(), "v1", server_files(*a_));
         write_generation(client_pki(), "v1", client_files(*a_));
-        std::ofstream(whitelist()) << "peers:\n  - { name: poste, ip: 127.0.0.1, ports: [tls, mtls], subject: \""
+        std::ofstream(whitelist()) << "peers:\n  - { name: workstation, ip: 127.0.0.1, ports: [tls, mtls], subject: \""
                                    << kClientSubject << "\" }\n";
     }
 
-    std::filesystem::path server_pki() const { return dir_ / "serveur"; }
+    std::filesystem::path server_pki() const { return dir_ / "server"; }
     std::filesystem::path client_pki() const { return dir_ / "client"; }
     std::filesystem::path whitelist() const { return dir_ / "whitelist.yaml"; }
 
@@ -117,7 +117,7 @@ TEST_F(RotationTest, NewConnectionsUseNewGenerationWhileOldOnesDrain) {
     EXPECT_TRUE(same_cert(SSL_get0_peer_certificate(before.ssl()), a_->server.cert.get()));
     ASSERT_TRUE(works(before_tunnel, "v1"));
 
-    // Nouveau certificat (nouvelle bi-clé), même AC.
+    // New certificate (new key pair), same CA.
     auto renewed = make_certificate({.common_name = "relay.test", .usage = Usage::server, .dns = {"relay.test"}},
                                     &a_->servers_ca);
     write_generation(server_pki(), "v2", server_generation(renewed, a_->servers_ca, {a_->root.cert.get()},
@@ -131,8 +131,8 @@ TEST_F(RotationTest, NewConnectionsUseNewGenerationWhileOldOnesDrain) {
     EXPECT_TRUE(same_cert(SSL_get0_peer_certificate(after.ssl()), renewed.cert.get()));
     EXPECT_TRUE(works(after_tunnel, "v2"));
 
-    // La connexion ouverte avant la bascule continue sur l'ancienne génération.
-    EXPECT_TRUE(works(before_tunnel, "toujours v1"));
+    // The connection opened before the switch continues on the old generation.
+    EXPECT_TRUE(works(before_tunnel, "still v1"));
     EXPECT_EQ(service.live_generations(), (std::vector<std::string>{"v2", "v1"}));
     EXPECT_EQ(server.stats().pki_rotations.load(), 1u);
 }
@@ -150,9 +150,9 @@ TEST_F(RotationTest, OldGenerationIsReleasedWhenItsLastConnectionCloses) {
         write_generation(server_pki(), "v2", server_files(*a_));
         ASSERT_TRUE(eventually([&] { return service.current_generation() == "v2"; }));
         EXPECT_EQ(service.live_generations().size(), 2u);
-        // Fermeture du canal : sans CLOSE, le serveur attendrait une reprise de session.
+        // Closing the channel: without CLOSE, the server would wait for a session resumption.
         ASSERT_TRUE(before_tunnel.close());
-    }  // fermeture de la dernière connexion de v1
+    }  // closing of the last connection of v1
     EXPECT_TRUE(eventually([&] { return service.live_generations() == std::vector<std::string>{"v2"}; }));
 }
 
@@ -162,7 +162,7 @@ TEST_F(RotationTest, InvalidGenerationIsRefusedAndServiceContinues) {
     auto& service = server.service();
 
     auto broken = server_files(*a_);
-    broken.key = pem(a_->client.key.get());  // la clé ne correspond pas au certificat
+    broken.key = pem(a_->client.key.get());  // the key does not match the certificate
     write_generation(server_pki(), "v2", broken);
     ASSERT_TRUE(eventually([&] { return server.stats().pki_reload_failures.load() == 1; }));
     EXPECT_EQ(service.current_generation(), "v1");
@@ -171,7 +171,7 @@ TEST_F(RotationTest, InvalidGenerationIsRefusedAndServiceContinues) {
     ASSERT_TRUE(raw.handshake());
     TunnelProbe raw_tunnel(raw);
     ASSERT_TRUE(raw_tunnel.open(PortKind::tls));
-    EXPECT_TRUE(works(raw_tunnel, "service maintenu"));
+    EXPECT_TRUE(works(raw_tunnel, "service maintained"));
 }
 
 TEST_F(RotationTest, GuardRefusesRootChangeWithoutPreTrust) {
@@ -179,7 +179,7 @@ TEST_F(RotationTest, GuardRefusesRootChangeWithoutPreTrust) {
     RunningService server(server_config(echo.port(), PortKind::mtls), fast_watch());
     auto& service = server.service();
 
-    // Passage direct de la racine A à la racine B : les clients sur A seraient coupés.
+    // Direct move from root A to root B: clients on A would be cut off.
     write_generation(server_pki(), "v2", server_files(*b_));
     ASSERT_TRUE(eventually([&] { return server.stats().pki_reload_failures.load() == 1; }));
     EXPECT_EQ(service.current_generation(), "v1");
@@ -190,9 +190,9 @@ TEST_F(RotationTest, GuardRefusesIdentityFromUnknownRootEvenWithoutMtls) {
     RunningService server(server_config(echo.port(), PortKind::tls), fast_watch());
     auto& service = server.service();
 
-    // Serveur TLS seul : ses racines ne servent pas à vérifier les clients,
-    // mais un certificat de la racine B couperait les clients qui ne
-    // connaissent que A.
+    // TLS-only server: its roots are not used to verify the clients,
+    // but a certificate from root B would cut off the clients that only
+    // know A.
     write_generation(server_pki(), "v2", server_files(*b_));
     ASSERT_TRUE(eventually([&] { return server.stats().pki_reload_failures.load() == 1; }));
     EXPECT_EQ(service.current_generation(), "v1");
@@ -216,9 +216,9 @@ TEST_F(RotationTest, KillOldClosesConnectionsOfRetiredGeneration) {
     ASSERT_TRUE(after_tunnel.open(PortKind::tls));
     ASSERT_TRUE(works(after_tunnel, "v2"));
 
-    service.reload(true);  // révocation d'urgence de l'ancienne génération
+    service.reload(true);  // emergency revocation of the old generation
     EXPECT_TRUE(before_tunnel.closed());
-    EXPECT_TRUE(works(after_tunnel, "toujours ouverte"));
+    EXPECT_TRUE(works(after_tunnel, "still open"));
     EXPECT_TRUE(eventually([&] { return service.live_generations() == std::vector<std::string>{"v2"}; }));
 }
 
@@ -244,7 +244,7 @@ TEST_F(RotationTest, SighupTriggersReload) {
     relay::ServiceOptions options{true, 2};
     RunningService server(std::move(cfg), options);
     auto& service = server.service();
-    std::this_thread::sleep_for(50ms);  // run() a démarré
+    std::this_thread::sleep_for(50ms);  // run() has started
 
     write_generation(server_pki(), "v2", server_files(*a_));
     std::raise(SIGHUP);
@@ -252,9 +252,9 @@ TEST_F(RotationTest, SighupTriggersReload) {
 }
 #endif
 
-// Changement de racine en 3 étapes (SPEC §7.5), en mTLS, sans interruption :
-// à chaque étape les nouvelles connexions passent, et une connexion ouverte
-// au départ reste ouverte jusqu'au bout.
+// Root change in 3 steps (SPEC §7.5), with mTLS, without interruption:
+// at each step new connections go through, and a connection opened
+// at the start stays open until the end.
 TEST_F(RotationTest, ThreeStepRootChangeKeepsServiceAvailable) {
     EchoServer echo;
     RunningService server(server_config(echo.port(), PortKind::mtls), fast_watch());
@@ -267,40 +267,40 @@ TEST_F(RotationTest, ThreeStepRootChangeKeepsServiceAvailable) {
         write_generation(server_pki(), name, server_files_);
         write_generation(client_pki(), name, client_files_);
         ASSERT_TRUE(eventually([&] { return srv.current_generation() == name && cli.current_generation() == name; }))
-            << name << " : serveur=" << srv.current_generation() << " client=" << cli.current_generation();
+            << name << ": server=" << srv.current_generation() << " client=" << cli.current_generation();
         TestClient app(client.port(PortKind::mtls));
-        EXPECT_TRUE(works(app, "étape " + name)) << name;
+        EXPECT_TRUE(works(app, "step " + name)) << name;
     };
 
     TestClient long_lived(client.port(PortKind::mtls));
-    ASSERT_TRUE(works(long_lived, "départ"));
+    ASSERT_TRUE(works(long_lived, "start"));
 
     const auto* rootA = a_->root.cert.get();
     const auto* rootB = b_->root.cert.get();
-    // Étape 1 : pré-confiance (racines A et B), identités inchangées.
+    // Step 1: pre-trust (roots A and B), identities unchanged.
     step("v2", server_generation(a_->server, a_->servers_ca, {rootA, rootB},
                                  {a_->clients_ca.cert.get(), b_->clients_ca.cert.get()}),
          client_generation(a_->client, a_->clients_ca, {rootA, rootB},
                            {a_->servers_ca.cert.get(), b_->servers_ca.cert.get()}));
 
-    // Étape 2, d'abord côté serveur seul : un client encore à l'étape 1 accepte la nouvelle PKI.
+    // Step 2, first on the server side only: a client still at step 1 accepts the new PKI.
     write_generation(server_pki(), "v3", server_generation(b_->server, b_->servers_ca, {rootA, rootB},
                                                            {a_->clients_ca.cert.get(), b_->clients_ca.cert.get()}));
     ASSERT_TRUE(eventually([&] { return srv.current_generation() == "v3"; }));
     {
         TestClient mixed(client.port(PortKind::mtls));
-        EXPECT_TRUE(works(mixed, "serveur sur B, client sur A"));
+        EXPECT_TRUE(works(mixed, "server on B, client on A"));
     }
     step("v3", server_generation(b_->server, b_->servers_ca, {rootA, rootB},
                                  {a_->clients_ca.cert.get(), b_->clients_ca.cert.get()}),
          client_generation(b_->client, b_->clients_ca, {rootA, rootB},
                            {a_->servers_ca.cert.get(), b_->servers_ca.cert.get()}));
 
-    // Étape 3 : retrait de la racine A.
+    // Step 3: removal of root A.
     step("v4", server_generation(b_->server, b_->servers_ca, {rootB}, {b_->clients_ca.cert.get()}),
          client_generation(b_->client, b_->clients_ca, {rootB}, {b_->servers_ca.cert.get()}));
 
-    EXPECT_TRUE(works(long_lived, "toujours ouverte sur v1"));
+    EXPECT_TRUE(works(long_lived, "still open on v1"));
     EXPECT_EQ(srv.stats().pki_reload_failures.load(), 0u);
     EXPECT_EQ(cli.stats().pki_reload_failures.load(), 0u);
 }

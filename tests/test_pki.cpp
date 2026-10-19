@@ -1,4 +1,4 @@
-// Chargement et contrôles d'une génération PKI (SPEC §7.2, §7.3).
+// Loading and checks of a PKI generation (SPEC §7.2, §7.3).
 
 #include "tlsrelay/pki/generation.hpp"
 
@@ -28,8 +28,8 @@ bool has(const std::vector<Issue>& issues, const std::string& file, const std::s
 
 std::string dump(const pki::LoadResult& r) {
     std::string s;
-    for (const auto& e : r.errors) s += "erreur " + e.path + " : " + e.message + "\n";
-    for (const auto& w : r.warnings) s += "avertissement " + w.path + " : " + w.message + "\n";
+    for (const auto& e : r.errors) s += "error " + e.path + ": " + e.message + "\n";
+    for (const auto& w : r.warnings) s += "warning " + w.path + ": " + w.message + "\n";
     return s;
 }
 
@@ -72,18 +72,18 @@ TEST_F(PkiTest, LoadsClientGenerationWithTrustOnly) {
 
 TEST_F(PkiTest, RejectsMissingOrInvalidPointer) {
     auto r = pki::load_current_generation(dir_.path(), kServer);
-    EXPECT_TRUE(has(r.errors, "current", "absent")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "current", "missing")) << dump(r);
 
     std::ofstream(dir_.path() / "current") << "../etc\n";
     r = pki::load_current_generation(dir_.path(), kServer);
-    EXPECT_TRUE(has(r.errors, "current", "nom de génération invalide")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "current", "invalid generation name")) << dump(r);
 }
 
 TEST_F(PkiTest, ReportsEveryMissingFile) {
     const auto r = load(GenerationFiles{}, kServerMtls);
     EXPECT_FALSE(r.generation);
     for (const char* file : {"key.pem", "cert.pem", "chain.pem", "trust-roots.pem", "trust-issuer.pem"}) {
-        EXPECT_TRUE(has(r.errors, file, "absent")) << file << "\n" << dump(r);
+        EXPECT_TRUE(has(r.errors, file, "missing")) << file << "\n" << dump(r);
     }
 }
 
@@ -91,14 +91,14 @@ TEST_F(PkiTest, RejectsKeyNotMatchingCertificate) {
     auto files = server_files(*h_);
     files.key = pem(h_->client.key.get());
     const auto r = load(files, kServer);
-    EXPECT_TRUE(has(r.errors, "key.pem", "ne correspond pas")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "key.pem", "does not match")) << dump(r);
 }
 
 TEST_F(PkiTest, RejectsEncryptedKeyWithoutPrompting) {
     auto files = server_files(*h_);
     files.key = encrypted_pem(h_->server.key.get(), "secret");
     const auto r = load(files, kServer);
-    EXPECT_TRUE(has(r.errors, "key.pem", "chiffrée")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "key.pem", "encrypted")) << dump(r);
 }
 
 TEST_F(PkiTest, RejectsExpiredAndNotYetValidCertificates) {
@@ -108,14 +108,14 @@ TEST_F(PkiTest, RejectsExpiredAndNotYetValidCertificates) {
     files.key = pem(expired.key.get());
     files.cert = pem(expired.cert.get());
     auto r = load(files, kServer);
-    EXPECT_TRUE(has(r.errors, "cert.pem", "expiré")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "cert.pem", "expired")) << dump(r);
 
     auto future = make_certificate({.common_name = "relay.test", .usage = Usage::server,
                                     .not_before_offset = 3600}, &h_->servers_ca);
     files.key = pem(future.key.get());
     files.cert = pem(future.cert.get());
     r = load(files, kServer);
-    EXPECT_TRUE(has(r.errors, "cert.pem", "pas encore valide")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "cert.pem", "not yet valid")) << dump(r);
 }
 
 TEST_F(PkiTest, WarnsWhenExpiryIsNear) {
@@ -124,13 +124,13 @@ TEST_F(PkiTest, WarnsWhenExpiryIsNear) {
     auto files = server_files(*h_);
     files.key = pem(soon.key.get());
     files.cert = pem(soon.cert.get());
-    const auto r = load(files, kServer);  // seuil par défaut : 30 jours
+    const auto r = load(files, kServer);  // default threshold: 30 days
     ASSERT_TRUE(r.generation) << dump(r);
-    EXPECT_TRUE(has(r.warnings, "cert.pem", "expirant")) << dump(r);
+    EXPECT_TRUE(has(r.warnings, "cert.pem", "expiring")) << dump(r);
 }
 
 TEST_F(PkiTest, RejectsCertificateWithWrongUsageForRole) {
-    // Certificat client présenté par un serveur.
+    // Client certificate presented by a server.
     auto files = server_files(*h_);
     files.key = pem(h_->client.key.get());
     files.cert = pem(h_->client.cert.get());
@@ -143,16 +143,16 @@ TEST_F(PkiTest, RejectsChainThatDidNotIssueCertificate) {
     auto files = server_files(*h_);
     files.chain = pem(h_->clients_ca.cert.get());
     const auto r = load(files, kServer);
-    EXPECT_TRUE(has(r.errors, "chain.pem", "émetteur")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "chain.pem", "issuer")) << dump(r);
 }
 
 TEST_F(PkiTest, RejectsChainNotAnchoredInTrustedRoots) {
-    const auto other = Hierarchy::create("Autre");
+    const auto other = Hierarchy::create("Other");
     auto files = server_files(*h_);
     files.trust_roots = pem(other.root.cert.get());
     files.trust_issuer = pem(other.clients_ca.cert.get());
     const auto r = load(files, kServerMtls);
-    EXPECT_TRUE(has(r.errors, "cert.pem", "chaîne invalide")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "cert.pem", "invalid chain")) << dump(r);
 }
 
 TEST_F(PkiTest, RejectsTrustIssuerThatIsNotACa) {
@@ -160,14 +160,14 @@ TEST_F(PkiTest, RejectsTrustIssuerThatIsNotACa) {
     files.trust_roots = pem(h_->root.cert.get());
     files.trust_issuer = pem(h_->server.cert.get());
     const auto r = load(files, kClient);
-    EXPECT_TRUE(has(r.errors, "trust-issuer.pem", "n'est pas une AC")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "trust-issuer.pem", "not a CA")) << dump(r);
 }
 
 TEST_F(PkiTest, RejectsGarbageFiles) {
     auto files = server_files(*h_);
-    files.cert = "pas un certificat";
+    files.cert = "not a certificate";
     const auto r = load(files, kServer);
-    EXPECT_TRUE(has(r.errors, "cert.pem", "aucun certificat")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "cert.pem", "no PEM certificate")) << dump(r);
 }
 
 TEST(PkiRequirements, DependOnModeAndPorts) {
@@ -197,14 +197,14 @@ TEST(PkiRequirements, DependOnModeAndPorts) {
 
 TEST_F(PkiTest, CheckCandidateAppliesRootGuard) {
     write_generation(dir_.path(), "v1", server_files(*h_));
-    // v2 : nouvelle racine sans pré-confiance -> refusée.
-    const auto other = Hierarchy::create("Autre");
+    // v2: new root without pre-trust -> refused.
+    const auto other = Hierarchy::create("Other");
     write_generation(dir_.path(), "v2", server_files(other), false);
     auto r = pki::check_candidate(dir_.path(), "v2", kServerMtls);
     EXPECT_FALSE(r.generation);
-    EXPECT_TRUE(has(r.errors, "v2", "aucune racine de confiance commune")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "v2", "no trusted root in common")) << dump(r);
 
-    // v3 : même racine, nouveau certificat -> acceptée.
+    // v3: same root, new certificate -> accepted.
     auto files = server_files(*h_);
     auto renewed = make_certificate({.common_name = "relay.test", .usage = Usage::server, .dns = {"relay.test"}},
                                     &h_->servers_ca);
@@ -216,10 +216,10 @@ TEST_F(PkiTest, CheckCandidateAppliesRootGuard) {
 
     EXPECT_FALSE(pki::check_candidate(dir_.path(), "../v3", kServerMtls).generation);
 
-    // Serveur sans mTLS : la nouvelle identité doit se rattacher aux racines courantes.
+    // Server without mTLS: the new identity must chain to the current roots.
     r = pki::check_candidate(dir_.path(), "v2", kServer);
     EXPECT_FALSE(r.generation);
-    EXPECT_TRUE(has(r.errors, "v2", "ne se rattache à aucune racine")) << dump(r);
+    EXPECT_TRUE(has(r.errors, "v2", "does not chain to any trusted root")) << dump(r);
 }
 
 TEST_F(PkiTest, ActivateReplacesCurrentPointer) {

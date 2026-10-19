@@ -18,13 +18,13 @@ std::string take_openssl_errors() {
         if (!out.empty()) out += "; ";
         out += buffer;
     }
-    return out.empty() ? "erreur OpenSSL inconnue" : out;
+    return out.empty() ? "unknown OpenSSL error" : out;
 }
 
 std::string name_to_string(const X509_NAME* name) {
     if (!name) return "?";
     BioPtr bio(BIO_new(BIO_s_mem()));
-    // RFC 2253, mais caractères non ASCII affichés en UTF-8 plutôt qu'échappés.
+    // RFC 2253, but non-ASCII characters shown in UTF-8 rather than escaped.
     X509_NAME_print_ex(bio.get(), name, 0, (XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB) | ASN1_STRFLGS_UTF8_CONVERT);
     char* data = nullptr;
     const long size = BIO_get_mem_data(bio.get(), &data);
@@ -53,16 +53,16 @@ std::string trim(const std::string& s) {
 }  // namespace
 
 X509NamePtr parse_dn(std::string_view text, std::string& error) {
-    // Découpage en composants « type=valeur » séparés par des virgules non échappées.
+    // Split into "type=value" components separated by unescaped commas.
     std::vector<std::pair<std::string, std::string>> parts;
     std::string type, value;
     bool in_value = false;
-    std::size_t value_end = 0;  // fin de la partie de valeur à conserver (espaces échappés inclus)
+    std::size_t value_end = 0;  // end of the value part to keep (escaped spaces included)
     auto flush = [&]() -> bool {
         type = trim(type);
         value.resize(std::max(value_end, value.find_last_not_of(' ') == std::string::npos ? 0 : value.find_last_not_of(' ') + 1));
         if (type.empty() || !in_value) {
-            error = "composant sans « type=valeur »";
+            error = "component without \"type=value\"";
             return false;
         }
         parts.emplace_back(type, value);
@@ -77,14 +77,14 @@ X509NamePtr parse_dn(std::string_view text, std::string& error) {
         if (!in_value) {
             if (c == '=') in_value = true;
             else if (c == ',' || c == '+') {
-                error = "composant sans « type=valeur »";
+                error = "component without \"type=value\"";
                 return nullptr;
             } else type += c;
             continue;
         }
         if (c == '\\') {
             if (i + 1 >= text.size()) {
-                error = "échappement incomplet en fin de nom";
+                error = "incomplete escape at end of name";
                 return nullptr;
             }
             const char n = text[i + 1];
@@ -103,22 +103,22 @@ X509NamePtr parse_dn(std::string_view text, std::string& error) {
             continue;
         }
         if (c == '+') {
-            error = "les noms à plusieurs valeurs (« + ») ne sont pas acceptés";
+            error = "multi-valued names (\"+\") are not accepted";
             return nullptr;
         }
         if (c == '#' && value.empty()) {
-            error = "les valeurs hexadécimales (« # ») ne sont pas acceptées";
+            error = "hexadecimal values (\"#\") are not accepted";
             return nullptr;
         }
-        if (c == ' ' && value.empty()) continue;  // espaces après « = »
+        if (c == ' ' && value.empty()) continue;  // spaces after "="
         value += c;
     }
     if (!flush()) return nullptr;
 
-    // RFC 4514 : le plus spécifique en premier ; X509_NAME : le plus général en premier.
+    // RFC 4514: most specific first; X509_NAME: most general first.
     X509NamePtr name(X509_NAME_new());
     for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
-        // Types insensibles à la casse (RFC 4514) : « cn » est accepté comme « CN ».
+        // Case-insensitive types (RFC 4514): "cn" is accepted as "CN".
         std::string upper = it->first;
         std::transform(upper.begin(), upper.end(), upper.begin(),
                        [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
@@ -128,7 +128,7 @@ X509NamePtr parse_dn(std::string_view text, std::string& error) {
             (ERR_clear_error(),
              X509_NAME_add_entry_by_txt(name.get(), upper.c_str(), MBSTRING_UTF8, bytes, length, -1, 0) != 1)) {
             ERR_clear_error();
-            error = "attribut inconnu ou valeur invalide : " + it->first + "=" + it->second;
+            error = "unknown attribute or invalid value: " + it->first + "=" + it->second;
             return nullptr;
         }
     }

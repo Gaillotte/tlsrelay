@@ -1,4 +1,4 @@
-"""Serveur d'écho TCP pour les essais de cycle de vie. Usage : echo.py <port>"""
+"""TCP echo server for the lifecycle tests. Usage: echo.py <port>"""
 import socket
 import sys
 import threading

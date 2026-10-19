@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Objectifs de performance (PLAN §5.6), chaîne réelle en mTLS :
-#   testkit ──► tlsrelay client ══ mTLS ══► tlsrelay serveur ──► écho testkit
-# - canaux simultanés (défaut 5000), tous intègres (SHA-256 par canal) ;
-# - débit d'un canal ≥ 100 Mbit/s ;
-# - latence ajoutée < 1 ms (médiane de l'aller-retour via tlsrelay moins direct).
-# Usage : perf.sh <répertoire de build> [canaux] [fichier de rapport JSON]
+# Performance targets (PLAN §5.6), real mTLS chain:
+#   testkit ──► tlsrelay client ══ mTLS ══► tlsrelay server ──► testkit echo
+# - simultaneous channels (default 5000), all intact (SHA-256 per channel);
+# - throughput of one channel ≥ 100 Mbit/s;
+# - added latency < 1 ms (median round trip through tlsrelay minus direct).
+# Usage: perf.sh <build directory> [channels] [JSON report file]
 set -euo pipefail
 
 build=$(realpath "$1")
@@ -19,7 +19,7 @@ port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); 
 
 need=$((channels * 2 + 200))
 if [ "$(ulimit -n)" -lt "$need" ]; then ulimit -n "$need" 2>/dev/null || {
-  echo "limite de descripteurs trop basse ($(ulimit -n) < $need) pour $channels canaux" >&2; exit 2; }; fi
+  echo "descriptor limit too low ($(ulimit -n) < $need) for $channels channels" >&2; exit 2; }; fi
 
 "$kit" pki --out pki >/dev/null
 dest=$(port); srv=$(port); cli=$(port)
@@ -32,7 +32,7 @@ for role in server client; do
     ports="  mtls: { listen: \"127.0.0.1:$srv\" }"
     extra="whitelist: { file: $work/wl.yaml }
 destination: { address: 127.0.0.1, port: $dest }
-credentials: { pki_root: $work/pki/serveur }"
+credentials: { pki_root: $work/pki/server }"
   else
     ports="  mtls: { listen: \"127.0.0.1:$cli\", upstream: \"127.0.0.1:$srv\", server_name: relay.test }"
     extra="credentials: { pki_root: $work/pki/client }"
@@ -54,30 +54,30 @@ done
 for _ in $(seq 50); do "$bin" status -c client.yaml >/dev/null 2>&1 && "$bin" status -c server.yaml >/dev/null 2>&1 && break; sleep 0.1; done
 
 metric() { "$bin" metrics -c "$1.yaml" | awk -v m="$2" '$1 ~ "^"m"[{ ]" {print $2}'; }
-# Événements des relais (hors configuration), pour le diagnostic d'un échec.
-events() { for role in client server; do echo "-- événements $role"; grep -v '\[config\]' $role.log | tail -n 40; done; }
+# Relay events (excluding configuration), to diagnose a failure.
+events() { for role in client server; do echo "-- events $role"; grep -v '\[config\]' $role.log | tail -n 40; done; }
 
-echo "== $channels canaux simultanés"
-# Mémoire relevée pendant le maintien des canaux ouverts.
+echo "== $channels simultaneous channels"
+# Memory sampled while the channels are held open.
 ( sleep 4; metric server tlsrelay_process_resident_memory_bytes > peak_server
   metric client tlsrelay_process_resident_memory_bytes > peak_client ) &
 sampler=$!
 "$kit" load --target "127.0.0.1:$cli" --channels "$channels" --bytes 64KiB --hold 6s --json | tee load.json || { events; exit 1; }
 wait "$sampler"
-# Débit cadencé à RATE Mbit/s (défaut 500, cinq fois l'objectif) : un flux saturé
-# sur la boucle locale peut se figer (limite connue, README « Performances ») ;
-# RATE=0 mesure le débit maximal.
+# Throughput paced at RATE Mbit/s (default 500, five times the target): a saturated
+# stream on the loopback can stall (known limitation, README "Performance");
+# RATE=0 measures the maximum throughput.
 rate=${RATE:-500}
-echo "== débit d'un canal (10 s, ${rate} Mbit/s dans chaque sens ; 0 : sans limite)"
+echo "== throughput of one channel (10 s, ${rate} Mbit/s in each direction; 0: unlimited)"
 "$kit" throughput --target "127.0.0.1:$cli" --duration 10s --rate "$rate" --json > throughput.json &
 tp=$!
-# Diagnostic d'un blocage : état du contrôle de flux des deux côtés pendant le blocage.
+# Diagnosing a stall: flow-control state on both sides during the stall.
 for _ in $(seq 40); do kill -0 "$tp" 2>/dev/null || break; sleep 1; done
 if kill -0 "$tp" 2>/dev/null; then
-  echo "débit : canal bloqué au-delà de 40 s, état des relais :"
+  echo "throughput: channel stalled beyond 40 s, relay state:"
   for role in client server; do echo "-- $role"; "$bin" channels -c $role.yaml || true; done
   for _ in 1 2 3; do sleep 5; for role in client server; do "$bin" channels -c $role.yaml | tail -n +2 || true; done; done
-  echo "-- mémoire TCP du noyau"; cat /proc/net/sockstat; echo "tcp_mem=$(cat /proc/sys/net/ipv4/tcp_mem) tcp_rmem=$(cat /proc/sys/net/ipv4/tcp_rmem) tcp_wmem=$(cat /proc/sys/net/ipv4/tcp_wmem)"
+  echo "-- kernel TCP memory"; cat /proc/net/sockstat; echo "tcp_mem=$(cat /proc/sys/net/ipv4/tcp_mem) tcp_rmem=$(cat /proc/sys/net/ipv4/tcp_rmem) tcp_wmem=$(cat /proc/sys/net/ipv4/tcp_wmem)"
   nstat -az 2>/dev/null | grep -iE "pressure|prune|drop|zerowindow|rcvq|collapse|ofo|probe" || true
   echo "-- sockets (Recv-Q / Send-Q)"; ss -tnpmi state established "( sport = :$dest or dport = :$dest or sport = :$srv or dport = :$srv or sport = :$cli or dport = :$cli )" || true
   events
@@ -85,7 +85,7 @@ if kill -0 "$tp" 2>/dev/null; then
 fi
 wait "$tp" || true
 cat throughput.json
-echo "== latence (aller-retour 64 octets)"
+echo "== latency (64-byte round trip)"
 "$kit" latency --target "127.0.0.1:$dest" --count 5000 --json | tee direct.json
 "$kit" latency --target "127.0.0.1:$cli" --count 5000 --json | tee relay.json
 
@@ -104,9 +104,9 @@ result = {
     "memory_per_channel_kib": round(max(peak_s, peak_c) / 1024 / channels, 1),
 }
 checks = {
-    f"{channels} canaux simultanés intègres": load["ok"] == channels and load["failed"] == 0,
-    "débit d'un canal ≥ 100 Mbit/s": tp["mbit_per_s_per_channel"] >= 100 and tp["intact"] == 1,
-    "latence ajoutée < 1 ms": added_ms < 1.0,
+    f"{channels} simultaneous channels intact": load["ok"] == channels and load["failed"] == 0,
+    "throughput of one channel ≥ 100 Mbit/s": tp["mbit_per_s_per_channel"] >= 100 and tp["intact"] == 1,
+    "added latency < 1 ms": added_ms < 1.0,
 }
 result["checks"] = checks
 print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -114,7 +114,7 @@ if report != "/dev/null":
     json.dump(result, open(report, "w"), ensure_ascii=False, indent=2)
 failed = [k for k, ok in checks.items() if not ok]
 for k, ok in checks.items():
-    print(("OK    " if ok else "ÉCHEC ") + k)
+    print(("OK    " if ok else "FAILED ") + k)
 sys.exit(1 if failed else 0)
 PY
 "$bin" stop -c client.yaml >/dev/null; "$bin" stop -c server.yaml >/dev/null

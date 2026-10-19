@@ -1,13 +1,13 @@
 #pragma once
 
-// Protocole de tunnel tlsrelay/1 (SPEC §4) : format binaire des trames.
-// Tous les entiers sont en ordre réseau (big-endian).
+// tlsrelay/1 tunnel protocol (SPEC §4): binary frame format.
+// All integers are in network order (big-endian).
 //
 //   0       1       2       3       4                               8
 //   +-------+-------+-------+-------+-------------------------------+
-//   | type  | flags |   réservé (0) |      longueur (u32)           |
+//   | type  | flags |  reserved (0) |       length (u32)            |
 //   +-------+-------+-------+-------+-------------------------------+
-//   |                charge utile (longueur octets)                 |
+//   |                  payload (length bytes)                       |
 
 #include "tlsrelay/config.hpp"
 
@@ -23,9 +23,9 @@ namespace tlsrelay::tunnel {
 
 inline constexpr std::uint16_t kVersion = 1;
 inline constexpr std::size_t kHeaderSize = 8;
-inline constexpr std::size_t kMaxData = 16ULL * 1024;          // données par trame DATA
-inline constexpr std::size_t kMaxPayload = kMaxData + 64;    // charge utile maximale
-inline constexpr std::size_t kMaxMessage = 256;              // message des trames OPEN_FAIL et CLOSE
+inline constexpr std::size_t kMaxData = 16ULL * 1024;          // data per DATA frame
+inline constexpr std::size_t kMaxPayload = kMaxData + 64;    // maximum payload
+inline constexpr std::size_t kMaxMessage = 256;              // message of OPEN_FAIL and CLOSE frames
 
 enum class FrameType : std::uint8_t {
     open = 0x01,
@@ -44,7 +44,7 @@ enum class FrameType : std::uint8_t {
 
 std::string_view to_string(FrameType type);
 
-// Codes de fermeture (SPEC §4.6).
+// Close codes (SPEC §4.6).
 enum class CloseCode : std::uint16_t {
     normal = 0,
     idle_timeout = 1,
@@ -71,7 +71,7 @@ struct Frame {
     std::vector<std::uint8_t> payload;
 };
 
-// Contenus décodés. Les tailles ont déjà été validées par le décodeur.
+// Decoded contents. Sizes have already been validated by the decoder.
 struct Open {
     std::uint16_t version = kVersion;
     SessionId session{};
@@ -92,7 +92,7 @@ struct Resume {
     std::uint64_t last_rx_seq = 0;
 };
 
-// Encodage : chaque fonction retourne la trame complète (en-tête compris).
+// Encoding: each function returns the complete frame (header included).
 std::string encode_open(const Open& open);
 std::string encode_open_ok();
 std::string encode_open_fail(std::uint16_t code, std::string_view message);
@@ -106,26 +106,26 @@ std::string encode_resume_fail(std::uint16_t code);
 std::string encode_ping(std::uint64_t nonce);
 std::string encode_pong(std::uint64_t nonce);
 
-// Lecture du contenu d'une trame (type et taille vérifiés par Decoder).
+// Reading of a frame's content (type and size checked by Decoder).
 Open read_open(const Frame& f);
 Data read_data(const Frame& f);
 std::uint64_t read_u64(const Frame& f);  // ACK, SHUTDOWN_WR, RESUMED, PING, PONG
-// Le message vient de l'autre tlsrelay et finit dans les journaux : ses
-// caractères de contrôle sont échappés (\xNN), une ligne ne peut en devenir deux.
+// The message comes from the other tlsrelay and ends up in the logs: its
+// control characters are escaped (\xNN), one line cannot become two.
 Status read_status(const Frame& f);      // OPEN_FAIL, CLOSE
 Resume read_resume(const Frame& f);
 std::uint16_t read_code(const Frame& f);  // RESUME_FAIL
 
-// Décodeur incrémental : on lui donne les octets reçus, il rend les trames
-// complètes. Toute trame non conforme (type inconnu, champ réservé non nul,
-// taille incohérente avec le type ou trop grande) est une erreur définitive.
+// Incremental decoder: it is given the received bytes, it returns the complete
+// frames. Any malformed frame (unknown type, non-zero reserved field,
+// size inconsistent with the type or too large) is a permanent error.
 class Decoder {
 public:
     enum class Error { none, protocol_error, frame_too_large };
 
     void feed(const std::uint8_t* data, std::size_t size);
 
-    // Prochaine trame complète, ou std::nullopt s'il faut plus d'octets ou en cas d'erreur (voir error()).
+    // Next complete frame, or std::nullopt if more bytes are needed or on error (see error()).
     std::optional<Frame> next();
 
     Error error() const { return error_; }

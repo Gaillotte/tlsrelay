@@ -27,13 +27,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dépendances
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
             libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev libclang-rt-18-dev qt6-base-dev
 
-      - name: Configuration
+      - name: Configure
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
@@ -42,21 +42,21 @@ jobs:
           -DTLSRELAY_BUILD_ADMIN=ON
           -DTLSRELAY_SANITIZERS=${{ matrix.sanitizers }}
 
-      - name: Compilation
+      - name: Build
         run: cmake --build build
 
       - name: Tests
         working-directory: build
         env:
-          # Suppressions : courses signalées dans Qt, non instrumenté (tests/tsan.supp).
+          # Suppressions: races reported in Qt, which is not instrumented (tests/tsan.supp).
           TSAN_OPTIONS: halt_on_error=1 suppressions=${{ github.workspace }}/tests/tsan.supp
         run: ctest --output-on-failure -j 2
 
-      - name: Cycle de vie sous systemd (service réel)
+      - name: Lifecycle under systemd (real service)
         if: matrix.name == 'GCC Release'
         run: sudo bash tests/lifecycle/systemd.sh build/src/app/tlsrelay
 
-      - name: Configuration TLS vue de l'extérieur (sslyze, testssl.sh)
+      - name: TLS configuration seen from outside (sslyze, testssl.sh)
         if: matrix.name == 'GCC Release'
         run: |
           python3 -m venv /tmp/sslyze
@@ -64,58 +64,58 @@ jobs:
           git clone -q --depth 1 --branch v3.2.1 https://github.com/testssl/testssl.sh.git /tmp/testssl
           TESTSSL=/tmp/testssl/testssl.sh PATH="/tmp/sslyze/bin:$PATH" bash tests/lifecycle/tls-scan.sh build/src/app/tlsrelay
 
-      - name: Vulnérabilités des dépendances
+      - name: Dependency vulnerabilities
         if: matrix.name == 'GCC Release'
         run: bash tools/check-deps.sh
 
-      - name: Durcissement des exécutables
+      - name: Executable hardening
         if: matrix.name == 'GCC Release'
         run: bash tools/check-hardening.sh build/src/app/tlsrelay build/src/testkit/tlsrelay-testkit
 
-      - name: Recette automatisée (mode console)
+      - name: Automated acceptance (console mode)
         if: matrix.name == 'GCC Release'
         shell: pwsh
-        run: ./tools/recette.ps1 -BuildDir build/src/app -TestkitDir build/src/testkit -Quick -WorkDir recette
+        run: ./tools/acceptance.ps1 -BuildDir build/src/app -TestkitDir build/src/testkit -Quick -WorkDir acceptance
 
-      - name: Rapport de recette (Linux)
+      - name: Acceptance report (Linux)
         if: always() && matrix.name == 'GCC Release'
         uses: actions/upload-artifact@v4
         with:
-          name: recette-linux
+          name: acceptance-linux
           path: |
-            recette/rapport.md
-            recette/logs/
+            acceptance/report.md
+            acceptance/logs/
           if-no-files-found: ignore
 
   perf:
-    name: Performances (1 000 canaux) et endurance (4 min)
+    name: Performance (1,000 channels) and soak (4 min)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dépendances
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
             libyaml-cpp-dev libspdlog-dev libcli11-dev
 
-      - name: Compilation
+      - name: Build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_BUILD_TESTS=OFF
           cmake --build build
 
-      - name: Objectifs de performance
+      - name: Performance targets
         run: bash tests/perf/perf.sh build 1000 perf.json
 
-      - name: Endurance (rotations, renégociations, coupures)
+      - name: Soak (rotations, renegotiations, cuts)
         run: bash tests/perf/soak.sh build 4 soak.csv
 
-      - name: Rapports
+      - name: Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: performances
+          name: performance
           path: |
             perf.json
             soak.csv
@@ -130,7 +130,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dépendances
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libasio-dev libyaml-cpp-dev \
@@ -143,7 +143,7 @@ jobs:
           path: ~/openssl
           key: openssl-${{ env.OPENSSL_VERSION }}-ssldirs-ubuntu-24.04
 
-      - name: OpenSSL ${{ env.OPENSSL_VERSION }} (archive officielle vérifiée)
+      - name: OpenSSL ${{ env.OPENSSL_VERSION }} (verified official archive)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           curl -fsSLO "https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz"
@@ -152,9 +152,9 @@ jobs:
           cd "openssl-$OPENSSL_VERSION"
           ./Configure --prefix="$HOME/openssl" --libdir=lib shared no-tests
           make -j"$(nproc)" >/dev/null
-          make install_sw install_ssldirs >/dev/null  # install_ssldirs : openssl.cnf (commande openssl req)
+          make install_sw install_ssldirs >/dev/null  # install_ssldirs: openssl.cnf (openssl req command)
 
-      - name: Configuration et compilation
+      - name: Configure and build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_WARNINGS_AS_ERRORS=ON \
             -DOPENSSL_ROOT_DIR="$HOME/openssl"
@@ -164,7 +164,7 @@ jobs:
         working-directory: build
         env:
           LD_LIBRARY_PATH: /home/runner/openssl/lib
-        # Les scénarios utilisent aussi la commande openssl : celle de la même version.
+        # The scenarios also use the openssl command: the one from the same version.
         run: |
           export PATH="$HOME/openssl/bin:$PATH"
           ./src/app/tlsrelay version | tee version.txt
@@ -172,19 +172,19 @@ jobs:
           ctest --output-on-failure -j 2
 
   analysis:
-    name: Analyse statique (clang-tidy, cppcheck)
+    name: Static analysis (clang-tidy, cppcheck)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dépendances
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
             libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev clang-tidy-18 cppcheck qt6-base-dev
 
-      - name: Base de compilation
+      - name: Compilation database
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTLSRELAY_BUILD_ADMIN=ON
 
       - name: clang-tidy
@@ -194,48 +194,48 @@ jobs:
         run: tools/run-cppcheck.sh build
 
   coverage:
-    name: Couverture de code (gcovr)
+    name: Code coverage (gcovr)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dépendances
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
             libyaml-cpp-dev libspdlog-dev libcli11-dev libgtest-dev qt6-base-dev
           pipx install gcovr==8.6
 
-      # Objectif du projet : au moins 90 % des lignes du code livré (TESTS.md §6).
-      # Tous les tests ctest, puis le cycle de vie systemd en root (service réel), puis le rapport.
-      - name: Tests instrumentés et rapport
+      # Project target: at least 90 % of the lines of the shipped code (TESTS.md §6).
+      # All ctest tests, then the systemd lifecycle as root (real service), then the report.
+      - name: Instrumented tests and report
         env:
           COVERAGE_EXTRA: sudo bash tests/lifecycle/systemd.sh build/coverage/src/app/tlsrelay
         run: tools/coverage.sh build/coverage 90
 
-      - name: Rapport de couverture
+      - name: Coverage report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: couverture
+          name: coverage
           path: build/coverage/coverage/
           if-no-files-found: ignore
 
   fuzz:
-    name: Fuzzing (60 s par cible)
+    name: Fuzzing (60 s per target)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dépendances
+      - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libasio-dev \
             libyaml-cpp-dev libspdlog-dev libcli11-dev libclang-rt-18-dev
 
-      - name: Compilation
+      - name: Build
         run: |
           cmake --preset linux-fuzz -DTLSRELAY_WARNINGS_AS_ERRORS=ON
           cmake --build --preset linux-fuzz
@@ -243,7 +243,7 @@ jobs:
       - name: Fuzzing
         run: tools/run-fuzz.sh build/linux-fuzz 60
 
-      - name: Entrées qui ont fait échouer une cible
+      - name: Inputs that made a target fail
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -266,16 +266,16 @@ jobs:
           key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json', 'vcpkg-overlays/**') }}
           restore-keys: vcpkg-x64-windows-
 
-      - name: Préparation
+      - name: Setup
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Configuration (/analyze, alertes en erreurs)
+      - name: Configure (/analyze, warnings as errors)
         run: cmake --preset windows-msvc -DTLSRELAY_BUILD_TESTS=OFF -DTLSRELAY_MSVC_ANALYZE=ON -DTLSRELAY_WARNINGS_AS_ERRORS=ON
 
-      - name: Analyse (relais et testkit)
+      - name: Analysis (relay and testkit)
         run: cmake --build --preset windows-release
 
   windows:
@@ -294,49 +294,49 @@ jobs:
           key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json', 'vcpkg-overlays/**') }}
           restore-keys: vcpkg-x64-windows-
 
-      - name: Préparation
+      - name: Setup
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Qt 6.8 LTS (éditeur tlsrelay-admin)
+      - name: Qt 6.8 LTS (tlsrelay-admin editor)
         uses: jurplel/install-qt-action@v4
         with:
           version: "6.8.3"
           arch: win64_msvc2022_64
           cache: true
 
-      - name: Configuration
+      - name: Configure
         shell: pwsh
         run: cmake --preset windows-msvc -DTLSRELAY_WARNINGS_AS_ERRORS=ON -DTLSRELAY_BUILD_ADMIN=ON "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"
 
-      - name: Compilation
+      - name: Build
         run: cmake --build --preset windows-release
 
       - name: Tests
         run: ctest --preset windows-release -j 2
 
-      - name: Durcissement des exécutables
+      - name: Executable hardening
         shell: pwsh
         run: .\tools\check-hardening.ps1 build\windows-msvc\src\app\Release\tlsrelay.exe build\windows-msvc\src\testkit\Release\tlsrelay-testkit.exe
 
-      - name: Version d'OpenSSL embarquée (3.5 LTS attendue)
+      - name: Bundled OpenSSL version (3.5 LTS expected)
         shell: pwsh
         run: |
           $out = .\build\windows-msvc\src\app\Release\tlsrelay.exe version
           $out
-          if (-not ($out -match 'OpenSSL 3\.5\.')) { throw "OpenSSL 3.5.x attendu" }
+          if (-not ($out -match 'OpenSSL 3\.5\.')) { throw "OpenSSL 3.5.x expected" }
 
-      - name: Cycle de vie du service Windows (service réel)
+      - name: Windows service lifecycle (real service)
         shell: pwsh
         run: .\tests\lifecycle\windows-service.ps1 -BuildDir build\windows-msvc\src\app\Release
 
-      - name: PKI en ligne de commande (mini-AC)
+      - name: Command-line PKI (mini-CA)
         shell: pwsh
         run: .\tests\lifecycle\windows-pki.ps1 -BuildDir build\windows-msvc\src\app\Release
 
-      - name: Paquet MSI
+      - name: MSI package
         shell: pwsh
         run: |
           Set-Location build\windows-msvc
@@ -344,72 +344,72 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cpack" }
           Get-ChildItem *.msi | ForEach-Object { $_.Name; (Get-FileHash -Algorithm SHA256 $_).Hash }
 
-      - name: Installation du MSI
+      - name: MSI installation
         shell: pwsh
         run: |
           $msi = (Get-ChildItem build\windows-msvc\*.msi).FullName
           $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn ADDLOCAL=ALL /l*v `"$env:RUNNER_TEMP\msi-install.log`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\msi-install.log" -Tail 40; throw "installation du MSI : $($p.ExitCode)" }
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\msi-install.log" -Tail 40; throw "MSI installation: $($p.ExitCode)" }
           Get-ChildItem "$env:ProgramFiles\tlsrelay" -Recurse | Select-Object -ExpandProperty FullName
           & "$env:ProgramFiles\tlsrelay\bin\tlsrelay.exe" version
 
-      - name: Éditeur installé (DLL Qt déployées, contrôle sans fenêtre)
+      - name: Installed editor (Qt DLLs deployed, check without a window)
         shell: pwsh
         run: |
-          # Sans le Qt du runner : l'éditeur ne doit dépendre que des fichiers installés.
+          # Without the runner's Qt: the editor must depend only on the installed files.
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and $_ -notmatch '[\\/]Qt[\\/]' }) -join ';'
           foreach ($v in 'QT_PLUGIN_PATH', 'QT_ROOT_DIR', 'QML2_IMPORT_PATH') { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
           $root = "$env:ProgramFiles\tlsrelay"
           $admin = "$root\bin\tlsrelay-admin.exe"
           foreach ($f in "$root\bin\Qt6Core.dll", "$root\bin\Qt6Widgets.dll", "$root\doc\LICENSES\LGPL-3.0.txt",
-                         "$root\doc\LICENSES\GPL-3.0.txt", "$root\doc\EDITEUR.md") {
-            if (-not (Test-Path $f)) { throw "$f absent" }
+                         "$root\doc\LICENSES\GPL-3.0.txt", "$root\doc\EDITOR.md") {
+            if (-not (Test-Path $f)) { throw "$f missing" }
           }
-          if (-not (Get-ChildItem $root -Recurse -Filter qwindows.dll)) { throw "module de plateforme qwindows.dll absent" }
-          # Installation pour toute la machine : raccourci dans le menu Démarrer commun.
+          if (-not (Get-ChildItem $root -Recurse -Filter qwindows.dll)) { throw "platform plugin qwindows.dll missing" }
+          # Per-machine installation: shortcut in the common Start menu.
           $shortcut = Get-ChildItem "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" `
             -Recurse -Filter 'tlsrelay-admin.lnk' -ErrorAction SilentlyContinue
-          if (-not $shortcut) { throw "raccourci tlsrelay-admin absent du menu Démarrer commun" }
+          if (-not $shortcut) { throw "tlsrelay-admin shortcut missing from the common Start menu" }
           $shortcut.FullName
           $report = "$env:RUNNER_TEMP\admin-check.txt"
           $p = Start-Process $admin -ArgumentList '--check', "`"$PWD\examples\client.yaml`"", '--report', "`"$report`"" -Wait -PassThru
           if (Test-Path $report) { Get-Content $report }
-          if ($p.ExitCode -ne 0) { throw "tlsrelay-admin --check : code $($p.ExitCode)" }
-          $p = Start-Process $admin -ArgumentList '--check', "`"$PWD\tests\admin\invalide.yaml`"", '--report', "`"$report`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "tlsrelay-admin --check: code $($p.ExitCode)" }
+          $p = Start-Process $admin -ArgumentList '--check', "`"$PWD\tests\admin\invalid.yaml`"", '--report', "`"$report`"" -Wait -PassThru
           Get-Content $report
-          if ($p.ExitCode -ne 1) { throw "fichier invalide : code $($p.ExitCode), 1 attendu" }
+          if ($p.ExitCode -ne 1) { throw "invalid file: code $($p.ExitCode), 1 expected" }
 
-      - name: Recette automatisée sur les binaires installés (services Windows)
+      - name: Automated acceptance on the installed binaries (Windows services)
         shell: pwsh
-        run: .\tools\recette.ps1 -BuildDir "$env:ProgramFiles\tlsrelay\bin" -Services -Quick -WorkDir "$env:ProgramData\tlsrelay\recette-ci"
+        run: .\tools\acceptance.ps1 -BuildDir "$env:ProgramFiles\tlsrelay\bin" -Services -Quick -WorkDir "$env:ProgramData\tlsrelay\acceptance-ci"
 
-      - name: Désinstallation du MSI
+      - name: MSI uninstallation
         shell: pwsh
         run: |
           $msi = (Get-ChildItem build\windows-msvc\*.msi).FullName
           $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "désinstallation du MSI : $($p.ExitCode)" }
-          if (Test-Path "$env:ProgramFiles\tlsrelay\bin\tlsrelay.exe") { throw "tlsrelay.exe encore présent" }
-          if (Test-Path "$env:ProgramFiles\tlsrelay\bin\tlsrelay-admin.exe") { throw "tlsrelay-admin.exe encore présent" }
+          if ($p.ExitCode -ne 0) { throw "MSI uninstallation: $($p.ExitCode)" }
+          if (Test-Path "$env:ProgramFiles\tlsrelay\bin\tlsrelay.exe") { throw "tlsrelay.exe still present" }
+          if (Test-Path "$env:ProgramFiles\tlsrelay\bin\tlsrelay-admin.exe") { throw "tlsrelay-admin.exe still present" }
 
-      - name: Paquet MSI (artefact)
+      - name: MSI package (artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: paquet-msi
+          name: package-msi
           path: build/windows-msvc/*.msi
 
-      - name: Rapport de recette (Windows)
+      - name: Acceptance report (Windows)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recette-windows
+          name: acceptance-windows
           path: |
-            C:\ProgramData\tlsrelay\recette-ci\rapport.md
-            C:\ProgramData\tlsrelay\recette-ci\logs\
+            C:\ProgramData\tlsrelay\acceptance-ci\report.md
+            C:\ProgramData\tlsrelay\acceptance-ci\logs\
           if-no-files-found: ignore
 
   linux-packages:
-    name: Paquets ${{ matrix.kind }} (${{ matrix.image }})
+    name: Packages ${{ matrix.kind }} (${{ matrix.image }})
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -421,22 +421,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Construction et tests sur la distribution
-        run: docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }} packaging/build-linux.sh paquets
+      - name: Build and tests on the distribution
+        run: docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }} packaging/build-linux.sh packages
 
-      - name: Paquets
+      - name: Packages
         run: |
-          sudo chown -R "$(id -u):$(id -g)" paquets
-          ls -l paquets
-          sha256sum paquets/*
+          sudo chown -R "$(id -u):$(id -g)" packages
+          ls -l packages
+          sha256sum packages/*
 
       - uses: actions/upload-artifact@v4
         with:
-          name: paquets-${{ matrix.kind }}
-          path: paquets/
+          name: packages-${{ matrix.kind }}
+          path: packages/
 
   linux-packages-install:
-    name: Installation ${{ matrix.kind }} (${{ matrix.image }})
+    name: Install ${{ matrix.kind }} (${{ matrix.image }})
     needs: linux-packages
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -454,29 +454,29 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: paquets-${{ matrix.kind }}
-          path: paquets
+          name: packages-${{ matrix.kind }}
+          path: packages
 
-      - name: Installation, échange mTLS, désinstallation
-        run: docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }} packaging/test-linux-package.sh paquets
+      - name: Install, mTLS exchange, uninstall
+        run: docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }} packaging/test-linux-package.sh packages
 
   release-files:
-    name: Paquets de la livraison
+    name: Release packages
     needs: [linux-packages-install, windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: livraison
-          pattern: paquet*
+          path: release
+          pattern: package*
           merge-multiple: true
 
-      - name: Empreintes
-        working-directory: livraison
+      - name: Hashes
+        working-directory: release
         run: |
           sha256sum * | tee SHA256SUMS
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tlsrelay-livraison
-          path: livraison/
+          name: tlsrelay-release
+          path: release/

@@ -14,7 +14,7 @@
 namespace tlsrelay::app {
 namespace {
 
-// Lit une ligne au clavier sans l'afficher.
+// Reads a line from the keyboard without echoing it.
 std::optional<std::string> prompt(const char* text) {
     std::cerr << text << std::flush;
     std::string line;
@@ -65,19 +65,19 @@ std::optional<std::string> read_passphrase(const std::string& file, bool confirm
         std::ifstream in(file, std::ios::binary);
         std::string line;
         if (!in || !std::getline(in, line)) {
-            std::cerr << "erreur : phrase de passe illisible dans " << file << '\n';
+            std::cerr << "error: unreadable passphrase in " << file << '\n';
             return std::nullopt;
         }
         if (!line.empty() && line.back() == '\r') line.pop_back();
         return line;
     }
     if (auto env = environment("TLSRELAY_CA_PASSPHRASE")) return env;
-    auto first = prompt("Phrase de passe de l'AC : ");
+    auto first = prompt("CA passphrase: ");
     if (!first) return std::nullopt;
     if (confirm) {
-        const auto second = prompt("Confirmation : ");
+        const auto second = prompt("Confirm: ");
         if (!second || *second != *first) {
-            std::cerr << "erreur : les deux saisies diffèrent\n";
+            std::cerr << "error: the two entries differ\n";
             return std::nullopt;
         }
     }

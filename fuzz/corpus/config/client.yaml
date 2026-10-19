@@ -1,13 +1,13 @@
-# Exemple de configuration en mode client (SPEC §8.1).
-# L'application se connecte en clair sur 127.0.0.1:7001 ; tlsrelay relaie vers
-# le tlsrelay serveur.
+# Example configuration in client mode (SPEC §8.1).
+# The application connects in plain text to 127.0.0.1:7001; tlsrelay relays to
+# the server tlsrelay.
 mode: client
-instance: exemple-client
+instance: example-client
 
 logging:
   level: info          # error | info | debug | trace
   format: text         # text | json
-  output: stderr       # stderr | chemin de fichier
+  output: stderr       # stderr | file path
 
 limits:
   idle_timeout: 5m
@@ -18,13 +18,13 @@ ports:
   plain:
     listen: "127.0.0.1:7001"
     upstream: "127.0.0.1:9001"
-  # TLS 1.3 : nécessite credentials.pki_root (voir tools/make-test-pki.sh)
+  # TLS 1.3: requires credentials.pki_root (see tools/make-test-pki.sh)
   # tls:  { listen: "127.0.0.1:7002", upstream: "relay.example:9002", server_name: relay.example }
-  # mTLS : nécessite credentials.pki_root avec l'identité du client
+  # mTLS: requires credentials.pki_root with the client's identity
   # mtls: { listen: "127.0.0.1:7003", upstream: "relay.example:9003", server_name: relay.example }
 
-# Canal d'administration (tlsrelay status/stop/reload..., SPEC §10.1).
-# Par défaut : /run/tlsrelay/<instance>.sock ou \\.\pipe\tlsrelay-<instance>.
+# Administration channel (tlsrelay status/stop/reload..., SPEC §10.1).
+# Default: /run/tlsrelay/<instance>.sock or \\.\pipe\tlsrelay-<instance>.
 # admin:
-#   endpoint: /tmp/tlsrelay-exemple.sock
+#   endpoint: /tmp/tlsrelay-example.sock
 #   enabled: true

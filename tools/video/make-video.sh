@@ -8,7 +8,7 @@
 #   4. encodes the MP4 (ffmpeg, H.264).
 # Requirements: a build with the editor (TLSRELAY_BUILD_ADMIN=ON), node with the
 # playwright package and its Chromium, ffmpeg, npm access for xterm.js, util-linux script.
-# Usage : tools/video/make-video.sh <build directory> [output.mp4]
+# Usage: tools/video/make-video.sh <build directory> [output.mp4]
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)

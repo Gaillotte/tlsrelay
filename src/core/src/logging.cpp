@@ -19,8 +19,8 @@ struct State {
     std::mutex mutex;
     std::shared_ptr<spdlog::logger> activity;
     std::shared_ptr<spdlog::logger> config;
-    // Les journaux écrivent dans dist, dont la sortie réelle peut être remplacée
-    // à chaud (réouverture du fichier) sans toucher aux loggers.
+    // The loggers write to dist, whose actual output can be swapped
+    // on the fly (file reopen) without touching the loggers.
     std::shared_ptr<spdlog::sinks::dist_sink_mt> dist;
     LogConfig cfg;
 };
@@ -82,7 +82,7 @@ spdlog::sink_ptr make_output(const LogConfig& cfg) {
         try {
             sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(cfg.output, false);
         } catch (const spdlog::spdlog_ex& e) {
-            throw std::runtime_error("impossible d'ouvrir le fichier de log « " + cfg.output + " » : " + e.what());
+            throw std::runtime_error("cannot open log file \"" + cfg.output + "\": " + e.what());
         }
     }
     if (cfg.format == LogFormat::json) sink->set_formatter(make_json_formatter());
@@ -141,7 +141,7 @@ bool reopen() {
     auto& s = state();
     std::lock_guard lock(s.mutex);
     if (!s.dist || s.cfg.output == "stderr") return false;
-    // Le fichier courant est fermé par set_sinks après l'ouverture du nouveau.
+    // The current file is closed by set_sinks after the new one is opened.
     s.dist->set_sinks({make_output(s.cfg)});
     return true;
 }
@@ -164,7 +164,7 @@ std::string apply_level_spec(std::string_view spec) {
     const auto eq = spec.find('=');
     const auto level_text = eq == std::string_view::npos ? spec : spec.substr(eq + 1);
     const auto parsed = parse_log_level(level_text);
-    if (!parsed) return "niveau inconnu « " + std::string(level_text) + " » (error, info, debug ou trace)";
+    if (!parsed) return "unknown level \"" + std::string(level_text) + "\" (error, info, debug or trace)";
     if (eq == std::string_view::npos) {
         set_level(Category::activity, *parsed);
         set_level(Category::config, *parsed);
@@ -173,7 +173,7 @@ std::string apply_level_spec(std::string_view spec) {
     const auto cat = spec.substr(0, eq);
     if (cat == "activity") set_level(Category::activity, *parsed);
     else if (cat == "config") set_level(Category::config, *parsed);
-    else return "catégorie inconnue « " + std::string(cat) + " » (activity ou config)";
+    else return "unknown category \"" + std::string(cat) + "\" (activity or config)";
     return {};
 }
 

@@ -1,8 +1,8 @@
 #pragma once
 
-// Fenêtre principale de tlsrelay-admin : une configuration d'instance et, en
-// mode serveur, sa liste blanche ; validation permanente, enregistrement
-// après aperçu des différences, export du paquet de déploiement.
+// Main window of tlsrelay-admin: an instance configuration and, in
+// server mode, its whitelist; continuous validation, saving
+// after a diff preview, export of the deployment package.
 
 #include "config_form.hpp"
 #include "deployment.hpp"
@@ -33,9 +33,9 @@ public:
     bool open_file(const std::filesystem::path& path);
     bool save();
     bool save_to(const std::filesystem::path& path);
-    // Exporte le paquet (le dialogue complète la requête) ; std::nullopt en cas d'échec.
+    // Exports the package (the dialog completes the request); std::nullopt on failure.
     std::optional<std::filesystem::path> export_package(const ExportRequest& request);
-    // Requête d'export préremplie avec la configuration courante (valide).
+    // Export request prefilled with the current (valid) configuration.
     std::optional<ExportRequest> export_request();
 
     int error_count() const { return errors_; }
@@ -48,8 +48,8 @@ public:
     QListWidget* issues() const { return issues_; }
     PkiPanel* pki_panel() const { return pki_; }
 
-    // Points d'interaction remplaçables (tests) : confirmation de
-    // l'enregistrement (aperçu des différences) et message d'erreur.
+    // Replaceable interaction points (tests): save confirmation
+    // (diff preview) and error message.
     std::function<bool(const std::vector<FileChange>&)> confirm_save;
     std::function<void(const QString&)> report;
 
@@ -73,7 +73,7 @@ private:
     QListWidget* issues_;
     QLabel* status_;
     std::filesystem::path config_path_;
-    std::vector<QString> load_notes_;  // éléments ignorés à l'ouverture
+    std::vector<QString> load_notes_;  // items ignored when opening
     int errors_ = 0;
     bool modified_ = false;
     bool loading_ = false;

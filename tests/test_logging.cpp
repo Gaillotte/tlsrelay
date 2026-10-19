@@ -15,7 +15,7 @@ TEST(JsonEscape, EscapesSpecialCharacters) {
     EXPECT_EQ(logging::json_escape("a\"b\\c"), "a\\\"b\\\\c");
     EXPECT_EQ(logging::json_escape("l1\nl2\r\t"), "l1\\nl2\\r\\t");
     EXPECT_EQ(logging::json_escape(std::string("\x01", 1)), "\\u0001");
-    EXPECT_EQ(logging::json_escape("é"), "é");  // UTF-8 conservé tel quel
+    EXPECT_EQ(logging::json_escape("é"), "é");  // UTF-8 kept as is
 }
 
 TEST(JsonFormatter, WritesOneObjectPerLine) {
@@ -23,15 +23,15 @@ TEST(JsonFormatter, WritesOneObjectPerLine) {
     auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(out);
     sink->set_formatter(logging::make_json_formatter());
     spdlog::logger logger("activity", sink);
-    logger.info("canal={} \"ouvert\"", 7);
+    logger.info("channel={} \"opened\"", 7);
 
     const auto line = out.str();
     EXPECT_EQ(line.back(), '\n');
     EXPECT_EQ(line.find('\n'), line.size() - 1);
     EXPECT_NE(line.find("\"level\":\"info\""), std::string::npos) << line;
     EXPECT_NE(line.find("\"cat\":\"activity\""), std::string::npos) << line;
-    EXPECT_NE(line.find("\"msg\":\"canal=7 \\\"ouvert\\\"\""), std::string::npos) << line;
-    EXPECT_NE(line.find("Z\""), std::string::npos) << line;  // horodatage UTC
+    EXPECT_NE(line.find("\"msg\":\"channel=7 \\\"opened\\\"\""), std::string::npos) << line;
+    EXPECT_NE(line.find("Z\""), std::string::npos) << line;  // UTC timestamp
 }
 
 TEST(Logging, CliLevelOverridesCategories) {
@@ -52,7 +52,7 @@ TEST(Logging, CliLevelOverridesCategories) {
 }
 
 TEST(Logging, UnwritableFileIsReported) {
-    // Le « répertoire » parent est un fichier : l'ouverture échoue sur tout OS.
+    // The parent "directory" is a file: opening fails on any OS.
     const auto blocker = std::filesystem::temp_directory_path() / "tlsrelay-test-blocker";
     { std::ofstream(blocker) << "x"; }
     LogConfig cfg;
@@ -68,13 +68,13 @@ TEST(Logging, WritesToFile) {
     LogConfig cfg;
     cfg.output = path.string();
     logging::init(cfg);
-    logging::config().info("message de test");
-    logging::init_default();  // libère le fichier
+    logging::config().info("test message");
+    logging::init_default();  // releases the file
 
     std::ifstream in(path);
     std::stringstream content;
     content << in.rdbuf();
-    EXPECT_NE(content.str().find("[config] message de test"), std::string::npos) << content.str();
+    EXPECT_NE(content.str().find("[config] test message"), std::string::npos) << content.str();
     in.close();
     std::filesystem::remove(path);
 }

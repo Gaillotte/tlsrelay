@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Refus et cas limites de la ligne de commande (TESTS.md §6.4, CT-08 et CT-09),
-# avec le binaire réel : chaque commande affiche son message et sort avec son
-# code (0 succès, 1 erreur d'exécution, 2 configuration refusée).
-# Couvre aussi la saisie de la phrase de passe de l'AC (tube et terminal).
-# N'installe aucun service : seuls les refus qui précèdent l'installation sont testés.
-# Usage : cli.sh <chemin de tlsrelay>
+# Command-line refusals and edge cases (TESTS.md §6.4, CT-08 and CT-09),
+# with the real binary: each command prints its message and exits with its
+# code (0 success, 1 runtime error, 2 configuration rejected).
+# Also covers entering the CA passphrase (pipe and terminal).
+# Installs no service: only the refusals that precede installation are tested.
+# Usage: cli.sh <path to tlsrelay>
 set -euo pipefail
 
 bin=$(realpath "$1")
@@ -13,23 +13,23 @@ trap 'rm -rf "$work"' EXIT
 cd "$work"
 unset TLSRELAY_CA_PASSPHRASE
 
-fail() { echo "ÉCHEC : $*" >&2; exit 1; }
-# expect <code> <motif> <commande...> : code de sortie et motif (sortie standard et d'erreur réunies).
+fail() { echo "FAILED: $*" >&2; exit 1; }
+# expect <code> <pattern> <command...>: exit code and pattern (standard output and error combined).
 expect() {
   local code=$1 pattern=$2 out rc=0
   shift 2
   out=$("$@" 2>&1) || rc=$?
-  [ "$rc" = "$code" ] || fail "$* : code $rc, $code attendu"$'\n'"$out"
-  grep -q -- "$pattern" <<<"$out" || fail "$* : « $pattern » absent"$'\n'"$out"
+  [ "$rc" = "$code" ] || fail "$*: code $rc, expected $code"$'\n'"$out"
+  grep -q -- "$pattern" <<<"$out" || fail "$*: \"$pattern\" missing"$'\n'"$out"
 }
 
-echo "phrase de passe d'essai" > pass.txt
-echo "autre phrase de passe" > pass2.txt
+echo "test passphrase" > pass.txt
+echo "another passphrase" > pass2.txt
 
 cat > server.yaml <<YAML
 mode: server
 instance: srv
-credentials: { pki_root: $work/pki-serveur }
+credentials: { pki_root: $work/pki-server }
 whitelist: { file: $work/wl.yaml }
 destination: { address: 127.0.0.1, port: 9 }
 admin: { endpoint: $work/srv.sock }
@@ -38,10 +38,10 @@ ports:
 YAML
 cat > plain.yaml <<YAML
 mode: server
-instance: clair
+instance: plaintext
 whitelist: { file: $work/wl.yaml }
 destination: { address: 127.0.0.1, port: 9 }
-admin: { endpoint: $work/clair.sock }
+admin: { endpoint: $work/plaintext.sock }
 ports:
   plain: { listen: "127.0.0.1:1" }
 YAML
@@ -57,100 +57,100 @@ YAML
 cat > tls-client.yaml <<YAML
 mode: client
 instance: tlsclient
-credentials: { pki_root: $work/pki-vide }
+credentials: { pki_root: $work/pki-empty }
 ports:
-  tls: { listen: "127.0.0.1:1", upstream: "127.0.0.1:2", server_name: relay.essai }
+  tls: { listen: "127.0.0.1:1", upstream: "127.0.0.1:2", server_name: relay.test }
 YAML
-printf 'mode: server\nports: { plain: { listen: "0.0.0.0:99999" } }\n' > invalide.yaml
-printf 'peers:\n  - { name: agence, ip: 127.0.0.1, ports: [mtls], subject: "CN=agence.essai,O=Essai" }\n' > wl.yaml
+printf 'mode: server\nports: { plain: { listen: "0.0.0.0:99999" } }\n' > invalid.yaml
+printf 'peers:\n  - { name: branch, ip: 127.0.0.1, ports: [mtls], subject: "CN=branch.test,O=Test" }\n' > wl.yaml
 
-echo "== version et check-config"
+echo "== version and check-config"
 expect 0 "OpenSSL" "$bin" version
-expect 0 "configuration valide" "$bin" check-config -c server.yaml
-expect 2 "erreur(s) dans" "$bin" check-config -c invalide.yaml
+expect 0 "valid configuration" "$bin" check-config -c server.yaml
+expect 2 "error(s) in" "$bin" check-config -c invalid.yaml
 
-echo "== AC et PKI du serveur"
-"$bin" ca init --dir ac --org Essai --passphrase-file pass.txt >/dev/null
-"$bin" ca init --dir ac2 --org Autre --passphrase-file pass2.txt >/dev/null
-"$bin" pki gen-csr -c server.yaml --subject "CN=relay.essai,O=Essai" --san relay.essai >/dev/null
-"$bin" ca sign --dir ac --role server --csr pki-serveur/v1/request.csr --san relay.essai --out kit1 \
+echo "== CA and server PKI"
+"$bin" ca init --dir ca --org Test --passphrase-file pass.txt >/dev/null
+"$bin" ca init --dir ca2 --org Other --passphrase-file pass2.txt >/dev/null
+"$bin" pki gen-csr -c server.yaml --subject "CN=relay.test,O=Test" --san relay.test >/dev/null
+"$bin" ca sign --dir ca --role server --csr pki-server/v1/request.csr --san relay.test --out kit1 \
   --passphrase-file pass.txt >/dev/null
 "$bin" pki install -c server.yaml --from kit1 >/dev/null
 "$bin" pki activate -c server.yaml v1 >/dev/null
-expect 0 "génération « v1 » valide" "$bin" check-pki -c server.yaml
+expect 0 "generation \"v1\" valid" "$bin" check-pki -c server.yaml
 
-echo "== refus des commandes PKI d'instance"
-expect 2 "aucun port tls ou mtls" "$bin" check-pki -c plain.yaml
-expect 2 "ne présente pas de certificat" "$bin" pki gen-csr -c tls-client.yaml --subject "CN=x"
-expect 2 "adresse IP invalide" "$bin" pki gen-csr -c server.yaml --subject "CN=relay.essai" --san IP:999.1.1.1
-expect 2 "génération « v9 » refusée" "$bin" check-pki -c server.yaml v9
-# Nouvelle identité émise par une autre racine : refusée par le garde-fou.
-"$bin" pki gen-csr -c server.yaml --subject "CN=relay.essai,O=Autre" --san relay.essai >/dev/null
-"$bin" ca sign --dir ac2 --role server --csr pki-serveur/v2/request.csr --san relay.essai --out kit2 \
+echo "== instance PKI command refusals"
+expect 2 "no tls or mtls port" "$bin" check-pki -c plain.yaml
+expect 2 "does not present a certificate" "$bin" pki gen-csr -c tls-client.yaml --subject "CN=x"
+expect 2 "invalid IP address" "$bin" pki gen-csr -c server.yaml --subject "CN=relay.test" --san IP:999.1.1.1
+expect 2 "generation \"v9\" rejected" "$bin" check-pki -c server.yaml v9
+# New identity issued by another root: rejected by the safeguard.
+"$bin" pki gen-csr -c server.yaml --subject "CN=relay.test,O=Other" --san relay.test >/dev/null
+"$bin" ca sign --dir ca2 --role server --csr pki-server/v2/request.csr --san relay.test --out kit2 \
   --passphrase-file pass2.txt >/dev/null
-expect 2 "installée mais refusée" "$bin" pki install -c server.yaml --from kit2
-expect 2 "non activée (--force" "$bin" pki activate -c server.yaml v2
-expect 0 "génération « v2 » activée" "$bin" pki activate -c server.yaml v2 --force
+expect 2 "installed but rejected" "$bin" pki install -c server.yaml --from kit2
+expect 2 "not activated (--force" "$bin" pki activate -c server.yaml v2
+expect 0 "generation \"v2\" activated" "$bin" pki activate -c server.yaml v2 --force
 "$bin" pki activate -c server.yaml v1 --force >/dev/null 2>&1
 
 echo "== CRL"
-expect 2 "CRL sans objet" "$bin" pki crl -c tls-server.yaml whatever.pem
-echo "pas une CRL" > faux.pem
-expect 2 "CRL refusée : faux.pem" "$bin" pki crl -c server.yaml faux.pem
-expect 2 "erreur" "$bin" pki crl -c tls-client.yaml faux.pem
-"$bin" ca crl --dir ac --out crl.pem --passphrase-file pass.txt >/dev/null
-expect 0 "CRL installée" "$bin" pki crl -c server.yaml crl.pem
-expect 0 "CRL valide" "$bin" check-pki -c server.yaml
-cp faux.pem pki-serveur/crl.pem
-expect 2 "CRL refusée" "$bin" check-pki -c server.yaml
-rm pki-serveur/crl.pem
+expect 2 "CRL not applicable" "$bin" pki crl -c tls-server.yaml whatever.pem
+echo "not a CRL" > bogus.pem
+expect 2 "CRL rejected: bogus.pem" "$bin" pki crl -c server.yaml bogus.pem
+expect 2 "error" "$bin" pki crl -c tls-client.yaml bogus.pem
+"$bin" ca crl --dir ca --out crl.pem --passphrase-file pass.txt >/dev/null
+expect 0 "CRL installed" "$bin" pki crl -c server.yaml crl.pem
+expect 0 "CRL valid" "$bin" check-pki -c server.yaml
+cp bogus.pem pki-server/crl.pem
+expect 2 "CRL rejected" "$bin" check-pki -c server.yaml
+rm pki-server/crl.pem
 
-echo "== mini-AC : refus"
-expect 2 "motif inconnu" "$bin" ca revoke --dir ac --serial 01 --reason oubli --passphrase-file pass.txt
-expect 1 "erreur" "$bin" ca revoke --dir ac --serial 0123456789 --passphrase-file pass.txt
-expect 1 "lecture impossible" "$bin" ca sign --dir ac --role client --csr absent.csr --out kit3 --passphrase-file pass.txt
-expect 2 "adresse IP invalide" "$bin" ca sign --dir ac --role server --csr pki-serveur/v1/request.csr \
+echo "== mini-CA: refusals"
+expect 2 "unknown reason" "$bin" ca revoke --dir ca --serial 01 --reason forgotten --passphrase-file pass.txt
+expect 1 "error" "$bin" ca revoke --dir ca --serial 0123456789 --passphrase-file pass.txt
+expect 1 "cannot read" "$bin" ca sign --dir ca --role client --csr absent.csr --out kit3 --passphrase-file pass.txt
+expect 2 "invalid IP address" "$bin" ca sign --dir ca --role server --csr pki-server/v1/request.csr \
   --san IP:999.1.1.1 --out kit3 --passphrase-file pass.txt
-expect 1 "erreur" "$bin" ca root-change --dir ac --new absente --out transition
-expect 0 "LISEZMOI.txt" "$bin" ca root-change --dir ac --new ac2 --out transition
-[ -f transition/LISEZMOI.txt ] && [ -d transition/serveur ] && [ -d transition/client ] || fail "fichiers de transition"
-expect 1 "erreur" "$bin" ca list --dir absente
-expect 1 "erreur" "$bin" ca audit --dir absente
+expect 1 "error" "$bin" ca root-change --dir ca --new missing --out transition
+expect 0 "README.txt" "$bin" ca root-change --dir ca --new ca2 --out transition
+[ -f transition/README.txt ] && [ -d transition/server ] && [ -d transition/client ] || fail "transition files"
+expect 1 "error" "$bin" ca list --dir missing
+expect 1 "error" "$bin" ca audit --dir missing
 
-echo "== phrase de passe de l'AC"
-expect 0 "AC créée" sh -c "printf 'phrase de test 12\nphrase de test 12\n' | '$bin' ca init --dir acp"
-expect 1 "les deux saisies diffèrent" sh -c "printf 'phrase de test 12\nautre phrase 1234\n' | '$bin' ca init --dir acq"
-[ ! -e acq/root.key.pem ] || fail "AC créée malgré deux saisies différentes"
-expect 1 "" sh -c "'$bin' ca init --dir acr </dev/null"
-expect 1 "phrase de passe illisible" "$bin" ca init --dir acs --passphrase-file absent.txt
+echo "== CA passphrase"
+expect 0 "CA created" sh -c "printf 'test phrase 1234\ntest phrase 1234\n' | '$bin' ca init --dir cap"
+expect 1 "the two entries differ" sh -c "printf 'test phrase 1234\nother phrase 123\n' | '$bin' ca init --dir caq"
+[ ! -e caq/root.key.pem ] || fail "CA created despite two different entries"
+expect 1 "" sh -c "'$bin' ca init --dir car </dev/null"
+expect 1 "unreadable passphrase" "$bin" ca init --dir cas --passphrase-file absent.txt
 if command -v script >/dev/null; then
-  # Terminal : saisie sans écho ; la phrase de passe n'apparaît pas dans la sortie. Chaque ligne
-  # est tapée après l'invite (une saisie anticipée est effacée quand l'écho est coupé).
-  out=$( (sleep 1; printf 'phrase secrete 12\n'; sleep 1; printf 'phrase secrete 12\n'; sleep 1) \
-          | script -qec "'$bin' ca init --dir act" /dev/null 2>&1) \
-    || fail "ca init en terminal"$'\n'"$out"
-  grep -q "AC créée" <<<"$out" || fail "ca init en terminal"$'\n'"$out"
-  ! grep -q "phrase secrete" <<<"$out" || fail "phrase de passe affichée en terminal"
+  # Terminal: entry without echo; the passphrase does not appear in the output. Each line
+  # is typed after the prompt (input typed ahead is discarded when echo is turned off).
+  out=$( (sleep 1; printf 'secret phrase 12\n'; sleep 1; printf 'secret phrase 12\n'; sleep 1) \
+          | script -qec "'$bin' ca init --dir cat" /dev/null 2>&1) \
+    || fail "ca init in a terminal"$'\n'"$out"
+  grep -q "CA created" <<<"$out" || fail "ca init in a terminal"$'\n'"$out"
+  ! grep -q "secret phrase" <<<"$out" || fail "passphrase shown in the terminal"
 fi
 
-echo "== commandes vers une instance"
-expect 2 "est celle de l'instance « srv »" "$bin" run -c server.yaml --instance autre
-expect 2 "délai invalide" "$bin" stop -c server.yaml --timeout abc
-expect 0 "déjà arrêtée" "$bin" stop -c server.yaml
-expect 0 "déjà arrêtée" "$bin" kill -c server.yaml
-expect 2 "erreur" "$bin" status -c invalide.yaml
-expect 1 "injoignable" "$bin" status --admin "$work/absent.sock"
+echo "== commands to an instance"
+expect 2 "belongs to instance \"srv\"" "$bin" run -c server.yaml --instance other
+expect 2 "invalid timeout" "$bin" stop -c server.yaml --timeout abc
+expect 0 "already stopped" "$bin" stop -c server.yaml
+expect 0 "already stopped" "$bin" kill -c server.yaml
+expect 2 "error" "$bin" status -c invalid.yaml
+expect 1 "unreachable" "$bin" status --admin "$work/absent.sock"
 
-echo "== gestionnaire de services : refus avant installation"
-expect 2 "nom d'instance invalide" "$bin" start --instance "nom invalide"
-expect 2 "délai invalide" "$bin" start --instance absente --timeout abc
-expect 1 "n'est pas installée" "$bin" start --instance absente-cli
-expect 1 "n'est pas installée" "$bin" restart --instance absente-cli
-expect 2 "nom d'instance invalide" "$bin" service install --instance "nom invalide"
-expect 2 "déclare l'instance « srv »" "$bin" service install --instance autre -c server.yaml
-expect 2 "retirer admin.endpoint" "$bin" service install --instance srv -c server.yaml
-expect 2 "erreur" "$bin" service install --instance srv -c invalide.yaml
-expect 2 "nom d'instance invalide" "$bin" service uninstall --instance "nom invalide"
-expect 1 "erreur" "$bin" service uninstall --instance absente-cli
+echo "== service manager: refusals before installation"
+expect 2 "invalid instance name" "$bin" start --instance "invalid name"
+expect 2 "invalid timeout" "$bin" start --instance missing --timeout abc
+expect 1 "is not installed" "$bin" start --instance missing-cli
+expect 1 "is not installed" "$bin" restart --instance missing-cli
+expect 2 "invalid instance name" "$bin" service install --instance "invalid name"
+expect 2 "declares instance \"srv\"" "$bin" service install --instance other -c server.yaml
+expect 2 "remove admin.endpoint" "$bin" service install --instance srv -c server.yaml
+expect 2 "error" "$bin" service install --instance srv -c invalid.yaml
+expect 2 "invalid instance name" "$bin" service uninstall --instance "invalid name"
+expect 1 "error" "$bin" service uninstall --instance missing-cli
 
 echo "cli.sh : OK"

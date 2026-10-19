@@ -1,7 +1,7 @@
 #pragma once
 
-// Outils réseau partagés par les tests d'intégration : destination d'écho,
-// client de test avec délais, service exécuté dans un thread, empreintes.
+// Network tools shared by the integration tests: echo destination,
+// test client with timeouts, service run in a thread, digests.
 
 #include "tlsrelay/relay/service.hpp"
 
@@ -38,8 +38,8 @@ using Clock = std::chrono::steady_clock;
 
 inline constexpr auto use_tuple = asio::as_tuple(asio::use_awaitable);
 
-// Liste blanche de test, valable pour tout le processus : 127.0.0.0/8 sur les
-// ports plain et tls.
+// Test whitelist, valid for the whole process: 127.0.0.0/8 on the
+// plain and tls ports.
 inline std::string permissive_whitelist() {
     static const testpki::TempDir dir;
     static const std::string path = [] {
@@ -55,8 +55,8 @@ inline const asio::ip::address& loopback() {
     return addr;
 }
 
-// Port réservé : lié mais sans écoute. Les connexions y sont refusées, et
-// aucun autre processus (tests lancés en parallèle) ne peut l'obtenir.
+// Reserved port: bound but not listening. Connections to it are refused, and
+// no other process (tests run in parallel) can obtain it.
 class ReservedPort {
 public:
     ReservedPort() : acceptor_(io_) {
@@ -64,7 +64,7 @@ public:
         acceptor_.bind(tcp::endpoint(loopback(), 0));
     }
     std::uint16_t port() const { return acceptor_.local_endpoint().port(); }
-    // Cède le port (déjà lié) à un serveur qui va l'écouter.
+    // Hands the port (already bound) over to a server that will listen on it.
     tcp::acceptor::native_handle_type release() { return acceptor_.release(); }
 
 private:
@@ -72,12 +72,12 @@ private:
     tcp::acceptor acceptor_;
 };
 
-// Destination d'écho : renvoie tout ce qu'elle reçoit et ferme son sens
-// d'émission quand le flux entrant se termine.
+// Echo destination: sends back everything it receives and closes its send
+// direction when the incoming stream ends.
 class EchoServer {
 public:
-    // socket_buffer : tampons noyau réduits (octets) des connexions acceptées,
-    // pour une destination qui se bloque vite (elle ne lit que si elle peut écrire).
+    // socket_buffer: reduced kernel buffers (bytes) of the accepted connections,
+    // for a destination that blocks quickly (it only reads if it can write).
     explicit EchoServer(int socket_buffer = 0) : acceptor_(io_) {
         acceptor_.open(tcp::v4());
         if (socket_buffer > 0) {
@@ -88,7 +88,7 @@ public:
         start();
     }
 
-    // Écoute sur un port réservé jusque-là (destination qui devient disponible).
+    // Listens on a port reserved until then (destination that becomes available).
     explicit EchoServer(ReservedPort& reserved) : acceptor_(io_) {
         acceptor_.assign(tcp::v4(), reserved.release());
         start();
@@ -141,7 +141,7 @@ private:
 };
 
 
-// Client de test bloquant, avec délais : simule l'application.
+// Blocking test client, with timeouts: simulates the application.
 class TestClient {
 public:
     explicit TestClient(std::uint16_t port) : socket_(io_) {
@@ -153,7 +153,7 @@ public:
 
     void shutdown_send() { socket_.shutdown(tcp::socket::shutdown_send); }
 
-    // Lit exactement n octets ; retourne moins si le flux se termine ou si le délai expire.
+    // Reads exactly n bytes; returns fewer if the stream ends or if the timeout expires.
     std::string read_exactly(std::size_t n, std::chrono::milliseconds timeout = 5s) {
         std::string out;
         const auto deadline = Clock::now() + timeout;
@@ -178,14 +178,14 @@ public:
         }
     }
 
-    // Vrai si la connexion est fermée par l'autre bout dans le délai.
+    // True if the connection is closed by the other end within the timeout.
     bool wait_closed(std::chrono::milliseconds timeout) {
         read_until_eof(timeout);
         return last_error_ && last_error_ != asio::error::timed_out;
     }
 
-    // Lit ce qui arrive avant l'échéance (au plus max octets) ; error vaut
-    // asio::error::timed_out si rien n'est arrivé.
+    // Reads what arrives before the deadline (at most max bytes); error is
+    // asio::error::timed_out if nothing arrived.
     std::pair<std::error_code, std::string> read_some(std::size_t max, Clock::time_point deadline) {
         std::string buffer(max, '\0');
         std::error_code result = asio::error::timed_out;
@@ -203,7 +203,7 @@ public:
             socket_.cancel();
             io_.restart();
             io_.run();
-            // La lecture a pu aboutir juste avant l'annulation : ses données sont gardées.
+            // The read may have completed just before the cancellation: its data is kept.
             if (result == asio::error::operation_aborted) {
                 result = asio::error::timed_out;
                 received = 0;
@@ -220,9 +220,9 @@ private:
     std::error_code last_error_;
 };
 
-// Service exécuté dans un thread, arrêté proprement à la destruction.
-// Configuration sans canal d'administration à l'emplacement par défaut :
-// partagé entre tests exécutés en parallèle, il servirait de verrou commun.
+// Service run in a thread, stopped gracefully on destruction.
+// Configuration without an administration channel at the default location:
+// shared between tests run in parallel, it would act as a common lock.
 inline Config without_default_admin(Config config) {
     if (!config.admin.endpoint) config.admin.enabled = false;
     return config;
@@ -230,8 +230,8 @@ inline Config without_default_admin(Config config) {
 
 class RunningService {
 public:
-    // Canal d'administration désactivé, sauf si le test donne admin.endpoint :
-    // l'emplacement par défaut serait partagé entre les tests.
+    // Administration channel disabled, unless the test gives admin.endpoint:
+    // the default location would be shared between the tests.
     explicit RunningService(Config config, relay::ServiceOptions options = {false, 2})
         : service_(std::make_unique<relay::Service>(without_default_admin(std::move(config)), options)),
           thread_([this] {
@@ -239,7 +239,7 @@ public:
               finished_ = true;
           }) {}
 
-    // Attend la fin de run() (arrêt déclenché autrement, par exemple par un signal).
+    // Waits for run() to finish (shutdown triggered otherwise, for example by a signal).
     bool wait_finished(std::chrono::milliseconds timeout) {
         if (!eventually_finished(timeout)) return false;
         thread_.join();
@@ -300,7 +300,7 @@ inline std::string sha256(const std::string& data) {
     return out;
 }
 
-// Envoie size octets par blocs et relit l'écho de chaque bloc ; retourne les octets reçus.
+// Sends size bytes in blocks and reads back the echo of each block; returns the bytes received.
 inline std::string exchange(TestClient& client, std::size_t size, std::uint64_t seed, std::string* sent = nullptr) {
     const auto data = make_random_data(size, seed);
     std::string received;

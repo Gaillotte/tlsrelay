@@ -1,6 +1,6 @@
-// Canal d'administration sous Windows : named pipe. La première instance du
-// pipe sert de verrou (FILE_FLAG_FIRST_PIPE_INSTANCE) ; une instance est
-// toujours en attente de connexion tant que le service tourne.
+// Administration channel on Windows: named pipe. The first instance of the
+// pipe serves as the lock (FILE_FLAG_FIRST_PIPE_INSTANCE); one instance is
+// always waiting for a connection while the service runs.
 
 #include "tlsrelay/admin/admin.hpp"
 #include "tlsrelay/logging.hpp"
@@ -36,7 +36,7 @@ std::wstring widen(const std::string& s) {
 
 std::string error_text(DWORD code) { return std::error_code(static_cast<int>(code), std::system_category()).message(); }
 
-// SID du compte qui exécute le processus, au format S-1-5-...
+// SID of the account that runs the process, in the format S-1-5-...
 std::wstring current_user_sid() {
     HANDLE token = nullptr;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return {};
@@ -55,7 +55,7 @@ std::wstring current_user_sid() {
     return result;
 }
 
-// Descripteur de sécurité : SYSTEM, Administrateurs et le compte de l'instance.
+// Security descriptor: SYSTEM, Administrators and the instance account.
 class PipeSecurity {
 public:
     PipeSecurity() {
@@ -63,7 +63,7 @@ public:
         if (const auto sid = current_user_sid(); !sid.empty()) sddl += L"(A;;GA;;;" + sid + L")";
         if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor_,
                                                                   nullptr)) {
-            throw std::runtime_error("canal d'administration : descripteur de sécurité invalide : " +
+            throw std::runtime_error("administration channel: invalid security descriptor: " +
                                      error_text(GetLastError()));
         }
         attributes_.nLength = sizeof attributes_;
@@ -108,14 +108,14 @@ struct Server::Impl : std::enable_shared_from_this<Server::Impl> {
         if (pending == INVALID_HANDLE_VALUE) {
             const DWORD err = GetLastError();
             if (err == ERROR_ACCESS_DENIED || err == ERROR_PIPE_BUSY) {
-                throw AlreadyRunning("une autre exécution de cette instance est en cours (" + endpoint + ")");
+                throw AlreadyRunning("another run of this instance is in progress (" + endpoint + ")");
             }
-            throw std::runtime_error("canal d'administration : impossible de créer " + endpoint + " : " +
+            throw std::runtime_error("administration channel: cannot create " + endpoint + ": " +
                                      error_text(err));
         }
     }
 
-    // Attend la connexion d'un client sur l'instance du pipe.
+    // Waits for a client to connect on the pipe instance.
     static asio::awaitable<std::error_code> connect(asio::windows::stream_handle& pipe) {
         auto token = asio::as_tuple(asio::use_awaitable);
         auto [ec] = co_await asio::async_initiate<decltype(token)&, void(std::error_code)>(
@@ -126,11 +126,11 @@ struct Server::Impl : std::enable_shared_from_this<Server::Impl> {
                 const BOOL ok = ConnectNamedPipe(pipe.native_handle(), op.get());
                 const DWORD err = GetLastError();
                 if (!ok && err == ERROR_PIPE_CONNECTED) {
-                    op.complete(std::error_code(), 0);  // client déjà connecté : pas de notification
+                    op.complete(std::error_code(), 0);  // client already connected: no notification
                 } else if (!ok && err != ERROR_IO_PENDING) {
                     op.complete(std::error_code(static_cast<int>(err), std::system_category()), 0);
                 } else {
-                    op.release();  // la fin de l'opération sera notifiée par le port de complétion
+                    op.release();  // the end of the operation will be notified by the completion port
                 }
             },
             token);
@@ -146,17 +146,17 @@ struct Server::Impl : std::enable_shared_from_this<Server::Impl> {
             const auto ec = co_await connect(pipe);
             current = nullptr;
             if (stopped) co_return;
-            // Instance suivante avant de traiter celle-ci : le nom reste toujours réservé.
+            // Next instance before handling this one: the name always stays reserved.
             pending = create_instance(false);
             if (pending == INVALID_HANDLE_VALUE) {
-                logging::config().error("canal d'administration : nouvelle instance de {} impossible : {}", endpoint,
+                logging::config().error("administration channel: new instance of {} failed: {}", endpoint,
                                         error_text(GetLastError()));
             }
             if (ec) continue;
             ULONG pid = 0;
             std::string caller = "?";
             if (GetNamedPipeClientProcessId(pipe.native_handle(), &pid)) caller = "pid=" + std::to_string(pid);
-            // Le handle reste associé au port de complétion : la session garde l'exécuteur de la boucle.
+            // The handle stays associated with the completion port: the session keeps the loop's executor.
             asio::co_spawn(strand, detail::serve_session(std::move(pipe), handler, std::move(caller)), asio::detached);
         }
     }
@@ -165,7 +165,7 @@ struct Server::Impl : std::enable_shared_from_this<Server::Impl> {
         stopped = true;
         if (current) {
             std::error_code ignored;
-            current->close(ignored);  // termine l'attente de connexion
+            current->close(ignored);  // ends the wait for a connection
         }
         if (pending != INVALID_HANDLE_VALUE) {
             CloseHandle(pending);
@@ -178,8 +178,8 @@ struct Server::Impl : std::enable_shared_from_this<Server::Impl> {
     Handler& handler;
     asio::strand<asio::io_context::executor_type> strand;
     PipeSecurity security;
-    HANDLE pending = INVALID_HANDLE_VALUE;            // instance pas encore attendue (accédé sur strand)
-    asio::windows::stream_handle* current = nullptr;  // instance en attente de connexion
+    HANDLE pending = INVALID_HANDLE_VALUE;            // instance not yet awaited (accessed on strand)
+    asio::windows::stream_handle* current = nullptr;  // instance waiting for a connection
     bool stopped = false;
 };
 
@@ -216,12 +216,12 @@ CallResult call(const std::string& endpoint, const std::string& request, Duratio
             continue;
         }
         result.unreachable = err == ERROR_FILE_NOT_FOUND || err == ERROR_PIPE_BUSY;
-        result.error = result.unreachable ? "instance injoignable (" + endpoint + ")" : endpoint + " : " + error_text(err);
+        result.error = result.unreachable ? "instance unreachable (" + endpoint + ")" : endpoint + ": " + error_text(err);
         return result;
     }
 
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    // E/S avec délai : opération asynchrone, attente bornée, annulation si besoin.
+    // I/O with a timeout: asynchronous operation, bounded wait, cancellation if needed.
     auto io = [&](bool write, void* data, DWORD size, DWORD& done) -> DWORD {
         OVERLAPPED ov{};
         ov.hEvent = event;
@@ -244,7 +244,7 @@ CallResult call(const std::string& endpoint, const std::string& request, Duratio
     DWORD done = 0;
     DWORD err = io(true, line.data(), static_cast<DWORD>(line.size()), done);
     if (err != ERROR_SUCCESS || done != line.size()) {
-        result.error = "envoi impossible : " + (err == WAIT_TIMEOUT ? std::string("délai dépassé") : error_text(err));
+        result.error = "cannot send: " + (err == WAIT_TIMEOUT ? std::string("timed out") : error_text(err));
     } else {
         std::string data;
         char buffer[4096];
@@ -256,11 +256,11 @@ CallResult call(const std::string& endpoint, const std::string& request, Duratio
             if (!result.error.empty()) break;
             err = io(false, buffer, sizeof buffer, done);
             if (err == ERROR_BROKEN_PIPE || (err == ERROR_SUCCESS && done == 0)) {
-                result.error = "connexion fermée avant la fin de la réponse";
+                result.error = "connection closed before the end of the reply";
                 break;
             }
             if (err != ERROR_SUCCESS && err != ERROR_MORE_DATA) {
-                result.error = err == WAIT_TIMEOUT ? "pas de réponse dans le délai" : error_text(err);
+                result.error = err == WAIT_TIMEOUT ? "no reply in time" : error_text(err);
                 break;
             }
             data.append(buffer, done);

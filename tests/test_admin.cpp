@@ -1,6 +1,6 @@
-// Canal d'administration et cycle de vie (phase 6, SPEC §10) : commandes,
-// verrou d'instance, arrêt avec drain, arrêt immédiat, rechargement,
-// journalisation à chaud, métriques.
+// Administration channel and lifecycle (phase 6, SPEC §10): commands,
+// instance lock, shutdown with drain, immediate shutdown, reload,
+// live logging changes, metrics.
 
 #include "tlsrelay/admin/admin.hpp"
 #include "tlsrelay/logging.hpp"
@@ -38,7 +38,7 @@ protected:
 #else
         endpoint_ = (dir_.path() / "admin.sock").string();
 #endif
-        std::ofstream(whitelist()) << "peers:\n  - { name: poste, ip: 127.0.0.1, ports: [plain] }\n";
+        std::ofstream(whitelist()) << "peers:\n  - { name: workstation, ip: 127.0.0.1, ports: [plain] }\n";
     }
 
     std::filesystem::path whitelist() const { return dir_.path() / "whitelist.yaml"; }
@@ -46,7 +46,7 @@ protected:
     Config server_config(std::uint16_t destination_port) {
         Config c;
         c.mode = Mode::server;
-        c.instance = "essai";
+        c.instance = "test";
         c.ports[PortKind::plain].listen = Endpoint{"127.0.0.1", 0};
         c.destination = Destination{Endpoint{"127.0.0.1", destination_port}};
         c.whitelist = WhitelistRef{whitelist().string()};
@@ -64,12 +64,12 @@ protected:
 
     admin::CallResult call(const std::string& request) { return admin::call(endpoint_, request, 5s); }
 
-    // Corps de la réponse ; échec du test si la commande échoue.
+    // Body of the reply; the test fails if the command fails.
     std::string ok(const std::string& request) {
         const auto r = call(request);
-        EXPECT_TRUE(r.reply) << request << " : " << r.error;
+        EXPECT_TRUE(r.reply) << request << ": " << r.error;
         if (!r.reply) return {};
-        EXPECT_TRUE(r.reply->ok) << request << " : " << r.reply->body;
+        EXPECT_TRUE(r.reply->ok) << request << ": " << r.reply->body;
         return r.reply->body;
     }
 
@@ -89,18 +89,18 @@ TEST(AdminProtocol, ParsesRequestWords) {
     EXPECT_FALSE(admin::parse_request("   \n"));
     EXPECT_FALSE(admin::parse_request(std::string("status\x01", 7)));
     EXPECT_EQ(admin::encode_reply({true, "abc"}), "OK 3\nabc");
-    EXPECT_EQ(admin::encode_reply({false, ""}), "ERREUR 0\n");
+    EXPECT_EQ(admin::encode_reply({false, ""}), "ERROR 0\n");
 }
 
 TEST_F(AdminTest, StatusDescribesInstance) {
     EchoServer echo;
     RunningService server(server_config(echo.port()));
     const auto body = ok("status");
-    EXPECT_TRUE(contains(body, "instance : essai")) << body;
-    EXPECT_TRUE(contains(body, "mode : server")) << body;
+    EXPECT_TRUE(contains(body, "instance: test")) << body;
+    EXPECT_TRUE(contains(body, "mode: server")) << body;
     EXPECT_TRUE(contains(body, "OpenSSL 3.")) << body;
-    EXPECT_TRUE(contains(body, "port plain : 127.0.0.1:" + std::to_string(server.port()))) << body;
-    EXPECT_TRUE(contains(body, "liste blanche : 1 pair(s)")) << body;
+    EXPECT_TRUE(contains(body, "port plain: 127.0.0.1:" + std::to_string(server.port()))) << body;
+    EXPECT_TRUE(contains(body, "whitelist: 1 peer(s)")) << body;
     EXPECT_EQ(ok("ping"), "pong\n");
 }
 
@@ -110,16 +110,16 @@ TEST_F(AdminTest, UnknownOrMalformedCommandsAreRefused) {
     auto r = call("format c:");
     ASSERT_TRUE(r.reply) << r.error;
     EXPECT_FALSE(r.reply->ok);
-    EXPECT_TRUE(contains(r.reply->body, "commandes :")) << r.reply->body;
+    EXPECT_TRUE(contains(r.reply->body, "commands:")) << r.reply->body;
 
-    r = call("stop maintenant");
+    r = call("stop now");
     ASSERT_TRUE(r.reply) << r.error;
     EXPECT_FALSE(r.reply->ok);
 
     r = call(std::string(admin::kMaxRequest + 10, 'x'));
     ASSERT_TRUE(r.reply) << r.error;
     EXPECT_FALSE(r.reply->ok);
-    EXPECT_TRUE(contains(r.reply->body, "trop longue")) << r.reply->body;
+    EXPECT_TRUE(contains(r.reply->body, "too long")) << r.reply->body;
     EXPECT_FALSE(server.service().stats().channels_opened.load());
 }
 
@@ -128,9 +128,9 @@ TEST_F(AdminTest, SecondExecutionOfSameInstanceIsRefused) {
     {
         RunningService first(server_config(echo.port()));
         EXPECT_THROW(relay::Service second(server_config(echo.port())), admin::AlreadyRunning);
-        ok("ping");  // la première exécution n'est pas affectée
+        ok("ping");  // the first run is not affected
     }
-    // Verrou libéré à l'arrêt : une nouvelle exécution démarre.
+    // Lock released at shutdown: a new run starts.
     RunningService again(server_config(echo.port()));
     EXPECT_EQ(ok("ping"), "pong\n");
 }
@@ -149,7 +149,7 @@ TEST_F(AdminTest, SocketIsRestrictedToOwnerAndGroup) {
     ASSERT_EQ(::stat(endpoint_.c_str(), &st), 0);
     EXPECT_EQ(st.st_mode & 0777, 0660u);
     server.stop();
-    EXPECT_FALSE(std::filesystem::exists(endpoint_));  // supprimé à l'arrêt
+    EXPECT_FALSE(std::filesystem::exists(endpoint_));  // removed at shutdown
 }
 #endif
 
@@ -163,9 +163,9 @@ TEST_F(AdminTest, StopDrainsThenStops) {
 
     const auto start = Clock::now();
     const auto body = ok("stop 300ms");
-    EXPECT_TRUE(contains(body, "drain de 1 canal(aux)")) << body;
+    EXPECT_TRUE(contains(body, "draining 1 channel(s)")) << body;
     EXPECT_TRUE(server.wait_finished(5s));
-    EXPECT_GE(Clock::now() - start, 250ms);  // le canal ouvert a eu son délai de drain
+    EXPECT_GE(Clock::now() - start, 250ms);  // the open channel got its drain delay
     EXPECT_TRUE(app.wait_closed(2s));
     EXPECT_TRUE(call("ping").unreachable);
 }
@@ -196,10 +196,10 @@ TEST_F(AdminTest, ChannelsListsOpenChannels) {
     ASSERT_EQ(app.read_exactly(3), "abc");
 
     const auto body = ok("channels");
-    EXPECT_TRUE(contains(body, "1 canal(aux)")) << body;
-    EXPECT_TRUE(contains(body, "port=plain état=ouvert")) << body;
-    EXPECT_TRUE(contains(body, "pair=« poste »")) << body;
-    EXPECT_TRUE(contains(body, "montant=3o")) << body;
+    EXPECT_TRUE(contains(body, "1 channel(s)")) << body;
+    EXPECT_TRUE(contains(body, "port=plain state=open")) << body;
+    EXPECT_TRUE(contains(body, "peer=\"workstation\"")) << body;
+    EXPECT_TRUE(contains(body, "up=3B")) << body;
 }
 
 TEST_F(AdminTest, MetricsUsePrometheusTextFormat) {
@@ -214,10 +214,10 @@ TEST_F(AdminTest, MetricsUsePrometheusTextFormat) {
     ASSERT_TRUE(eventually([&] { return server.stats().channels_closed.load() == 1; }));
     const auto body = ok("metrics");
     EXPECT_TRUE(contains(body, "# TYPE tlsrelay_channels_opened_total counter\n")) << body;
-    EXPECT_TRUE(contains(body, "tlsrelay_channels_opened_total{instance=\"essai\"} 1\n")) << body;
-    EXPECT_TRUE(contains(body, "tlsrelay_channels_active{instance=\"essai\",port=\"plain\"} 0\n")) << body;
-    EXPECT_TRUE(contains(body, "tlsrelay_info{instance=\"essai\",mode=\"server\"")) << body;
-    // Une ligne par échantillon : nom{étiquettes} valeur.
+    EXPECT_TRUE(contains(body, "tlsrelay_channels_opened_total{instance=\"test\"} 1\n")) << body;
+    EXPECT_TRUE(contains(body, "tlsrelay_channels_active{instance=\"test\",port=\"plain\"} 0\n")) << body;
+    EXPECT_TRUE(contains(body, "tlsrelay_info{instance=\"test\",mode=\"server\"")) << body;
+    // One line per sample: name{labels} value.
     std::istringstream lines(body);
     for (std::string line; std::getline(lines, line);) {
         if (line.empty() || line[0] == '#') continue;
@@ -227,9 +227,9 @@ TEST_F(AdminTest, MetricsUsePrometheusTextFormat) {
 
 TEST_F(AdminTest, ReloadReportsWhatChanged) {
     EchoServer echo;
-    const auto config_path = dir_.path() / "serveur.yaml";
+    const auto config_path = dir_.path() / "server.yaml";
     auto write_config = [&](const std::string& level, std::uint16_t dest_port) {
-        std::ofstream(config_path) << "mode: server\ninstance: essai\nlogging: { level: " << level << " }\n"
+        std::ofstream(config_path) << "mode: server\ninstance: test\nlogging: { level: " << level << " }\n"
                                    << "whitelist: { file: \"" << whitelist().generic_string() << "\" }\n"
                                    << "destination: { address: 127.0.0.1, port: " << dest_port << " }\n"
                                    << "admin: { endpoint: '" << endpoint_ << "' }\n"
@@ -238,7 +238,7 @@ TEST_F(AdminTest, ReloadReportsWhatChanged) {
     write_config("info", echo.port());
     auto loaded = load_config_file(config_path);
     ASSERT_TRUE(loaded.config) << (loaded.errors.empty() ? "" : loaded.errors[0].message);
-    loaded.config->ports[PortKind::plain].listen.port = 0;  // port libre choisi par le système
+    loaded.config->ports[PortKind::plain].listen.port = 0;  // free port chosen by the system
     relay::ServiceOptions options{false, 2};
     options.config_path = config_path.string();
     RunningService server(*loaded.config, options);
@@ -246,8 +246,8 @@ TEST_F(AdminTest, ReloadReportsWhatChanged) {
     std::ofstream(whitelist()) << "peers:\n  - { name: a, ip: 127.0.0.1 }\n  - { name: b, ip: 10.0.0.0/8 }\n";
     write_config("debug", static_cast<std::uint16_t>(echo.port() + 1));
     const auto body = ok("reload");
-    EXPECT_TRUE(contains(body, "liste blanche : 2 pair(s)")) << body;
-    EXPECT_TRUE(contains(body, "redémarrage nécessaire pour appliquer")) << body;
+    EXPECT_TRUE(contains(body, "whitelist: 2 peer(s)")) << body;
+    EXPECT_TRUE(contains(body, "restart required to apply")) << body;
     EXPECT_TRUE(contains(body, "destination\n")) << body;
     EXPECT_EQ(logging::level(logging::Category::activity), LogLevel::debug);
     logging::init_default();
@@ -256,16 +256,16 @@ TEST_F(AdminTest, ReloadReportsWhatChanged) {
 TEST_F(AdminTest, LogLevelChangesAtRuntime) {
     EchoServer echo;
     RunningService server(server_config(echo.port()));
-    EXPECT_EQ(ok("log-level activity=trace"), "niveaux : activity=trace config=info\n");
+    EXPECT_EQ(ok("log-level activity=trace"), "levels: activity=trace config=info\n");
     EXPECT_EQ(logging::level(logging::Category::activity), LogLevel::trace);
-    EXPECT_EQ(ok("log-level error"), "niveaux : activity=error config=error\n");
-    const auto r = call("log-level bavard");
+    EXPECT_EQ(ok("log-level error"), "levels: activity=error config=error\n");
+    const auto r = call("log-level chatty");
     ASSERT_TRUE(r.reply);
     EXPECT_FALSE(r.reply->ok);
     logging::init_default();
 }
 
-#ifndef _WIN32  // sous Windows, un fichier ouvert ne peut pas être renommé
+#ifndef _WIN32  // on Windows, an open file cannot be renamed
 TEST_F(AdminTest, LogReopenStartsNewFileAfterRotation) {
     const auto log = dir_.path() / "tlsrelay.log";
     LogConfig lc;
@@ -274,21 +274,21 @@ TEST_F(AdminTest, LogReopenStartsNewFileAfterRotation) {
     {
         EchoServer echo;
         RunningService server(server_config(echo.port()));
-        std::filesystem::rename(log, dir_.path() / "tlsrelay.log.1");  // rotation externe
-        EXPECT_TRUE(contains(ok("log-reopen"), "fichier de log rouvert"));
+        std::filesystem::rename(log, dir_.path() / "tlsrelay.log.1");  // external rotation
+        EXPECT_TRUE(contains(ok("log-reopen"), "log file reopened"));
         EXPECT_TRUE(std::filesystem::exists(log));
-        logging::config().info("après rotation");
+        logging::config().info("after rotation");
     }
-    logging::init_default();  // ferme le fichier
+    logging::init_default();  // closes the file
     std::ifstream in(log);
     const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    EXPECT_TRUE(contains(content, "après rotation")) << content;
-    EXPECT_FALSE(contains(content, "service démarré")) << "écrit avant la rotation";
+    EXPECT_TRUE(contains(content, "after rotation")) << content;
+    EXPECT_FALSE(contains(content, "service started")) << "written before the rotation";
 }
 #endif
 
 #ifndef _WIN32
-// Erreurs du point d'accès et des réponses (CT-12) : messages clairs, ni plantage ni blocage.
+// Errors of the access point and of the replies (CT-12): clear messages, neither crash nor hang.
 namespace {
 
 class NullHandler : public admin::Handler {
@@ -307,7 +307,7 @@ std::string server_error(const std::string& endpoint) {
     return {};
 }
 
-// Faux serveur : lit la requête puis envoie reply et ferme.
+// Fake server: reads the request then sends reply and closes.
 class FakeAdminServer {
 public:
     FakeAdminServer(std::string path, std::string reply) : path_(std::move(path)) {
@@ -344,34 +344,34 @@ private:
 }  // namespace
 
 TEST_F(AdminTest, EndpointErrorsAreReported) {
-    // Chemin plus long que sun_path, côté serveur et côté client.
+    // Path longer than sun_path, on the server side and on the client side.
     const std::string long_path = (dir_.path() / std::string(120, 'x')).string();
-    EXPECT_TRUE(contains(server_error(long_path), "chemin trop long")) << server_error(long_path);
-    EXPECT_TRUE(contains(admin::call(long_path, "status", 1s).error, "chemin trop long"));
+    EXPECT_TRUE(contains(server_error(long_path), "path too long")) << server_error(long_path);
+    EXPECT_TRUE(contains(admin::call(long_path, "status", 1s).error, "path too long"));
 
-    // Répertoire parent impossible à créer : un fichier occupe sa place.
-    std::ofstream(dir_.path() / "fichier") << "x";
-    const auto under_file = (dir_.path() / "fichier" / "sous" / "a.sock").string();
-    EXPECT_TRUE(contains(server_error(under_file), "impossible de créer")) << server_error(under_file);
+    // Parent directory cannot be created: a file is in its place.
+    std::ofstream(dir_.path() / "file") << "x";
+    const auto under_file = (dir_.path() / "file" / "sub" / "a.sock").string();
+    EXPECT_TRUE(contains(server_error(under_file), "cannot create")) << server_error(under_file);
 
-    // Verrou d'instance impossible à ouvrir : un répertoire porte son nom.
-    std::filesystem::create_directory(dir_.path() / "verrou.sock.lock");
-    const auto locked = (dir_.path() / "verrou.sock").string();
-    EXPECT_TRUE(contains(server_error(locked), "impossible d'ouvrir")) << server_error(locked);
+    // Instance lock cannot be opened: a directory has its name.
+    std::filesystem::create_directory(dir_.path() / "lock.sock.lock");
+    const auto locked = (dir_.path() / "lock.sock").string();
+    EXPECT_TRUE(contains(server_error(locked), "cannot open")) << server_error(locked);
 
-    // Écoute impossible : un répertoire non vide occupe le point d'accès.
-    std::filesystem::create_directories(dir_.path() / "occupe.sock" / "contenu");
-    const auto busy = (dir_.path() / "occupe.sock").string();
-    EXPECT_TRUE(contains(server_error(busy), "impossible d'écouter")) << server_error(busy);
+    // Listening impossible: a non-empty directory occupies the access point.
+    std::filesystem::create_directories(dir_.path() / "busy.sock" / "content");
+    const auto busy = (dir_.path() / "busy.sock").string();
+    EXPECT_TRUE(contains(server_error(busy), "cannot listen")) << server_error(busy);
 }
 
 TEST_F(AdminTest, InvalidRepliesAreRejected) {
     const std::vector<std::pair<std::string, std::string>> cases = {
-        {"BONJOUR 3\nabc", "réponse invalide"},
-        {"OK abc\n", "réponse invalide"},
-        {std::string(80, 'z'), "réponse invalide"},
-        {"OK 10\nabc", "connexion fermée avant la fin de la réponse"},
-        {"", "connexion fermée avant la fin de la réponse"}};
+        {"HELLO 3\nabc", "invalid reply"},
+        {"OK abc\n", "invalid reply"},
+        {std::string(80, 'z'), "invalid reply"},
+        {"OK 10\nabc", "connection closed before the end of the reply"},
+        {"", "connection closed before the end of the reply"}};
     for (const auto& [reply, expected] : cases) {
         const auto r = [&] {
             FakeAdminServer fake(endpoint_, reply);

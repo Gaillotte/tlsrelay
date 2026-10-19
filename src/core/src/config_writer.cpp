@@ -7,7 +7,7 @@
 namespace tlsrelay {
 namespace {
 
-// Commentaire de tête : chaque ligne préfixée par « # ».
+// Header comment: each line prefixed with "#".
 std::string comment_block(std::string_view header) {
     std::string out;
     std::istringstream lines{std::string(header)};
@@ -15,7 +15,7 @@ std::string comment_block(std::string_view header) {
     return out;
 }
 
-// Ajoute une clé à la section courante si la valeur diffère de la valeur par défaut.
+// Adds a key to the current section if the value differs from the default.
 template <typename T, typename Format>
 void put_if(YAML::Emitter& out, const char* key, const T& value, const T& fallback, Format format) {
     if (value == fallback) return;
@@ -125,7 +125,7 @@ std::string to_yaml(const Config& cfg, std::string_view header) {
     if (cfg.whitelist) write_whitelist(out, *cfg.whitelist);
     write_admin(out, cfg.admin);
     out << YAML::EndMap;
-    if (!out.good()) throw std::runtime_error("écriture YAML impossible : " + out.GetLastError());
+    if (!out.good()) throw std::runtime_error("cannot write YAML: " + out.GetLastError());
     return comment_block(header) + out.c_str() + "\n";
 }
 

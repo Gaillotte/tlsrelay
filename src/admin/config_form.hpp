@@ -1,11 +1,11 @@
 #pragma once
 
-// Formulaire de configuration de tlsrelay-admin.
+// Configuration form of tlsrelay-admin.
 //
-// Les champs contiennent le texte saisi, sans interprétation : le formulaire
-// produit un YAML brut (raw_yaml) que lit le chargeur du service
-// (load_config_string). La validation de l'éditeur est donc exactement celle
-// du service : mêmes règles, mêmes messages, mêmes chemins d'erreur.
+// The fields hold the text as typed, without interpretation: the form
+// produces raw YAML (raw_yaml) read by the service loader
+// (load_config_string). The editor's validation is therefore exactly the
+// service's: same rules, same messages, same error paths.
 
 #include "tlsrelay/config.hpp"
 
@@ -32,31 +32,31 @@ class ConfigForm : public QWidget {
 public:
     explicit ConfigForm(QWidget* parent = nullptr);
 
-    // Remplit les champs à partir d'un YAML (fichier ouvert, même invalide).
-    // Retourne les clés ignorées : inconnues, ou valeurs qui ne sont pas du
-    // type attendu (elles ne seront pas réécrites).
+    // Fills the fields from YAML (opened file, even invalid).
+    // Returns the ignored keys: unknown ones, or values that are not of the
+    // expected type (they will not be written back).
     std::vector<std::string> load_yaml(const std::string& text);
 
-    // YAML correspondant aux champs saisis (champs vides omis).
+    // YAML matching the entered fields (empty fields omitted).
     std::string raw_yaml() const;
 
-    // Valide les champs comme le service ; met en évidence les champs en erreur.
+    // Validates the fields like the service; highlights the fields in error.
     LoadResult validate();
 
-    // Mode sélectionné.
+    // Selected mode.
     Mode mode() const;
 
-    // Champ associé à un chemin d'erreur (« ports.tls.listen »), ou à la
-    // section la plus proche ; nullptr si aucun.
+    // Field associated with an error path ("ports.tls.listen"), or the
+    // nearest section; nullptr if none.
     QWidget* widget_for(const std::string& path) const;
 
-    // Accès aux champs par chemin YAML (tests, valeurs par défaut).
+    // Access to the fields by YAML path (tests, default values).
     QString value(const std::string& path) const;
     void set_value(const std::string& path, const QString& value);
     void set_port_enabled(PortKind kind, bool enabled);
     bool port_enabled(PortKind kind) const;
-    // Champ visible (les champs sans objet dans le mode choisi sont masqués
-    // tant qu'ils sont vides).
+    // Visible field (fields not applicable in the chosen mode are hidden
+    // as long as they are empty).
     bool is_shown(const std::string& path) const;
 
 signals:
@@ -64,7 +64,7 @@ signals:
 
 private:
     struct Field {
-        QWidget* widget = nullptr;  // QLineEdit ou QComboBox
+        QWidget* widget = nullptr;  // QLineEdit or QComboBox
         QFormLayout* form = nullptr;
         enum class Scope { both, client, server, never } scope = Scope::both;
     };

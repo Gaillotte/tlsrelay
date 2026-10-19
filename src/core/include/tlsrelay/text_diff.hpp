@@ -4,25 +4,25 @@
 #include <string_view>
 #include <vector>
 
-// Différences ligne à ligne entre deux textes (aperçu avant enregistrement
-// dans l'éditeur tlsrelay-admin).
+// Line-by-line differences between two texts (preview before saving
+// in the tlsrelay-admin editor).
 namespace tlsrelay {
 
 struct DiffLine {
     enum class Kind { same, removed, added };
     Kind kind = Kind::same;
-    std::string text;  // sans fin de ligne
+    std::string text;  // without line ending
 };
 
-// Plus longue sous-suite commune : les lignes retirées précèdent les lignes
-// ajoutées qui les remplacent. Les fins de ligne \r\n et \n sont équivalentes.
+// Longest common subsequence: removed lines precede the added
+// lines that replace them. Line endings \r\n and \n are equivalent.
 std::vector<DiffLine> diff_lines(std::string_view before, std::string_view after);
 
-// Vrai si les deux textes ont les mêmes lignes.
+// True if both texts have the same lines.
 bool same_lines(const std::vector<DiffLine>& diff);
 
-// Forme texte : « - » ligne retirée, « + » ligne ajoutée, « ␣ » inchangée ;
-// context : nombre de lignes inchangées gardées autour des modifications.
+// Text form: "-" removed line, "+" added line, "␣" unchanged;
+// context: number of unchanged lines kept around the changes.
 std::string format_diff(const std::vector<DiffLine>& diff, std::size_t context = 3);
 
 }  // namespace tlsrelay

@@ -1,12 +1,12 @@
-Avis des composants tiers de tlsrelay
-======================================
+tlsrelay third-party notices
+============================
 
-tlsrelay intègre ou utilise les composants suivants, chacun sous sa propre licence,
-reproduite ci-dessous. Ces licences ne s'appliquent qu'à ces composants ; tlsrelay
-lui-même est régi par le fichier LICENSE.
+tlsrelay includes or uses the following components, each under its own license,
+reproduced below. These licenses apply only to these components; tlsrelay
+itself is governed by the LICENSE file.
 
 ------------------------------------------------------------------------------
-OpenSSL 3.5 (livré dans le paquet Windows ; OpenSSL de la distribution sous Linux)
+OpenSSL 3.5 (shipped in the Windows package; the distribution's OpenSSL on Linux)
 https://www.openssl-library.org — Apache License 2.0
 ------------------------------------------------------------------------------
 
@@ -223,7 +223,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 CLI11
-https://github.com/CLIUtils/CLI11 — licence BSD à 3 clauses
+https://github.com/CLIUtils/CLI11 — 3-clause BSD license
 ------------------------------------------------------------------------------
 
 CLI11 2.2 Copyright (c) 2017-2024 University of Cincinnati, developed by Henry
@@ -254,7 +254,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------
 spdlog
-https://github.com/gabime/spdlog — licence MIT
+https://github.com/gabime/spdlog — MIT license
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -285,7 +285,7 @@ and users must comply to its license: https://raw.githubusercontent.com/fmtlib/f
 
 ------------------------------------------------------------------------------
 {fmt}
-https://github.com/fmtlib/fmt — licence MIT (avec exception pour les binaires)
+https://github.com/fmtlib/fmt — MIT license (with an exception for binaries)
 ------------------------------------------------------------------------------
 
 Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
@@ -318,7 +318,7 @@ without including the above copyright and permission notices.
 
 ------------------------------------------------------------------------------
 yaml-cpp
-https://github.com/jbeder/yaml-cpp — licence MIT
+https://github.com/jbeder/yaml-cpp — MIT license
 ------------------------------------------------------------------------------
 
 Copyright (c) 2008-2015 Jesse Beder.
@@ -342,25 +342,25 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-Qt 6 (éditeur tlsrelay-admin, livré dans le paquet Windows uniquement)
+Qt 6 (tlsrelay-admin editor, shipped in the Windows package only)
 https://www.qt.io — GNU Lesser General Public License v3 (LGPL-3.0-only)
 ------------------------------------------------------------------------------
 
-L'éditeur tlsrelay-admin utilise les bibliothèques Qt 6 (Qt Core, Qt Gui,
-Qt Widgets et leurs modules d'extension), Copyright (C) The Qt Company Ltd. et
-autres contributeurs, sous licence GNU LGPL version 3.
+The tlsrelay-admin editor uses the Qt 6 libraries (Qt Core, Qt Gui,
+Qt Widgets and their plugin modules), Copyright (C) The Qt Company Ltd. and
+other contributors, under the GNU LGPL version 3.
 
-- Qt est lié dynamiquement : les bibliothèques Qt sont livrées sous forme de
-  DLL non modifiées, à côté de tlsrelay-admin.exe, et peuvent être remplacées
-  par une autre version compatible de Qt construite par l'utilisateur.
-- Textes des licences : LICENSES/LGPL-3.0.txt et LICENSES/GPL-3.0.txt (la LGPL
-  complète la GPL version 3).
-- Sources de Qt : la version livrée est indiquée dans « Aide > À propos » de
-  l'éditeur ; ses sources complètes sont disponibles à l'adresse
-  https://download.qt.io/archive/qt/ (archive « single » de la version), et
-  sont fournies sur simple demande, pendant au moins trois ans, à l'adresse du
-  dépôt https://github.com/Gaillotte/tlsrelay.
-- Qt intègre lui-même des composants tiers (par exemple zlib, libpng,
-  FreeType, HarfBuzz, PCRE2, double-conversion) dont les licences sont
-  recensées dans la documentation de Qt :
+- Qt is dynamically linked: the Qt libraries are shipped as unmodified DLLs,
+  next to tlsrelay-admin.exe, and can be replaced with another compatible
+  version of Qt built by the user.
+- License texts: LICENSES/LGPL-3.0.txt and LICENSES/GPL-3.0.txt (the LGPL
+  supplements the GPL version 3).
+- Qt sources: the shipped version is shown in "Help > About" in the
+  editor; its complete sources are available at
+  https://download.qt.io/archive/qt/ (the version's "single" archive), and
+  are provided on request, for at least three years, via the repository
+  https://github.com/Gaillotte/tlsrelay.
+- Qt itself includes third-party components (for example zlib, libpng,
+  FreeType, HarfBuzz, PCRE2, double-conversion) whose licenses are
+  listed in the Qt documentation:
   https://doc.qt.io/qt-6/licenses-used-in-qt.html

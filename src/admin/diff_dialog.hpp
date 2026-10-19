@@ -1,7 +1,7 @@
 #pragma once
 
-// Aperçu des modifications avant enregistrement : différences ligne à ligne
-// de chaque fichier (lignes retirées en rouge, ajoutées en vert).
+// Preview of the changes before saving: line-by-line diff
+// of each file (removed lines in red, added lines in green).
 
 #include "document.hpp"
 
@@ -17,7 +17,7 @@ class DiffDialog : public QDialog {
 public:
     DiffDialog(const std::vector<FileChange>& changes, QWidget* parent = nullptr);
 
-    // Texte HTML de l'aperçu (tests).
+    // HTML text of the preview (tests).
     static QString render(const std::vector<FileChange>& changes);
 };
 

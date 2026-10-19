@@ -10,22 +10,22 @@ namespace tlsrelay {
 
 using Duration = std::chrono::milliseconds;
 
-// Durée au format <entier><unité>, unités : ms, s, m, h, d. Exemple : "30s", "5m".
+// Duration in the format <integer><unit>, units: ms, s, m, h, d. Example: "30s", "5m".
 std::optional<Duration> parse_duration(std::string_view text);
 
-// Taille au format <entier>[unité], unités : B, KiB, MiB, GiB. Sans unité : octets.
+// Size in the format <integer>[unit], units: B, KiB, MiB, GiB. Without a unit: bytes.
 std::optional<std::uint64_t> parse_size(std::string_view text);
 
-// Pourcentage au format <nombre>%, entre 0 et 100. Retourne une fraction (10% -> 0.1).
+// Percentage in the format <number>%, between 0 and 100. Returns a fraction (10% -> 0.1).
 std::optional<double> parse_percent(std::string_view text);
 
-// Forme lisible d'une durée, avec l'unité la plus grande qui la représente exactement.
+// Readable form of a duration, with the largest unit that represents it exactly.
 std::string format_duration(Duration d);
 
-// Forme lisible d'une taille, avec l'unité la plus grande qui la représente exactement ("4MiB").
+// Readable form of a size, with the largest unit that represents it exactly ("4MiB").
 std::string format_size(std::uint64_t bytes);
 
-// Forme lisible d'une fraction en pourcentage (0.1 -> "10%"), relue à l'identique par parse_percent.
+// Readable form of a fraction as a percentage (0.1 -> "10%"), read back identically by parse_percent.
 std::string format_percent(double fraction);
 
 }  // namespace tlsrelay

@@ -16,9 +16,9 @@ QString DiffDialog::render(const std::vector<FileChange>& changes) {
     for (const auto& change : changes) {
         if (!change.changed()) continue;
         html += "<p><b>" + to_qstring(change.path).toHtmlEscaped() + "</b> — " +
-                (change.before ? QObject::tr("modifié (copie de l'original : .bak)") : QObject::tr("créé")) + "</p>";
+                (change.before ? QObject::tr("modified (copy of the original: .bak)") : QObject::tr("created")) + "</p>";
         const auto diff = diff_lines(change.before.value_or(""), change.after);
-        // Trois lignes de contexte autour de chaque modification.
+        // Three lines of context around each change.
         std::vector<bool> keep(diff.size(), false);
         for (std::size_t k = 0; k < diff.size(); ++k) {
             if (diff[k].kind == DiffLine::Kind::same) continue;
@@ -48,18 +48,18 @@ QString DiffDialog::render(const std::vector<FileChange>& changes) {
 }
 
 DiffDialog::DiffDialog(const std::vector<FileChange>& changes, QWidget* parent) : QDialog(parent) {
-    setWindowTitle(tr("Enregistrer les modifications"));
+    setWindowTitle(tr("Save changes"));
     resize(900, 600);
-    auto* intro = new QLabel(tr("Vérifier les modifications avant de les écrire. Les commentaires des fichiers "
-                                "d'origine ne sont pas conservés ; une copie de chaque fichier modifié est gardée "
-                                "avec l'extension .bak."));
+    auto* intro = new QLabel(tr("Review the changes before writing them. Comments in the original files "
+                                "are not kept; a copy of each modified file is kept "
+                                "with the .bak extension."));
     intro->setWordWrap(true);
     auto* view = new QTextBrowser;
     view->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     view->setHtml(render(changes));
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
-    buttons->button(QDialogButtonBox::Save)->setText(tr("Enregistrer"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Annuler"));
+    buttons->button(QDialogButtonBox::Save)->setText(tr("Save"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     auto* layout = new QVBoxLayout(this);

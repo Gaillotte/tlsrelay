@@ -1,5 +1,5 @@
-// Révocation par CRL (SPEC §7.7) : <pki_root>/crl.pem, appliqué au handshake
-// et à chaud aux canaux ouverts.
+// Revocation by CRL (SPEC §7.7): <pki_root>/crl.pem, applied at the handshake
+// and on the fly to open channels.
 
 #include "tlsrelay/pki/revocation.hpp"
 
@@ -19,7 +19,7 @@ namespace {
 
 constexpr const char* kClientSubject = "CN=client.test,O=tlsrelay-test";
 
-// CRL de ca listant les certificats revoked ; next_offset : prochaine mise à jour, en secondes.
+// CRL of ca listing the revoked certificates; next_offset: next update, in seconds.
 std::string make_crl(const Issued& ca, const std::vector<const X509*>& revoked, long next_offset = 7 * 24 * 3600,
                      const EVP_PKEY* signer = nullptr) {
     X509_CRL* crl = X509_CRL_new();
@@ -55,15 +55,15 @@ protected:
     void SetUp() override {
         write_generation(server_pki(), "v1", server_files(*h_));
         write_generation(client_pki(), "v1", client_files(*h_));
-        std::ofstream(whitelist(), std::ios::binary) << "peers:\n  - name: poste\n    ip: 127.0.0.1\n    ports: [mtls]\n"
+        std::ofstream(whitelist(), std::ios::binary) << "peers:\n  - name: host\n    ip: 127.0.0.1\n    ports: [mtls]\n"
                                                      << "    subject: \"" << kClientSubject << "\"\n";
     }
 
-    std::filesystem::path server_pki() const { return dir_ / "serveur"; }
+    std::filesystem::path server_pki() const { return dir_ / "server"; }
     std::filesystem::path client_pki() const { return dir_ / "client"; }
     std::filesystem::path whitelist() const { return dir_ / "whitelist.yaml"; }
 
-    // Écriture puis renommage : le service ne lit jamais un fichier à moitié écrit.
+    // Write then rename: the service never reads a half-written file.
     static void write_crl(const std::filesystem::path& pki_root, const std::string& content) {
         const auto tmp = pki_root / "crl.tmp";
         std::ofstream(tmp, std::ios::binary) << content;
@@ -121,7 +121,7 @@ TEST_F(CrlTest, ServerRefusesRevokedClientCertificate) {
     EXPECT_TRUE(app.wait_closed(5s));
     EXPECT_TRUE(eventually([&] { return server.stats().tls_handshake_failures.load() >= 1; }));
     EXPECT_EQ(echo.accepted(), 0);
-    EXPECT_NE(server.service().status_text().find("CRL : 1 certificat(s) révoqué(s)"), std::string::npos)
+    EXPECT_NE(server.service().status_text().find("CRL: 1 certificate(s) revoked"), std::string::npos)
         << server.service().status_text();
 }
 
@@ -138,15 +138,15 @@ TEST_F(CrlTest, ClientRefusesRevokedServerCertificate) {
 }
 
 TEST_F(CrlTest, CrlOfOtherCertificatesChangesNothing) {
-    auto other = make_certificate({.common_name = "autre.test", .usage = Usage::client}, &h_->clients_ca);
-    // Fichier commun : CRL de l'AC Serveurs (sans objet côté serveur) et de l'AC Clients.
+    auto other = make_certificate({.common_name = "other.test", .usage = Usage::client}, &h_->clients_ca);
+    // Shared file: CRL of the Servers CA (not applicable on the server side) and of the Clients CA.
     write_crl(server_pki(), make_crl(h_->servers_ca, {h_->server.cert.get()}) +
                                 make_crl(h_->clients_ca, {other.cert.get()}));
     EchoServer echo;
     RunningService server(server_config(echo.port()));
     RunningService client(client_config(server.port(PortKind::mtls)));
     TestClient app(client.port(PortKind::mtls));
-    EXPECT_TRUE(works(app, "accepté"));
+    EXPECT_TRUE(works(app, "accepted"));
 }
 
 TEST_F(CrlTest, PublishedCrlClosesActiveChannelAndRefusesNewOnes) {
@@ -156,7 +156,7 @@ TEST_F(CrlTest, PublishedCrlClosesActiveChannelAndRefusesNewOnes) {
     RunningService client(client_config(server.port(PortKind::mtls)));
 
     TestClient app(client.port(PortKind::mtls));
-    ASSERT_TRUE(works(app, "avant"));
+    ASSERT_TRUE(works(app, "before"));
 
     write_crl(server_pki(), make_crl(h_->clients_ca, {h_->client.cert.get()}));
     EXPECT_TRUE(app.wait_closed(5s));
@@ -171,24 +171,24 @@ TEST_F(CrlTest, NextRenegotiationKeepsActiveChannel) {
     RunningService client(client_config(server.port(PortKind::mtls)));
 
     TestClient app(client.port(PortKind::mtls));
-    ASSERT_TRUE(works(app, "avant"));
+    ASSERT_TRUE(works(app, "before"));
     write_crl(server_pki(), make_crl(h_->clients_ca, {h_->client.cert.get()}));
     EXPECT_TRUE(eventually([&] {
-        return server.service().status_text().find("CRL : 1 certificat(s)") != std::string::npos;
+        return server.service().status_text().find("CRL: 1 certificate(s)") != std::string::npos;
     }));
-    EXPECT_TRUE(works(app, "toujours ouvert"));
+    EXPECT_TRUE(works(app, "still open"));
     EXPECT_EQ(server.stats().certificates_revoked.load(), 0u);
 }
 
 TEST_F(CrlTest, InvalidCrlIsRefusedAtStartupAndKeptAsIsOnReload) {
-    // Signée par une autre clé que celle de l'AC Clients.
+    // Signed by a key other than the Clients CA's.
     const auto forged = make_crl(h_->clients_ca, {}, 7 * 24 * 3600, h_->servers_ca.key.get());
     write_crl(server_pki(), forged);
     try {
         relay::Service service(without_default_admin(server_config(9)));
-        FAIL() << "le service aurait dû refuser de démarrer";
+        FAIL() << "the service should have refused to start";
     } catch (const std::runtime_error& e) {
-        EXPECT_NE(std::string(e.what()).find("signature invalide"), std::string::npos) << e.what();
+        EXPECT_NE(std::string(e.what()).find("invalid signature"), std::string::npos) << e.what();
     }
 
     write_crl(server_pki(), make_crl(h_->clients_ca, {}));
@@ -196,13 +196,13 @@ TEST_F(CrlTest, InvalidCrlIsRefusedAtStartupAndKeptAsIsOnReload) {
     RunningService server(server_config(echo.port()), fast_reload());
     RunningService client(client_config(server.port(PortKind::mtls)));
     TestClient app(client.port(PortKind::mtls));
-    ASSERT_TRUE(works(app, "avant"));
+    ASSERT_TRUE(works(app, "before"));
 
-    write_crl(server_pki(), "pas une CRL\n");
+    write_crl(server_pki(), "not a CRL\n");
     EXPECT_TRUE(eventually([&] { return server.stats().crl_reload_failures.load() == 1; }));
-    EXPECT_TRUE(works(app, "toujours ouvert"));
+    EXPECT_TRUE(works(app, "still open"));
     TestClient other(client.port(PortKind::mtls));
-    EXPECT_TRUE(works(other, "nouvelle connexion acceptée"));
+    EXPECT_TRUE(works(other, "new connection accepted"));
 }
 
 TEST_F(CrlTest, ExpiredCrlIsStillAppliedWithWarning) {
@@ -216,19 +216,19 @@ TEST_F(CrlTest, ExpiredCrlIsStillAppliedWithWarning) {
     EXPECT_TRUE(result.list->is_revoked(h_->client.cert.get()));
     EXPECT_FALSE(result.list->is_revoked(h_->server.cert.get()));
     ASSERT_EQ(result.warnings.size(), 1u);
-    EXPECT_NE(result.warnings[0].message.find("périmée"), std::string::npos);
+    EXPECT_NE(result.warnings[0].message.find("stale"), std::string::npos);
 
-    // Sans CRL pour l'AC attendue : avertissement, aucune révocation.
+    // No CRL for the expected CA: warning, no revocation.
     write_crl(server_pki(), make_crl(h_->servers_ca, {h_->client.cert.get()}));
     const auto none = tlsrelay::pki::load_revocations(server_pki() / "crl.pem", *gen.generation);
     ASSERT_TRUE(none.list);
     EXPECT_FALSE(none.list->is_revoked(h_->client.cert.get()));
     ASSERT_FALSE(none.warnings.empty());
-    EXPECT_NE(none.warnings.back().message.find("aucune CRL pour l'AC"), std::string::npos);
+    EXPECT_NE(none.warnings.back().message.find("no CRL for CA"), std::string::npos);
 }
 
 TEST_F(CrlTest, RevokedInstanceCertificateIsReported) {
-    // Côté serveur : la CRL de l'AC Serveurs signale que son propre certificat est révoqué.
+    // Server side: the Servers CA's CRL reports that its own certificate is revoked.
     write_crl(server_pki(), make_crl(h_->servers_ca, {h_->server.cert.get()}) + make_crl(h_->clients_ca, {}));
     tlsrelay::pki::Requirements req{tlsrelay::pki::Role::server, true, true};
     const auto gen = tlsrelay::pki::load_current_generation(server_pki(), req);
@@ -236,6 +236,6 @@ TEST_F(CrlTest, RevokedInstanceCertificateIsReported) {
     const auto result = tlsrelay::pki::load_revocations(server_pki() / "crl.pem", *gen.generation);
     ASSERT_TRUE(result.list);
     bool reported = false;
-    for (const auto& w : result.warnings) reported |= w.message.find("cette instance") != std::string::npos;
+    for (const auto& w : result.warnings) reported |= w.message.find("this instance") != std::string::npos;
     EXPECT_TRUE(reported);
 }

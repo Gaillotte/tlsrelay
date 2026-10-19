@@ -1,9 +1,9 @@
 #pragma once
 
-// Listes de révocation appliquées par le service (SPEC §7.7) :
-// <pki_root>/crl.pem contient les CRL publiées par la mini-AC (ca crl), une
-// par AC intermédiaire. Seules comptent celles des AC attendues chez le pair
-// (trust-issuer.pem) ; leur signature est vérifiée avec la clé de l'AC.
+// Revocation lists applied by the service (SPEC §7.7):
+// <pki_root>/crl.pem contains the CRLs published by the mini-CA (ca crl), one
+// per intermediate CA. Only those of the CAs expected from the peer count
+// (trust-issuer.pem); their signature is verified with the CA's key.
 
 #include "tlsrelay/config.hpp"
 #include "tlsrelay/pki/generation.hpp"
@@ -21,13 +21,13 @@ inline constexpr const char* kCrlFile = "crl.pem";
 
 class RevocationList {
 public:
-    // Vrai si le certificat figure dans une CRL de son émetteur.
+    // True if the certificate appears in a CRL of its issuer.
     bool is_revoked(const X509* cert) const;
-    // Certificats révoqués listés par les CRL retenues.
+    // Revoked certificates listed by the retained CRLs.
     std::size_t size() const;
-    // Plus proche date de prochaine mise à jour des CRL retenues (UTC).
+    // Earliest next-update date of the retained CRLs (UTC).
     const std::string& next_update() const { return next_update_; }
-    // Séries révoquées, « AC/série » (journal des changements au rechargement).
+    // Revoked serials, "CA/serial" (change log on reload).
     std::vector<std::string> entries() const;
 
 private:
@@ -40,15 +40,15 @@ private:
 };
 
 struct RevocationResult {
-    std::shared_ptr<const RevocationList> list;  // présent seulement si errors est vide
+    std::shared_ptr<const RevocationList> list;  // present only if errors is empty
     std::vector<Issue> errors;
     std::vector<Issue> warnings;
 };
 
-// Lit et contrôle le fichier de CRL pour une génération : CRL lisibles,
-// signées par une AC attendue chez le pair (ou par l'AC de l'instance, pour
-// signaler un certificat de l'instance révoqué). Une CRL dont la date de
-// prochaine mise à jour est passée reste appliquée, avec un avertissement.
+// Reads and checks the CRL file for a generation: readable CRLs,
+// signed by a CA expected from the peer (or by the instance's CA, to
+// report a revoked instance certificate). A CRL whose next-update date
+// has passed is still applied, with a warning.
 RevocationResult load_revocations(const std::filesystem::path& file, const Generation& generation);
 
 }  // namespace tlsrelay::pki
