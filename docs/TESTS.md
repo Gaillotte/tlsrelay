@@ -580,6 +580,8 @@ Manual steps — service (M) and editor (E):
 
 ## 4. Requirements coverage
 
+The same matrix, with a one-line explanation of how each requirement is covered and a summary per group, is available as an Excel workbook: [requirements-coverage.xlsx](requirements-coverage.xlsx) (regenerate it with `tools/requirements-xlsx.py` after changing SPEC §11, this section or the explanations in the script).
+
 Legend for the **Status** column: **Auto** — fully verified by automated tests on every push; **Auto + manual** — automated in CI, with a manual complement in acceptance or before production; **Partial (manual)** — automated at reduced scale, full verification manual.
 
 | Req. | Requirement (short) | Automated verification | Acceptance / manual | Status |
