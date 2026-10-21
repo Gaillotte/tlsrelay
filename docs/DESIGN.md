@@ -104,7 +104,7 @@ The peer of a relay is always another `tlsrelay`: the tunnel protocol is mandato
 |---|---|---|
 | Language and runtime | C++20 with coroutines, standalone Asio (IOCP on Windows, epoll on Linux) | Native performance, no runtime dependency; coroutines keep the per-channel logic sequential and readable |
 | TLS stack | OpenSSL 3 driven through **memory BIOs** (not `asio::ssl` streams) | Full control of the session: half-close (`close_notify` in one direction only), keying-material exporter for resume tokens, explicit flushing |
-| OpenSSL linkage | Dynamic; OpenSSL 3.5 LTS shipped on Windows, distribution OpenSSL on Linux | Security fixes from the platform vendor on Linux; LTS on Windows |
+| OpenSSL linkage | Dynamic; OpenSSL 3.5 LTS shipped on Windows, built from the official release archive (SHA-512 checked) with OpenSSL's own build system; distribution OpenSSL on Linux | Security fixes from the platform vendor on Linux; LTS on Windows, with no third-party build recipe or patches between the OpenSSL release and the shipped DLLs |
 | Other dependencies | Asio, CLI11, spdlog (with fmt), yaml-cpp: pinned by commit and linked statically in Linux packages; vcpkg on Windows | One binary per platform family, independent of distribution library versions |
 | Tunnel | Own framing protocol on top of TCP/TLS with sequence numbers and cumulative ACKs | Enables lossless migration of a channel to a new transport connection |
 | One session per channel | Each application connection gets its own transport connection and tunnel session | Isolation, simple flow control, per-channel renegotiation; no head-of-line blocking between channels |
@@ -639,7 +639,7 @@ Works directly on a mini-CA directory, shared with the command line: summary of 
 ### 12.1 Build
 
 - CMake ≥ 3.25 with presets; MSVC 2022, GCC ≥ 12, Clang ≥ 16.
-- Windows: vcpkg manifest (OpenSSL 3.5, Asio, CLI11, spdlog, yaml-cpp, GoogleTest); Qt 6.8 LTS for the editor.
+- Windows: OpenSSL 3.5 LTS built by `tools/build-openssl.ps1` from the official release archive (version and SHA-512 pinned in the script, kept identical to the CI's Linux OpenSSL 3.5 job by `check-deps.sh`); vcpkg manifest for Asio, CLI11, spdlog, yaml-cpp, GoogleTest; Qt 6.8 LTS for the editor.
 - Linux: distribution packages, or `-DTLSRELAY_FETCH_DEPS=ON` to fetch pinned dependencies and link them statically (only OpenSSL stays dynamic).
 - Options: `TLSRELAY_BUILD_TESTS`, `TLSRELAY_BUILD_ADMIN`, `TLSRELAY_FUZZ`, `TLSRELAY_SANITIZERS`, `TLSRELAY_WARNINGS_AS_ERRORS`, `TLSRELAY_MSVC_ANALYZE`.
 - Known toolchain workaround: GCC 12 miscompiles some temporaries inside `co_await` expressions (double destruction); such expressions are hoisted into separate statements.

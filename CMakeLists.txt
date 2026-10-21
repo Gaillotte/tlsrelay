@@ -36,6 +36,15 @@ else()
     include(Dependencies)
 endif()
 
+# Copies the OpenSSL DLLs (TLSRELAY_OPENSSL_DLLS, cmake/Dependencies.cmake) next to
+# an executable after each build, on Windows.
+function(tlsrelay_deploy_openssl target)
+    if(TLSRELAY_OPENSSL_DLLS)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TLSRELAY_OPENSSL_DLLS} "$<TARGET_FILE_DIR:${target}>")
+    endif()
+endfunction()
+
 add_subdirectory(src/core)
 add_subdirectory(src/app)
 add_subdirectory(src/testkit)

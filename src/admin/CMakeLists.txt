@@ -20,12 +20,14 @@ target_link_libraries(tlsrelay_admin_lib
     PRIVATE tlsrelay::options yaml-cpp::yaml-cpp)
 
 add_executable(tlsrelay-admin WIN32 main.cpp)
+tlsrelay_deploy_openssl(tlsrelay-admin)
 
 # Editor tour for the demonstration video (tools/video): excluded from the
 # default build, never installed.
 add_executable(tlsrelay-admin-tour EXCLUDE_FROM_ALL "${PROJECT_SOURCE_DIR}/tools/video/editor_tour.cpp")
 target_include_directories(tlsrelay-admin-tour PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(tlsrelay-admin-tour PRIVATE tlsrelay_admin_lib tlsrelay::options)
+tlsrelay_deploy_openssl(tlsrelay-admin-tour)
 target_link_libraries(tlsrelay-admin PRIVATE tlsrelay_admin_lib tlsrelay::options)
 install(TARGETS tlsrelay-admin RUNTIME DESTINATION bin COMPONENT admin)
 
@@ -45,6 +47,7 @@ if(TLSRELAY_BUILD_TESTS)
     find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
     add_executable(tlsrelay_admin_tests
         "${PROJECT_SOURCE_DIR}/tests/admin/test_admin.cpp")
+    tlsrelay_deploy_openssl(tlsrelay_admin_tests)
     target_link_libraries(tlsrelay_admin_tests PRIVATE tlsrelay_admin_lib tlsrelay::options Qt6::Test
         yaml-cpp::yaml-cpp)
     target_compile_definitions(tlsrelay_admin_tests PRIVATE

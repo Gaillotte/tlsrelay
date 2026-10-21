@@ -24,16 +24,19 @@
 
 | Output | Location after a Release build | Needs |
 |---|---|---|
-| `tlsrelay.exe` — the relay (service, command line, mini-CA) | `build\windows-msvc\src\app\Release\` | Visual Studio, vcpkg |
+| `tlsrelay.exe` — the relay (service, command line, mini-CA) | `build\windows-msvc\src\app\Release\` | Visual Studio, vcpkg, OpenSSL (Perl, NASM) |
 | `tlsrelay-testkit.exe` — traffic generators, echo destination, disturbance proxy | `build\windows-msvc\src\testkit\Release\` | same |
 | `tlsrelay_tests.exe` — GoogleTest suites (unit and integration) | `build\windows-msvc\tests\Release\` | same |
 | `tlsrelay-admin.exe` — graphical editor (optional) | `build\windows-msvc\src\admin\Release\` | Qt 6.8 LTS |
 | `tlsrelay_admin_tests.exe` — editor tests (Qt Test, optional) | `build\windows-msvc\src\admin\Release\` | Qt 6.8 LTS |
 | `tlsrelay-<version>-win64.msi` — installer | `build\windows-msvc\` | WiX Toolset v3 |
 
-Third-party libraries (OpenSSL 3.5 LTS, Asio, CLI11, spdlog, yaml-cpp, GoogleTest) are **not** installed by hand: vcpkg builds them from `vcpkg.json` during the first CMake configuration. OpenSSL comes from the overlay port in `vcpkg-overlays/openssl` (official 3.5.x release archive, SHA-512 checked; see [vcpkg-overlays/README.md](../vcpkg-overlays/README.md)).
+Third-party libraries are **not** installed by hand:
 
-Expect about 20–40 minutes for the first configuration (vcpkg compiles OpenSSL and the other libraries) and a few minutes for later builds. Plan for about 15 GB of disk (Visual Studio, Qt, vcpkg build trees).
+- **OpenSSL 3.5 LTS** is built once by `tools\build-openssl.ps1` from the official release archive published by the OpenSSL project (SHA-512 checked), with OpenSSL's own build system, into `build\openssl` (section 4.1).
+- **Asio, CLI11, spdlog, yaml-cpp, GoogleTest** are built by vcpkg from `vcpkg.json` during the first CMake configuration.
+
+Expect about 10–20 minutes for the OpenSSL build and as much for the first configuration (vcpkg compiles the other libraries), then a few minutes for later builds. Plan for about 15 GB of disk (Visual Studio, Qt, OpenSSL and vcpkg build trees).
 
 ## 2. Machine and tools
 
@@ -53,6 +56,9 @@ All commands are given for `winget` (Windows Package Manager, included in Window
 | Git for Windows | any recent | sources, vcpkg | `winget install --id Git.Git -e` |
 | CMake | 3.25 or later | everything | included in Visual Studio (2.3); or `winget install --id Kitware.CMake -e` |
 | vcpkg | current | everything | see 2.4 |
+| Strawberry Perl | 5.x | OpenSSL build | `winget install --id StrawberryPerl.StrawberryPerl -e` (see 2.7) |
+| NASM | 2.x | OpenSSL build (assembly code) | `winget install --id NASM.NASM -e` (see 2.7) |
+| jom | any | optional: parallel OpenSSL build | `choco install jom`, or from download.qt.io (official_releases/jom) |
 | PowerShell 7 | 7.4 or later | test and acceptance scripts | `winget install --id Microsoft.PowerShell -e` |
 | Python 3 | 3.10 or later | Qt installation (aqtinstall), service lifecycle test | `winget install --id Python.Python.3.12 -e` |
 | Qt | 6.8 LTS (6.8.3), `msvc2022_64` | editor only | see 2.5 |
@@ -110,8 +116,6 @@ New-Item -ItemType Directory -Force C:\vcpkg-cache | Out-Null
 $env:VCPKG_DEFAULT_BINARY_CACHE = 'C:\vcpkg-cache'
 ```
 
-vcpkg downloads by itself the extra tools the OpenSSL build needs (Perl, NASM); nothing else has to be installed for it.
-
 Note: Visual Studio 2022 also ships a copy of vcpkg; the standalone clone above is preferred because its location and version are under your control and match the CI.
 
 ### 2.5 Qt 6.8 LTS (editor only)
@@ -150,6 +154,22 @@ The installer sets the `WIX` environment variable, which CPack uses to find the 
 & "$env:WIX\bin\candle.exe" -?   # Windows Installer XML Toolset Compiler version 3.14…
 ```
 
+### 2.7 Perl and NASM (OpenSSL build)
+
+OpenSSL's build system is written in Perl and its optimised cryptographic code in assembly:
+
+```powershell
+winget install --id StrawberryPerl.StrawberryPerl -e
+winget install --id NASM.NASM -e
+```
+
+The Perl must be a **native Windows Perl** (Strawberry Perl). The Perl that comes with Git for Windows does not work for OpenSSL; `tools\build-openssl.ps1` picks the right one even if both are on `PATH`, and also finds NASM in its default folder (`C:\Program Files\NASM`). Check in a new terminal:
+
+```powershell
+perl -e "print $^O"   # MSWin32
+nasm -v               # NASM version 2.x
+```
+
 ## 3. Getting the sources
 
 Clone into a short path (Windows path-length limits affect deep build trees):
@@ -170,12 +190,16 @@ All commands from the repository root, in a Developer PowerShell (2.3).
 ### 4.1 Relay, test tool and tests
 
 ```powershell
+.\tools\build-openssl.ps1          # once (and after each OpenSSL update)
 cmake --preset windows-msvc
 cmake --build --preset windows-release
 ```
 
-- `cmake --preset windows-msvc` configures `build\windows-msvc` with the Visual Studio 2022 generator, x64, the vcpkg toolchain and the `x64-windows` triplet. The first run installs the vcpkg libraries (section 1).
-- `cmake --build --preset windows-release` compiles the Release configuration. The vcpkg DLLs (OpenSSL, spdlog, fmt, yaml-cpp, GoogleTest) are copied next to each executable.
+- `tools\build-openssl.ps1` downloads the OpenSSL release pinned in the script (version and SHA-512), checks the hash, builds it (`perl Configure VC-WIN64A`, `nmake`; `jom` in parallel when installed) and installs headers, libraries and DLLs into `build\openssl`. It does nothing when `build\openssl` already holds that version. It loads the Visual Studio environment itself if needed, so it also runs from a plain PowerShell.
+- `cmake --preset windows-msvc` configures `build\windows-msvc` with the Visual Studio 2022 generator, x64, the vcpkg toolchain, the `x64-windows` triplet and `OPENSSL_ROOT_DIR=build\openssl`. The first run installs the vcpkg libraries (section 1).
+- `cmake --build --preset windows-release` compiles the Release configuration. The DLLs (OpenSSL, spdlog, fmt, yaml-cpp, GoogleTest) are copied next to each executable.
+
+The paths compiled into the OpenSSL DLLs (configuration file, modules) stay OpenSSL's defaults under `C:\Program Files` and `C:\Program Files\Common Files\SSL`, which only administrators can write: the script stages the installation and moves it to `build\openssl`. Do not build OpenSSL by hand with `--prefix` or `--openssldir` pointing to a user-writable folder, since the shipped DLLs would then read `openssl.cnf` from there.
 
 Check the result:
 
@@ -232,6 +256,13 @@ Debug outputs are in the `Debug\` subdirectories instead of `Release\`.
 ```powershell
 Remove-Item -Recurse -Force build\windows-msvc
 cmake --preset windows-msvc   # with the binary cache (2.4), the libraries are not recompiled
+```
+
+`build\openssl` is kept. To rebuild OpenSSL too:
+
+```powershell
+Remove-Item -Recurse -Force build\openssl
+.\tools\build-openssl.ps1
 ```
 
 ## 5. Testing
@@ -367,11 +398,11 @@ cmake --preset windows-msvc -B build\windows-analyze -DTLSRELAY_BUILD_TESTS=OFF 
 cmake --build build\windows-analyze --config Release
 ```
 
-Only the project's code is analysed; headers of the vcpkg libraries are treated as external.
+Only the project's code is analysed; headers of OpenSSL and the vcpkg libraries are treated as external. OpenSSL must have been built first (4.1).
 
 ## 8. Working in Visual Studio
 
-- **Open Folder** (File → Open → Folder… on the repository root): Visual Studio reads `CMakePresets.json`; choose the configure preset "Windows x64 (MSVC + vcpkg)" and the build preset `windows-release` in the toolbar. Add `TLSRELAY_BUILD_ADMIN` and `CMAKE_PREFIX_PATH` in Project → CMake Settings, or configure once from the command line (4.2) — the cache is shared.
+- **Open Folder** (File → Open → Folder… on the repository root): Visual Studio reads `CMakePresets.json`; run `tools\build-openssl.ps1` once, then choose the configure preset "Windows x64 (MSVC + vcpkg, OpenSSL from tools/build-openssl.ps1)" and the build preset `windows-release` in the toolbar. Add `TLSRELAY_BUILD_ADMIN` and `CMAKE_PREFIX_PATH` in Project → CMake Settings, or configure once from the command line (4.2) — the cache is shared.
 - **Solution**: after configuring, `build\windows-msvc\tlsrelay.sln` can be opened as a regular solution.
 - **Test Explorer** lists the GoogleTest cases (Test → Test Explorer) once the tests are built.
 - **Debugging the relay**: set `tlsrelay` as startup item with arguments such as `run -c C:\src\tlsrelay\examples\server.yaml -vv`; debugging the editor needs Qt's `bin` directory on the debugger's `PATH` (Debug → Properties → Environment: `PATH=C:\Qt\6.8.3\msvc2022_64\bin;%PATH%`).
@@ -393,7 +424,11 @@ Every push runs the complete set on GitHub Actions (19 jobs, [TESTS.md §2.1](TE
 | `Could not find toolchain file: /scripts/buildsystems/vcpkg.cmake` | `VCPKG_ROOT` not set in this terminal | Set it (2.4) and open a new terminal; then delete `build\windows-msvc` and configure again |
 | Preset `windows-msvc` "not available" | Not on Windows, or old CMake | The preset is Windows-only; CMake 3.25+ is required (`cmake --version`) |
 | `No CMAKE_CXX_COMPILER could be found` / generator "Visual Studio 17 2022" not found | C++ workload missing | Add "Desktop development with C++" (2.3) |
-| vcpkg fails building OpenSSL with path or command-line errors | Repository or vcpkg in a deep path | Use short paths (`C:\src\tlsrelay`, `C:\vcpkg`); optionally enable long paths: `New-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWord -Force` (administrator) |
+| `OpenSSL 3.5 not found (OPENSSL_ROOT_DIR=…)` at configuration | OpenSSL not built yet | Run `.\tools\build-openssl.ps1` (4.1), then configure again |
+| `build-openssl.ps1`: `native Windows Perl not found`, or Configure stops with "This perl implementation doesn't produce Windows like paths" | Only the Perl of Git for Windows is installed | Install Strawberry Perl (2.7) and open a new terminal |
+| `build-openssl.ps1`: `NASM not found` | NASM missing | Install NASM (2.7) |
+| `build-openssl.ps1`: `SHA-512 mismatch` | Corrupted or modified download | Run it again; if it persists, do not use the archive and report it |
+| vcpkg or the OpenSSL build fails with path or command-line errors | Repository or vcpkg in a deep path | Use short paths (`C:\src\tlsrelay`, `C:\vcpkg`); optionally enable long paths: `New-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWord -Force` (administrator) |
 | vcpkg download errors | Proxy or firewall | Set `HTTP_PROXY`/`HTTPS_PROXY` for the session, or pre-populate the binary cache from another machine |
 | `Could not find a package configuration file provided by "Qt6"` | Editor enabled without Qt path | Add `"-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"` (4.2) |
 | Qt found but link errors (`LNK2038` mismatch) | Qt built for another compiler (MinGW, msvc2019) | Install the `msvc2022_64` variant (2.5) |
@@ -412,6 +447,7 @@ Every push runs the complete set on GitHub Actions (19 jobs, [TESTS.md §2.1](TE
 git clone https://github.com/Gaillotte/tlsrelay.git C:\src\tlsrelay; cd C:\src\tlsrelay
 
 # Build (relay, testkit, tests, editor)
+.\tools\build-openssl.ps1
 cmake --preset windows-msvc -DTLSRELAY_WARNINGS_AS_ERRORS=ON -DTLSRELAY_BUILD_ADMIN=ON "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"
 cmake --build --preset windows-release
 

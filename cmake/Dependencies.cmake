@@ -1,7 +1,23 @@
-# External dependencies. On Windows, they are provided by vcpkg (vcpkg.json);
-# on Linux, by the distribution packages or by vcpkg.
+# External dependencies. On Linux, they come from the distribution packages (or
+# vcpkg). On Windows, from vcpkg (vcpkg.json), except OpenSSL 3.5 LTS, built from
+# the official release by tools/build-openssl.ps1 (OPENSSL_ROOT_DIR, set by the
+# windows-msvc preset to build/openssl).
 
-find_package(OpenSSL 3.0 REQUIRED)
+if(WIN32)
+    find_package(OpenSSL 3.5)
+    if(NOT OPENSSL_FOUND)
+        message(FATAL_ERROR "OpenSSL 3.5 not found (OPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}): "
+                            "run tools/build-openssl.ps1 first (docs/BUILD-WINDOWS.md)")
+    endif()
+    # The OpenSSL DLLs are copied next to each executable (tests, build-tree runs, installation).
+    get_filename_component(TLSRELAY_OPENSSL_ROOT "${OPENSSL_INCLUDE_DIR}" DIRECTORY)
+    file(GLOB TLSRELAY_OPENSSL_DLLS "${TLSRELAY_OPENSSL_ROOT}/bin/libcrypto-*.dll" "${TLSRELAY_OPENSSL_ROOT}/bin/libssl-*.dll")
+    if(NOT TLSRELAY_OPENSSL_DLLS)
+        message(FATAL_ERROR "OpenSSL DLLs not found in ${TLSRELAY_OPENSSL_ROOT}/bin")
+    endif()
+else()
+    find_package(OpenSSL 3.0 REQUIRED)
+endif()
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)

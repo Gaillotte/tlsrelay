@@ -98,7 +98,7 @@ A failing CI job blocks the merge of its branch. A failure is root-caused before
 | Code coverage (gcovr) | ubuntu-24.04 | GCC 13 `--coverage`, Qt 6.4, gcovr 8.6 | `tools/coverage.sh`: instrumented build, all ctest entries, then `systemd.sh` as root on the instrumented binary, HTML report (`coverage` artifact); fails below 90 % of lines (section 6) |
 | Fuzzing (60 s per target) | ubuntu-24.04 | Clang libFuzzer + ASan/UBSan | `tools/run-fuzz.sh` on the 6 targets from their corpus |
 | Performance and soak | ubuntu-24.04 | Release build | `perf.sh` with 1,000 channels; `soak.sh` for 4 minutes (reports uploaded) |
-| Windows MSVC Release | windows-2022 | MSVC 2022, vcpkg (OpenSSL 3.5 LTS, Asio, CLI11, spdlog, yaml-cpp, GoogleTest), Qt 6.8 LTS | ctest; `check-hardening.ps1`; shipped OpenSSL version check; `windows-service.ps1` (real service); `windows-pki.ps1`; MSI build; MSI installation; installed editor check (without the runner's Qt); `acceptance.ps1 -Services -Quick` on the installed binaries; MSI uninstallation |
+| Windows MSVC Release | windows-2022 | MSVC 2022, OpenSSL 3.5 LTS built from the official archive (`build-openssl.ps1`, SHA-512 verified), vcpkg (Asio, CLI11, spdlog, yaml-cpp, GoogleTest), Qt 6.8 LTS | ctest; `check-hardening.ps1`; shipped OpenSSL version check; `windows-service.ps1` (real service); `windows-pki.ps1`; MSI build; MSI installation; installed editor check (without the runner's Qt); `acceptance.ps1 -Services -Quick` on the installed binaries; MSI uninstallation |
 | Windows MSVC /analyze | windows-2022 | MSVC code analysis | Build with `/analyze`, findings are errors |
 | Packages deb (ubuntu:22.04) | container | Distribution toolchain, bundled dependencies | `.deb` build |
 | Packages rpm (rockylinux:9) | container | Distribution toolchain | `.rpm` build |
@@ -509,7 +509,7 @@ libFuzzer with ASan and UBSan, 60 s per target per push from the corpus in `fuzz
 | MSVC `/analyze` | CI "Windows MSVC /analyze" | No finding | SEC-02 |
 | `tools/check-hardening.sh` | CI, Linux binaries | PIE, full RELRO, stack protector, `_FORTIFY_SOURCE`, non-executable stack | SEC-01 |
 | `tools/check-hardening.ps1` | CI, Windows binaries | `/guard:cf`, DEP, ASLR (high entropy) | SEC-01 |
-| `tools/check-deps.sh` | CI | Shipped OpenSSL is the latest 3.5 patch release; distribution OpenSSL has no pending update | SEC-04, GEN-02 |
+| `tools/check-deps.sh` | CI | Shipped OpenSSL is the latest 3.5 patch release, with the same version and archive hash in `build-openssl.ps1` and the CI; distribution OpenSSL has no pending update | SEC-04, GEN-02 |
 | OpenSSL version | CI Linux 3.5 job, Windows job | `tlsrelay version` reports OpenSSL 3.5.x | GEN-02 |
 | Penetration-test checklist | Manual, before production | [PENTEST.md](PENTEST.md) items | SEC-03 |
 

@@ -129,9 +129,10 @@ cd build\windows-msvc && cpack -C Release -G WIX
 
 ### Windows (x64)
 
-Prerequisites: Visual Studio 2022 and [vcpkg](https://github.com/microsoft/vcpkg), with the `VCPKG_ROOT` variable set. The dependencies, including OpenSSL, are installed by vcpkg from `vcpkg.json`.
+Prerequisites: Visual Studio 2022, [vcpkg](https://github.com/microsoft/vcpkg) with the `VCPKG_ROOT` variable set, Strawberry Perl and NASM. OpenSSL 3.5 LTS is built from the official release archive (SHA-512 checked) by `tools/build-openssl.ps1`; the other dependencies are installed by vcpkg from `vcpkg.json`.
 
 ```bat
+powershell -ExecutionPolicy Bypass -File tools\build-openssl.ps1
 cmake --preset windows-msvc
 cmake --build --preset windows-release
 ctest --preset windows-release

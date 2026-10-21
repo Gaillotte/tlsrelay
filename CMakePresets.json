@@ -40,12 +40,12 @@
     },
     {
       "name": "windows-msvc",
-      "displayName": "Windows x64 (MSVC + vcpkg)",
+      "displayName": "Windows x64 (MSVC + vcpkg, OpenSSL from tools/build-openssl.ps1)",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-      "cacheVariables": { "VCPKG_TARGET_TRIPLET": "x64-windows" },
+      "cacheVariables": { "VCPKG_TARGET_TRIPLET": "x64-windows", "OPENSSL_ROOT_DIR": "${sourceDir}/build/openssl" },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     }
   ],

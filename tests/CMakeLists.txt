@@ -25,6 +25,7 @@ target_link_libraries(tlsrelay_tests PRIVATE
     GTest::gtest GTest::gtest_main)
 
 target_include_directories(tlsrelay_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+tlsrelay_deploy_openssl(tlsrelay_tests)
 
 target_compile_definitions(tlsrelay_tests PRIVATE
     TLSRELAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")

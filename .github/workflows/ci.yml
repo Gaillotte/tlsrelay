@@ -253,7 +253,7 @@ jobs:
   windows-analyze:
     name: Windows MSVC /analyze
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
     steps:
@@ -263,7 +263,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\vcpkg-cache
-          key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json', 'vcpkg-overlays/**') }}
+          key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-x64-windows-
 
       - name: Setup
@@ -271,6 +271,22 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # OpenSSL 3.5 LTS from the official release (version and SHA-512 in the script).
+      - name: Cache OpenSSL
+        id: openssl-cache
+        uses: actions/cache@v4
+        with:
+          path: build\openssl
+          key: openssl-win64-${{ hashFiles('tools/build-openssl.ps1') }}
+
+      - name: NASM and jom (OpenSSL build)
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        run: choco install nasm jom --no-progress -y
+
+      - name: OpenSSL 3.5 LTS (verified official archive)
+        shell: pwsh
+        run: .\tools\build-openssl.ps1
 
       - name: Configure (/analyze, warnings as errors)
         run: cmake --preset windows-msvc -DTLSRELAY_BUILD_TESTS=OFF -DTLSRELAY_MSVC_ANALYZE=ON -DTLSRELAY_WARNINGS_AS_ERRORS=ON
@@ -281,7 +297,7 @@ jobs:
   windows:
     name: Windows MSVC Release
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
     steps:
@@ -291,7 +307,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\vcpkg-cache
-          key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json', 'vcpkg-overlays/**') }}
+          key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-x64-windows-
 
       - name: Setup
@@ -299,6 +315,22 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # OpenSSL 3.5 LTS from the official release (version and SHA-512 in the script).
+      - name: Cache OpenSSL
+        id: openssl-cache
+        uses: actions/cache@v4
+        with:
+          path: build\openssl
+          key: openssl-win64-${{ hashFiles('tools/build-openssl.ps1') }}
+
+      - name: NASM and jom (OpenSSL build)
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        run: choco install nasm jom --no-progress -y
+
+      - name: OpenSSL 3.5 LTS (verified official archive)
+        shell: pwsh
+        run: .\tools\build-openssl.ps1
 
       - name: Qt 6.8 LTS (tlsrelay-admin editor)
         uses: jurplel/install-qt-action@v4

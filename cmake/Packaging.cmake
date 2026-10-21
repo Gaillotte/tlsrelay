@@ -18,8 +18,8 @@ endif()
 
 if(WIN32)
     # Dependency DLLs (OpenSSL 3.5, yaml-cpp, spdlog, fmt) and MSVC runtime, next to the executables.
-    # vcpkg copies all required DLLs next to the executable (FindOpenSSL does not
-    # declare its own as runtime dependencies): take them all.
+    # vcpkg copies its DLLs next to the executable, and tlsrelay_deploy_openssl the
+    # OpenSSL ones (FindOpenSSL does not declare them as runtime dependencies): take them all.
     install(DIRECTORY "$<TARGET_FILE_DIR:tlsrelay>/" DESTINATION bin COMPONENT service
             FILES_MATCHING PATTERN "*.dll")
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)
