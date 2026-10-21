@@ -35,7 +35,7 @@ getent passwd tlsrelay >/dev/null || fail "tlsrelay account not created"
 # Package contents (minimized images do not install /usr/share/doc).
 if [ "$kind" = deb ]; then files=$(dpkg-deb -c "$dir"/tlsrelay_*.deb); else files=$(rpm -qlp "$dir"/tlsrelay-[0-9]*.rpm); fi
 grep -q 'share/doc/tlsrelay/THIRD-PARTY-NOTICES.txt' <<<"$files" || fail "third-party notices missing from the package"
-grep -q 'share/doc/tlsrelay/LICENSE' <<<"$files" || fail "license missing from the package"
+grep -q 'share/doc/tlsrelay/LICENSE.txt' <<<"$files" || fail "license missing from the package"
 for f in /usr/share/doc/tlsrelay/examples/*.yaml; do
   case "$f" in *whitelist*) continue ;; esac
   tlsrelay check-config -c "$f" >/dev/null 2>&1 || true  # commented examples: paths to adapt

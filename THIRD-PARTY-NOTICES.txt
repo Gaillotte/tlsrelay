@@ -3,7 +3,7 @@ tlsrelay third-party notices
 
 tlsrelay includes or uses the following components, each under its own license,
 reproduced below. These licenses apply only to these components; tlsrelay
-itself is governed by the LICENSE file.
+itself is governed by the LICENSE.txt file.
 
 ------------------------------------------------------------------------------
 OpenSSL 3.5 (shipped in the Windows package; the distribution's OpenSSL on Linux)

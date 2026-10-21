@@ -7,13 +7,13 @@
 
 # TLSRELAY_DOC_DIR: defined in the top-level CMakeLists.txt (also used by src/admin).
 
-install(FILES README.md LICENSE THIRD-PARTY-NOTICES.txt DESTINATION ${TLSRELAY_DOC_DIR} COMPONENT service)
+install(FILES README.md LICENSE.txt THIRD-PARTY-NOTICES.txt DESTINATION ${TLSRELAY_DOC_DIR} COMPONENT service)
 install(FILES docs/INSTALLATION.md docs/OPERATIONS.md docs/SPEC.md docs/ACCEPTANCE.md docs/ACCEPTANCE-REPORT.md docs/PENTEST.md
         DESTINATION ${TLSRELAY_DOC_DIR} COMPONENT service)
 install(DIRECTORY examples/ DESTINATION ${TLSRELAY_DOC_DIR}/examples COMPONENT service)
 if(NOT WIN32)
     # Debian: the license goes to /usr/share/doc/<package>/copyright.
-    install(FILES LICENSE DESTINATION ${TLSRELAY_DOC_DIR} RENAME copyright COMPONENT service)
+    install(FILES LICENSE.txt DESTINATION ${TLSRELAY_DOC_DIR} RENAME copyright COMPONENT service)
 endif()
 
 if(WIN32)
@@ -39,9 +39,7 @@ set(CPACK_PACKAGE_DESCRIPTION
     "transparent renegotiation, systemd or Windows service, command-line mini-CA.")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/Gaillotte/tlsrelay")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
-# WiX only accepts a .txt or .rtf license: copy with an extension.
-configure_file("${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_BINARY_DIR}/LICENSE.txt" COPYONLY)
-set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_BINARY_DIR}/LICENSE.txt")
+set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_SOURCE_DIR}/LICENSE.txt")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY tlsrelay)
 set(CPACK_COMPONENTS_ALL service testkit)
 if(WIN32 AND TLSRELAY_BUILD_ADMIN)
@@ -70,8 +68,14 @@ set(CPACK_DEBIAN_ENABLE_COMPONENT_DEPENDS ON)
 set(CPACK_DEBIAN_SERVICE_PACKAGE_NAME tlsrelay)
 set(CPACK_DEBIAN_TESTKIT_PACKAGE_NAME tlsrelay-testkit)
 set(CPACK_DEBIAN_SERVICE_PACKAGE_DEPENDS "passwd, systemd")
-set(CPACK_DEBIAN_SERVICE_PACKAGE_CONTROL_EXTRA
-    "${PROJECT_SOURCE_DIR}/packaging/linux/postinst;${PROJECT_SOURCE_DIR}/packaging/linux/prerm;${PROJECT_SOURCE_DIR}/packaging/linux/postrm")
+# The Debian maintainer scripts are kept as *.sh in the sources; CPack takes the
+# control file names from the files, so they are copied under their required names.
+set(debian_control "")
+foreach(script postinst prerm postrm)
+    configure_file("${PROJECT_SOURCE_DIR}/packaging/linux/${script}.sh" "${PROJECT_BINARY_DIR}/debian/${script}" COPYONLY)
+    list(APPEND debian_control "${PROJECT_BINARY_DIR}/debian/${script}")
+endforeach()
+set(CPACK_DEBIAN_SERVICE_PACKAGE_CONTROL_EXTRA "${debian_control}")
 set(CPACK_DEBIAN_SERVICE_PACKAGE_CONTROL_STRICT_PERMISSION ON)
 
 # --- RPM ----------------------------------------------------------------------

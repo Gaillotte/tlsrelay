@@ -124,7 +124,7 @@ else()
 endif()
 
 file(MAKE_DIRECTORY "${SOURCE_PATH}/vcpkg")
-file(COPY "${CMAKE_CURRENT_LIST_DIR}/configure" DESTINATION "${SOURCE_PATH}/vcpkg")
+file(INSTALL "${CMAKE_CURRENT_LIST_DIR}/configure.sh" DESTINATION "${SOURCE_PATH}/vcpkg" RENAME configure)
 vcpkg_configure_make(
     SOURCE_PATH "${SOURCE_PATH}"
     PROJECT_SUBPATH "vcpkg"

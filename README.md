@@ -125,7 +125,7 @@ rem Windows, after building:
 cd build\windows-msvc && cpack -C Release -G WIX
 ```
 
-`-DTLSRELAY_FETCH_DEPS=ON` replaces the system dependencies (Asio, CLI11, spdlog, yaml-cpp) with pinned, statically linked versions; only OpenSSL remains the distribution's. License: [LICENSE](LICENSE); third-party components: [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
+`-DTLSRELAY_FETCH_DEPS=ON` replaces the system dependencies (Asio, CLI11, spdlog, yaml-cpp) with pinned, statically linked versions; only OpenSSL remains the distribution's. License: [LICENSE.txt](LICENSE.txt); third-party components: [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
 
 ### Windows (x64)
 

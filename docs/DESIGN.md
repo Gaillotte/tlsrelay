@@ -656,7 +656,7 @@ Packages are installed and exercised in CI on Ubuntu 22.04/24.04, Debian 12, Roc
 
 ### 12.3 Licensing
 
-tlsrelay is proprietary (`LICENSE`). `THIRD-PARTY-NOTICES.txt` reproduces the licences of OpenSSL (Apache 2.0), Asio (BSL), CLI11 (BSD-3), spdlog and fmt (MIT), yaml-cpp (MIT) and describes the Qt LGPLv3 obligations (dynamic linking, replaceable DLLs, source offer, Qt's own third-party components).
+tlsrelay is proprietary (`LICENSE.txt`). `THIRD-PARTY-NOTICES.txt` reproduces the licences of OpenSSL (Apache 2.0), Asio (BSL), CLI11 (BSD-3), spdlog and fmt (MIT), yaml-cpp (MIT) and describes the Qt LGPLv3 obligations (dynamic linking, replaceable DLLs, source offer, Qt's own third-party components).
 
 ---
 
