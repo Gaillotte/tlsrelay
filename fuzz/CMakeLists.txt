@@ -7,3 +7,6 @@ foreach(name IN LISTS TLSRELAY_FUZZ_TARGETS)
     target_compile_options(fuzz_${name} PRIVATE -fsanitize=fuzzer)
     target_link_options(fuzz_${name} PRIVATE -fsanitize=fuzzer)
 endforeach()
+# Writes the seeds of fuzz_frame (binary frames) at fuzzing time: tools/run-fuzz.sh.
+add_executable(make_frame_seeds make_frame_seeds.cpp)
+target_link_libraries(make_frame_seeds PRIVATE tlsrelay::core tlsrelay::options)

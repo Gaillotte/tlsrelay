@@ -38,7 +38,7 @@ jobs:
       - name: Build
         run: |
           cmake --preset linux-fuzz
-          cmake --build --preset linux-fuzz --target fuzz_${{ matrix.target }}
+          cmake --build --preset linux-fuzz --target fuzz_${{ matrix.target }} make_frame_seeds
 
       - name: Fuzzing (50 min)
         run: tools/run-fuzz.sh build/linux-fuzz 3000 ${{ matrix.target }}

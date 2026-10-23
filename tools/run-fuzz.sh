@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs each fuzzing target for <seconds>, starting from its corpus
-# (fuzz/corpus/<target>, enriched in <build>/corpus). Inputs that make
-# a target fail are kept in <build>/../fuzz-artifacts.
+# (fuzz/corpus/<target>, enriched in <build>/corpus). The seeds of the frame
+# target are binary: they are written by make_frame_seeds, not stored in the
+# repository. Inputs that make a target fail are kept in <build>/../fuzz-artifacts.
 # Usage: tools/run-fuzz.sh <linux-fuzz build> <seconds> [target...]
 set -euo pipefail
 build=$(realpath "${1:?usage: $0 <build> <seconds> [target...]}")
@@ -16,7 +17,11 @@ status=0
 for t in "${targets[@]}"; do
   corpus="$build/corpus/$t"
   mkdir -p "$corpus"
-  cp -n "$root/fuzz/corpus/$t/"* "$corpus/" 2>/dev/null || true
+  if [ "$t" = frame ]; then
+    "$build/fuzz/make_frame_seeds" "$corpus"
+  else
+    cp -n "$root/fuzz/corpus/$t/"* "$corpus/" 2>/dev/null || true
+  fi
   echo "== fuzz_$t: $seconds s"
   if ! "$build/fuzz/fuzz_$t" -max_total_time="$seconds" -timeout=10 -rss_limit_mb=2048 \
         -artifact_prefix="$artifacts/$t-" -print_final_stats=1 "$corpus" 2>"$build/fuzz_$t.log"; then
