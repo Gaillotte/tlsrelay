@@ -488,7 +488,7 @@ Runs with the `offscreen` Qt platform. Earlier tests replace dialogs by injected
 
 ### 3.19 Fuzzing — `fuzz/`, CI job "Fuzzing"
 
-libFuzzer with ASan and UBSan, 60 s per target per push from the corpus in `fuzz/corpus/<target>`; the binary seeds of `fuzz_frame` are not stored but written at run time by `fuzz/make_frame_seeds.cpp` with the tunnel's own encoder; crashing inputs kept as artifacts.
+libFuzzer with ASan and UBSan, 60 s per target per push from the corpus in `fuzz/corpus/<target>`; the binary seeds of `fuzz_frame` are not stored but written at run time by `fuzz/make_frame_seeds.cpp` with the tunnel's own encoder, and the signing requests of `fuzz_csr` by the `openssl` command; crashing inputs kept as artifacts.
 
 | Target | Input | Req. |
 |---|---|---|
